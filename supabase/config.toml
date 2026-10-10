@@ -1,0 +1,7 @@
+project_id = "ilkrcakrduibgsfqfzti"
+
+[functions.bonos-read]
+verify_jwt = false
+
+[functions.bonos-write]
+verify_jwt = false
