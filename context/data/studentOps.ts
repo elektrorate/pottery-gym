@@ -1,5 +1,6 @@
 import { MEMBERSHIP_PLANS, MembershipTier } from '../../types';
 import type { Student } from '../../types';
+import { getWorkshopDate } from '../../utils/studentLifecycle';
 import { supabase, withTimeout, buildStudentPayload, isAbortError, OpsContext } from './shared';
 import { showError, showWarning } from '../toast';
 
@@ -119,9 +120,10 @@ export const deleteStudent = async (ctx: OpsContext, id: string) => {
 export const renewStudent = async (ctx: OpsContext, id: string, numClasses: number = 4, membershipTier: MembershipTier = 'gold') => {
     const student = ctx.students.find(s => s.id === id);
     if (!student) { showError('Alumno no encontrado.'); return; }
+    if (student.studentCategory === 'temporal') { showError('Los alumnos temporales no tienen membresía para renovar.'); return; }
     const plan = MEMBERSHIP_PLANS[membershipTier] || MEMBERSHIP_PLANS.gold;
     const renewedClasses = numClasses > 0 ? numClasses : plan.bonuses;
-    const today = new Date().toISOString().split('T')[0];
+    const today = getWorkshopDate();
     const baseDate = student.expiryDate && student.expiryDate > today ? new Date(student.expiryDate) : new Date();
     baseDate.setMonth(baseDate.getMonth() + 1);
     const newExpiryDate = baseDate.toISOString().split('T')[0];
@@ -131,7 +133,8 @@ export const renewStudent = async (ctx: OpsContext, id: string, numClasses: numb
         membershipTier,
         price: plan.price,
         membershipActivatedAt: today,
-        archivedAt: undefined,
+        archivedAt: '',
+        paymentStatus: 'paid',
         status: 'membresia',
         expiryDate: newExpiryDate
     });

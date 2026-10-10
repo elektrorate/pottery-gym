@@ -1,4 +1,4 @@
-import type { ClassSession, Student } from '../../types';
+import { getDefaultSessionCapacity, type ClassSession, type Student } from '../../types';
 import { showError, showWarning } from '../toast';
 import { supabase, withTimeout, buildSessionPayload, isAbortError, OpsContext } from './shared';
 
@@ -142,7 +142,12 @@ const updateSessionAttendance = async (ctx: OpsContext, sessionId: string, atten
 };
 
 export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession, 'id'>) => {
-    let payload = buildSessionPayload(newSession);
+    const capacity = newSession.capacity ?? getDefaultSessionCapacity(newSession.classType);
+    if (newSession.students.length > capacity) {
+        showError(`La sesión supera su capacidad máxima de ${capacity} alumnos.`);
+        return;
+    }
+    let payload = buildSessionPayload({ ...newSession, capacity });
     if (ctx.sedeId) payload = { ...payload, sede_id: ctx.sedeId };
     let data: any;
     try {
@@ -174,6 +179,14 @@ export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession,
 };
 
 export const updateSession = async (ctx: OpsContext, id: string, updates: Partial<ClassSession>) => {
+    if (updates.students) {
+        const currentSession = ctx.sessions.find(session => session.id === id);
+        const capacity = updates.capacity ?? currentSession?.capacity ?? getDefaultSessionCapacity(currentSession?.classType || 'mesa');
+        if (updates.students.length > capacity) {
+            showError(`La sesión supera su capacidad máxima de ${capacity} alumnos.`);
+            return;
+        }
+    }
     const payload = buildSessionPayload(updates);
     if (Object.keys(payload).length) {
         try {

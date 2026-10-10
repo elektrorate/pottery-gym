@@ -1,18 +1,25 @@
-import { Student } from '../types';
+import type { Student } from '../types';
 
-const dateOnly = (value: string) => new Date(`${value}T00:00:00`);
+export type StudentLifecycle = 'active' | 'pending' | 'temporary' | 'archived';
+export const getWorkshopDate = (now = new Date()) =>
+  new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(now);
 
-export const isStudentArchived = (student: Student, today = new Date().toISOString().split('T')[0]) => {
-  if (student.archivedAt) return true;
+// Preserve explicitly active legacy records. Ambiguous records need review.
+export const getStudentPaymentStatus = (student: Pick<Student, 'paymentStatus' | 'status'>) =>
+  student.paymentStatus ?? (student.status === 'membresia' || student.status === 'active' ? 'paid' : 'pending');
 
-  const category = student.studentCategory || 'membresia';
-  if (category === 'temporal') return student.classesRemaining <= 0;
-  if (student.repetirMensualmente) return false;
-
-  const cutoff = dateOnly(today);
-  cutoff.setMonth(cutoff.getMonth() - 1);
-  const lastMembershipDate = student.expiryDate || student.membershipActivatedAt || student.createdAt;
-  if (!lastMembershipDate) return false;
-
-  return dateOnly(lastMembershipDate.split('T')[0]) < cutoff;
+export const getStudentLifecycle = (student: Student, today = getWorkshopDate()): StudentLifecycle => {
+  if (student.archivedAt) return 'archived';
+  if (student.studentCategory === 'temporal') return 'temporary';
+  const expiry = student.expiryDate?.slice(0, 10);
+  if (expiry) {
+    const elapsedDays = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${expiry}T00:00:00Z`)) / 86_400_000;
+    if (elapsedDays >= 6) return 'archived';
+    if (elapsedDays > 0) return 'pending';
+  }
+  if (!expiry || !Number.isFinite(Date.parse(expiry)) || getStudentPaymentStatus(student) !== 'paid') return 'pending';
+  return 'active';
 };
+
+export const isStudentArchived = (student: Student, today = getWorkshopDate()) =>
+  getStudentLifecycle(student, today) === 'archived';

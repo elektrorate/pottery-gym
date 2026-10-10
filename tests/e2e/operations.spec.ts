@@ -32,6 +32,15 @@ async function deleteRows(api: APIRequestContext, table: string, query: string) 
   expect(response.ok()).toBeTruthy();
 }
 
+async function upsertRows(api: APIRequestContext, table: string, rows: Record<string, unknown>[]) {
+  if (!rows.length) return;
+  const response = await api.post(`${supabaseUrl}/rest/v1/${table}?on_conflict=sede_id%2Cday_of_week%2Cslot_index`, {
+    headers: { ...serviceHeaders(), Prefer: 'resolution=merge-duplicates' },
+    data: rows
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
 async function deleteByIds(api: APIRequestContext, table: string, column: string, ids: string[]) {
   if (ids.length) await deleteRows(api, table, `${column}=in.(${ids.join(',')})`);
 }
@@ -107,9 +116,13 @@ test.describe('Calendario', () => {
     await page.getByLabel('Nombre del workshop').fill(workshopName);
     await page.getByLabel('Hora de inicio').fill('13:00');
     await page.getByLabel('Hora de fin').fill('14:00');
+    await page.getByLabel('Cupo máximo').fill('12');
     await page.getByRole('button', { name: 'Crear sesión' }).click();
 
-    await expect.poll(async () => findRows(request, 'sessions', `select=id,workshop_name,start_time,end_time&workshop_name=eq.${encodeURIComponent(workshopName)}`)).toHaveLength(1);
+    await expect.poll(async () => {
+      const rows = await findRows(request, 'sessions', `select=id,workshop_name,start_time,end_time,capacity&workshop_name=eq.${encodeURIComponent(workshopName)}`);
+      return rows[0]?.capacity;
+    }).toBe(12);
     await page.getByText(workshopName, { exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Editar sesión' })).toBeVisible();
     await page.getByLabel('Hora de fin').fill('15:00');
@@ -124,6 +137,60 @@ test.describe('Calendario', () => {
     await page.getByRole('button', { name: 'Eliminar' }).click();
     await page.getByRole('dialog').filter({ hasText: '¿Eliminar sesión?' }).getByRole('button', { name: 'Eliminar' }).click();
     await expect.poll(async () => (await findRows(request, 'sessions', `select=id&workshop_name=eq.${encodeURIComponent(workshopName)}`)).length).toBe(0);
+  });
+
+  test('avisa si se intenta crear una sesión en un día cerrado', async ({ page, request }) => {
+    const profileRows = await findRows(request, 'profiles', 'select=id&email=eq.test%40barro.test');
+    const userId = profileRows[0]?.id as string | undefined;
+    const sedeRows = userId
+      ? await findRows(request, 'sede_members', `select=sede_id&user_id=eq.${userId}`)
+      : [];
+    const sedeId = sedeRows[0]?.sede_id as string | undefined;
+    test.skip(!sedeId, 'No hay una sede de prueba disponible');
+
+    const scheduleQuery = `sede_id=eq.${sedeId}`;
+    const originalSchedule = await findRows(request, 'workshop_schedules', `select=*&${scheduleQuery}`);
+    const closedSchedule = Array.from({ length: 7 }, (_, dayOfWeek) => ({
+      sede_id: sedeId,
+      day_of_week: dayOfWeek,
+      slot_index: 0,
+      is_open: false,
+      opens_at: null,
+      closes_at: null
+    }));
+
+    await upsertRows(request, 'workshop_schedules', closedSchedule);
+    try {
+      await login(page);
+      await page.goto('/calendar');
+      await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+      await page.getByLabel('Tipo de sesión').selectOption('workshop');
+      await page.getByLabel('Nombre del workshop').fill(qaName('CLOSED-DAY'));
+      await page.getByRole('button', { name: 'Crear sesión' }).click();
+      await expect(page.getByRole('alert')).toContainText('El taller está cerrado los');
+      await expect(page.getByRole('heading', { name: 'Nueva sesión' })).toBeVisible();
+
+      const todayDayOfWeek = new Date().getDay();
+      const limitedSchedule = closedSchedule.map(day => day.day_of_week === todayDayOfWeek
+        ? { ...day, is_open: true, opens_at: '10:00', closes_at: '14:00' }
+        : day);
+      await upsertRows(request, 'workshop_schedules', [
+        ...limitedSchedule,
+        { sede_id: sedeId, day_of_week: todayDayOfWeek, slot_index: 1, is_open: true, opens_at: '16:00', closes_at: '18:00' }
+      ]);
+      await page.getByRole('button', { name: 'Cerrar modal' }).click();
+      await page.reload();
+      await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+      await page.getByLabel('Tipo de sesión').selectOption('workshop');
+      await page.getByLabel('Nombre del workshop').fill(qaName('OUTSIDE-HOURS'));
+      await page.getByLabel('Hora de inicio').fill('09:00');
+      await page.getByLabel('Hora de fin').fill('16:00');
+      await page.getByRole('button', { name: 'Crear sesión' }).click();
+      await expect(page.getByRole('alert')).toContainText('La sesión debe estar dentro de uno de estos horarios: 10:00–14:00, 16:00–18:00.');
+    } finally {
+      await deleteRows(request, 'workshop_schedules', scheduleQuery);
+      await upsertRows(request, 'workshop_schedules', originalSchedule);
+    }
   });
 });
 

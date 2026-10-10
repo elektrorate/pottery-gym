@@ -1,8 +1,9 @@
 import { showError, showWarning } from '../context/toast';
 import React, { useState, useMemo } from 'react';
-import { ClassSession, GiftCard, Student, Teacher } from '../types';
+import { ClassSession, GiftCard, Student, Teacher, WorkshopScheduleDay, getDefaultSessionCapacity } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
-import { isStudentArchived } from '../utils/studentLifecycle';
+import { getStudentLifecycle, isStudentArchived } from '../utils/studentLifecycle';
+import { useWorkshopDate } from '../utils/useWorkshopDate';
 interface CalendarViewProps {
   sessions: ClassSession[];
   onAddSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
@@ -14,6 +15,7 @@ interface CalendarViewProps {
   giftCards: GiftCard[];
   students: Student[];
   teachers: Teacher[];
+  workshopSchedule: WorkshopScheduleDay[];
 }
 
 type CalendarMode = 'day' | 'month';
@@ -26,8 +28,9 @@ const getAttendanceStatus = (attendance: ClassSession['attendance'] | undefined,
   return matchingEntry?.[1] || 'pending';
 };
 
-const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers }) => {
+const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers, workshopSchedule }) => {
   const [viewMode, setViewMode] = useState<CalendarMode>('day');
+  const today = useWorkshopDate();
   const [selectedDate, setSelectedDate] = useState(new Date());
 
   // Modales separados
@@ -51,6 +54,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     startTime: '10:00',
     endTime: '12:00',
     classType: 'mesa' as ClassSession['classType'],
+    capacity: getDefaultSessionCapacity('mesa'),
     selectedStudents: [] as string[],
     teacherId: '',
     workshopName: '',
@@ -151,6 +155,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         startTime: session.startTime,
         endTime: session.endTime,
         classType: session.classType,
+        capacity: session.capacity ?? getDefaultSessionCapacity(session.classType),
         selectedStudents: [...session.students],
         teacherId: session.teacherId || '',
         workshopName: session.workshopName || '',
@@ -164,6 +169,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         startTime: '10:00',
         endTime: '12:00',
         classType: 'mesa',
+        capacity: getDefaultSessionCapacity('mesa'),
         selectedStudents: [],
         teacherId: '',
         workshopName: '',
@@ -229,9 +235,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         if (wasPresent === isPresent) continue;
 
         const giftCardId = getGiftCardIdForStudent(attendanceSession, student, wasPresent && !isPresent);
-        if (category === 'temporal' && !giftCardId) {
-          throw new Error(`El alumno temporal ${studentName} no tiene una Gift Card activa vinculada.`);
-        }
         if (giftCardId) {
           if (wasPresent && !isPresent) await onReverseGiftCardSession(giftCardId, attendanceSession.id, student.id);
           if (!wasPresent && isPresent) await onRedeemGiftCardSession(giftCardId, attendanceSession.id, student.id);
@@ -243,16 +246,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
           ? Math.max(0, student.classesRemaining - 1)
           : Math.min(maxBonuses, student.classesRemaining + 1);
         const updates: Partial<Student> = { classesRemaining: nextClassesRemaining };
-
-        if (isPresent && nextClassesRemaining <= 0) {
-          updates.status = 'needs_renewal';
-          if (category === 'temporal') updates.archivedAt = new Date().toISOString().split('T')[0];
-        } else if (!isPresent && student.status === 'needs_renewal' && nextClassesRemaining > 0) {
-          updates.status = 'membresia';
-        }
-        if (!isPresent && nextClassesRemaining > 0 && student.archivedAt) {
-          updates.archivedAt = '';
-        }
 
         await onUpdateStudent(student.id, updates);
       }
@@ -290,18 +283,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     const presentStudentNames = Object.entries(finalAttendance)
       .filter(([, status]) => status === 'present')
       .map(([name]) => name);
-
-    const temporalStudentsWithoutGiftCard = presentStudentNames.filter(studentName => {
-      const student = students.find(s => {
-        const fullName = `${s.name} ${s.surname || ''}`.trim().toUpperCase();
-        return fullName === studentName.toUpperCase();
-      });
-      return student?.studentCategory === 'temporal' && !getGiftCardIdForStudent(attendanceSession, student);
-    });
-    if (temporalStudentsWithoutGiftCard.length > 0) {
-      showError(`No se puede finalizar: ${temporalStudentsWithoutGiftCard.join(', ')} no tiene una Gift Card activa vinculada.`);
-      return;
-    }
 
     const studentsWithNoBonos = presentStudentNames.filter(studentName => {
       const student = students.find(s => {
@@ -341,12 +322,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         if (student && !isStudentArchived(student) && (category === 'membresia' || category === 'temporal') && student.classesRemaining > 0) {
           const nextClassesRemaining = student.classesRemaining - 1;
           const updates: Partial<Student> = {
-            classesRemaining: nextClassesRemaining,
-            status: nextClassesRemaining <= 0 ? 'needs_renewal' : student.status
+            classesRemaining: nextClassesRemaining
           };
-          if (category === 'temporal' && nextClassesRemaining <= 0) {
-            updates.archivedAt = new Date().toISOString().split('T')[0];
-          }
           await onUpdateStudent(student.id, {
             ...updates
           });
@@ -410,6 +387,32 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       showError("La hora de inicio debe ser anterior a la hora de fin.");
       return;
     }
+    const capacity = Math.max(1, Math.min(100, Number(sessionForm.capacity) || 0));
+    if (!capacity) {
+      showError("Indica una capacidad válida para la sesión.");
+      return;
+    }
+    if (sessionForm.selectedStudents.length > capacity) {
+      showError(`La sesión admite como máximo ${capacity} alumnos.`);
+      return;
+    }
+    if (workshopSchedule.length > 0 && sessionForm.classType !== 'feriado') {
+      const sessionDate = new Date(`${sessionForm.date}T12:00:00`);
+      const dayIntervals = workshopSchedule
+        .filter(day => day.dayOfWeek === sessionDate.getDay() && day.isOpen)
+        .sort((a, b) => a.opensAt.localeCompare(b.opensAt));
+      const dayLabel = sessionDate.toLocaleDateString('es-ES', { weekday: 'long' });
+      if (!dayIntervals.length) {
+        showError(`El taller está cerrado los ${dayLabel}. Activa ese día desde Administración del taller.`);
+        return;
+      }
+      const isWithinInterval = dayIntervals.some(interval => sessionForm.startTime >= interval.opensAt && sessionForm.endTime <= interval.closesAt);
+      if (!isWithinInterval) {
+        const availableIntervals = dayIntervals.map(interval => `${interval.opensAt}–${interval.closesAt}`).join(', ');
+        showError(`La sesión debe estar dentro de uno de estos horarios: ${availableIntervals}.`);
+        return;
+      }
+    }
     const duplicate = sessions.some(s => {
       if (editingSessionId && s.id === editingSessionId) return false;
       return s.date === sessionForm.date
@@ -427,6 +430,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       startTime: sessionForm.startTime,
       endTime: sessionForm.endTime,
       classType: sessionForm.classType,
+      capacity,
       students: sessionForm.classType === 'feriado' ? [] : sessionForm.selectedStudents,
       teacherId: sessionForm.teacherId || undefined,
       workshopName: sessionForm.workshopName.trim() || undefined,
@@ -588,10 +592,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                       style={{ top: `${topOffset}px`, left: `calc(${leftOffset}% + 80px)`, width: `calc(${widthPercent}% - 92px)`, minHeight: '152px' }}
                       onClick={() => handleOpenSessionModal(session)}
                     >
-                      <div className="flex w-full flex-col items-start gap-2 pr-14 mb-4">
-                        <span className="text-[14px] font-semibold text-neutral-textMain leading-none">{session.startTime} - {session.endTime}</span>
-                        <span className={`px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] text-white ${getSessionBadgeClasses(session.classType)}`}>{getSessionLabel(session).toUpperCase()}</span>
-                      </div>
+                         <div className="flex w-full flex-col items-start gap-2 pr-14 mb-4">
+                           <span className="text-[14px] font-semibold text-neutral-textMain leading-none">{session.startTime} - {session.endTime}</span>
+                           <span className={`px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] text-white ${getSessionBadgeClasses(session.classType)}`}>{getSessionLabel(session).toUpperCase()}</span>
+                           {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{session.students.length}/{session.capacity ?? getDefaultSessionCapacity(session.classType)} cupos</span>}
+                         </div>
                       <div className="text-[13.75px] font-medium text-neutral-textHelper uppercase tracking-widest mb-4">
                         <span>Profesor/a: </span>
                         <span className="text-[#B07D4E] font-semibold">{getTeacherName(session.teacherId)}</span>
@@ -994,9 +999,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                         onChange={(e) => {
                           const classType = e.target.value as ClassSession['classType'];
                           setSessionForm({
-                            ...sessionForm,
-                            classType,
-                            teacherId: (classType === 'mesa' || classType === 'torno') ? sessionForm.teacherId : '',
+                             ...sessionForm,
+                             classType,
+                             capacity: getDefaultSessionCapacity(classType),
+                             teacherId: (classType === 'mesa' || classType === 'torno') ? sessionForm.teacherId : '',
                             workshopName: classType === 'workshop' ? sessionForm.workshopName : '',
                             privateReason: classType === 'privada' ? sessionForm.privateReason : '',
                             selectedStudents: classType === 'feriado' ? [] : sessionForm.selectedStudents,
@@ -1014,8 +1020,24 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                         <option value="feriado">Feriados</option>
                       </select>
                       <svg className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m7 10 5 5 5-5" /></svg>
-                    </div>
+                   </div>
                   </div>
+
+                  {sessionForm.classType !== 'feriado' && (
+                    <label className="block">
+                      <span className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">Cupo máximo</span>
+                      <input
+                        aria-label="Cupo máximo"
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={sessionForm.capacity}
+                        onChange={(e) => setSessionForm({ ...sessionForm, capacity: Number(e.target.value) })}
+                        className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
+                      />
+                      <span className="mt-1 block text-[11px] text-[#8B6B5E]">{sessionForm.selectedStudents.length} de {sessionForm.capacity || 0} plazas ocupadas</span>
+                    </label>
+                  )}
 
                   {(sessionForm.classType === 'mesa' || sessionForm.classType === 'torno') && (
                     <div>
@@ -1104,7 +1126,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                       {(() => {
                         const filtered = students
                           .filter(s => {
-                            if (isStudentArchived(s)) return false;
+                            if (isStudentArchived(s, today)) return false;
                             const cat = s.studentCategory || 'membresia';
                             // Filtro por audiencia - 'ambos' muestra todos los tipos
                             const matchesAudience = sessionForm.sessionAudience === 'ambos'
@@ -1129,22 +1151,23 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                         return filtered.map(s => {
                           const fullName = `${s.name} ${s.surname || ''}`.trim();
                           const studentKey = fullName.toUpperCase();
-                          const isSelected = sessionForm.selectedStudents.includes(studentKey);
-                          const cat = s.studentCategory || 'membresia';
-                          const isTemporary = cat === 'temporal';
-                          return (
-                            <button type="button" key={s.id} onClick={() => {
-                              const newList = isSelected
-                                ? sessionForm.selectedStudents.filter(n => n !== studentKey)
-                                : [...sessionForm.selectedStudents, studentKey];
-                              setSessionForm({ ...sessionForm, selectedStudents: newList });
-                            }} className={`mb-0.5 flex min-h-11 w-full items-center justify-between gap-3 rounded-[8px] px-3 py-2 text-left transition last:mb-0 focus:outline-none focus:ring-2 focus:ring-[#C68952] ${isSelected ? 'bg-[#C68952] text-white' : 'text-[#4E3A31] hover:bg-[#F8EEE5]'}`}>
+                           const isSelected = sessionForm.selectedStudents.includes(studentKey);
+                           const cat = s.studentCategory || 'membresia';
+                           const isTemporary = cat === 'temporal';
+                           const capacityReached = !isSelected && sessionForm.selectedStudents.length >= sessionForm.capacity;
+                           return (
+                             <button type="button" key={s.id} disabled={capacityReached} onClick={() => {
+                               const newList = isSelected
+                                 ? sessionForm.selectedStudents.filter(n => n !== studentKey)
+                                 : [...sessionForm.selectedStudents, studentKey];
+                               setSessionForm({ ...sessionForm, selectedStudents: newList });
+                             }} className={`mb-0.5 flex min-h-11 w-full items-center justify-between gap-3 rounded-[8px] px-3 py-2 text-left transition last:mb-0 focus:outline-none focus:ring-2 focus:ring-[#C68952] ${isSelected ? 'bg-[#C68952] text-white' : capacityReached ? 'cursor-not-allowed opacity-45' : 'text-[#4E3A31] hover:bg-[#F8EEE5]'}`}>
                               <span className="min-w-0 truncate text-[13px] font-medium">
                                 {fullName}
                                 {s.groupName && <span className="ml-1.5 text-[10px] font-normal opacity-65">{s.groupName}</span>}
                               </span>
                               <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[9px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
-                                {isTemporary ? 'Temporal' : 'Membresía'}
+                                {isTemporary ? 'Temporal' : getStudentLifecycle(s, today) === 'active' ? 'Activa' : 'Pendiente'}
                               </span>
                             </button>
                           );

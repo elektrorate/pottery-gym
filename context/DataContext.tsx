@@ -3,8 +3,9 @@ import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import {
     Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement, AssignedClass,
-    InventoryItem, InventoryMovement, Teacher, MembershipTier, MEMBERSHIP_PLANS, inferMembershipTier
+    InventoryItem, InventoryMovement, Teacher, MembershipTier, MEMBERSHIP_PLANS, inferMembershipTier, WorkshopScheduleDay
 } from '../types';
+import { showError } from './toast';
 
 // Import modular operations
 import { extractTime, normalizeForMatch, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel } from './data/shared';
@@ -14,7 +15,6 @@ import * as teacherOps from './data/teacherOps';
 import * as pieceOps from './data/pieceOps';
 import * as giftCardOps from './data/giftCardOps';
 import * as inventoryOps from './data/inventoryOps';
-import { isStudentArchived } from '../utils/studentLifecycle';
 
 const normalizeAttendanceStatus = (value: unknown): 'present' | 'absent' | undefined => {
     const status = String(value || '').trim().toLowerCase();
@@ -32,6 +32,7 @@ interface DataContextType {
     inventoryItems: InventoryItem[];
     inventoryMovements: InventoryMovement[];
     teachers: Teacher[];
+    workshopSchedule: WorkshopScheduleDay[];
     isLoadingData: boolean;
     loadError: string | null;
 
@@ -71,6 +72,7 @@ interface DataContextType {
     archiveInventoryItem: (id: string) => Promise<void>;
     deleteInventoryItem: (id: string) => Promise<void>;
     addInventoryMovement: (movement: Omit<InventoryMovement, 'id'>) => Promise<void>;
+    updateWorkshopSchedule: (schedule: WorkshopScheduleDay[]) => Promise<boolean>;
 
     // Refresh
     loadAllData: () => Promise<void>;
@@ -99,6 +101,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
     const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>([]);
     const [teachers, setTeachers] = useState<Teacher[]>([]);
+    const [workshopSchedule, setWorkshopSchedule] = useState<WorkshopScheduleDay[]>([]);
     const [isLoadingData, setIsLoadingData] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const hasLoadedOnceRef = useRef(false);
@@ -119,12 +122,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 return query;
             };
 
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes] = await Promise.all([
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
                 buildQuery('session_students'),
                 buildQuery('pieces'), Promise.resolve(buildQuery('gift_cards')).catch(error => ({ data: [], error })),
                 Promise.resolve(buildQuery('gift_card_movements')).catch(error => ({ data: [], error })),
-                buildQuery('inventory_items'), buildQuery('inventory_movements')
+                buildQuery('inventory_items'), buildQuery('inventory_movements'), buildQuery('workshop_schedules')
             ]);
 
             if (studentsRes.error) throw studentsRes.error;
@@ -136,8 +139,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (giftCardMovementsRes.error) console.warn('Gift card movements could not be loaded:', giftCardMovementsRes.error);
             if (inventoryRes.error) throw inventoryRes.error;
             if (movementsRes.error) throw movementsRes.error;
+            if (scheduleRes.error) throw scheduleRes.error;
 
-            const today = new Date().toISOString().split('T')[0];
 
             // Normalize students and apply lifecycle rules before exposing them to the UI.
             const normalizedStudents: Student[] = (studentsRes.data || []).map((row: any) => {
@@ -151,6 +154,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 birthMonth: row.birth_month ? String(row.birth_month) : undefined,
                 birthYear: row.birth_year ? String(row.birth_year) : undefined,
                 classesRemaining: row.classes_remaining ?? 0, status: row.status,
+                paymentStatus: row.payment_status || undefined,
                 paymentMethod: row.payment_method || undefined,
                 notes: row.notes || undefined, observations: row.observations || undefined,
                 price: row.price ?? undefined,
@@ -167,13 +171,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 createdAt: row.created_at || undefined
                 };
                 if (student.studentCategory === 'temporal') {
-                    student.bonosAsignados = Math.min(3, Math.max(1, student.bonosAsignados ?? 1));
-                    student.classesRemaining = Math.min(student.classesRemaining, student.bonosAsignados);
                     student.repetirMensualmente = false;
                 }
-                return !student.archivedAt && isStudentArchived(student, today)
-                    ? { ...student, archivedAt: today }
-                    : student;
+                return student;
             });
 
             // Normalize session students
@@ -196,6 +196,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     id: row.id, date: String(row.date).split('T')[0],
                     startTime: extractTime(row.start_time), endTime: extractTime(row.end_time),
                     classType: row.class_type,
+                    capacity: row.capacity ?? (row.class_type === 'torno' ? 5 : 8),
                     students: linked.map((item: any) => item.student_name),
                     studentIds: linked.map((item: any) => item.student_id || ''),
                     attendance: Object.keys(attendance).length ? attendance : undefined,
@@ -266,59 +267,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
             setStudents(studentsWithAttendance);
 
-            const studentsToArchive = studentsWithAttendance.filter(student => student.archivedAt === today);
-            if (studentsToArchive.length > 0) {
-                Promise.all(studentsToArchive.map(student =>
-                    withTimeout('students.auto_archive', supabase.from('students').update({ archived_at: today }).eq('id', student.id))
-                )).catch(error => console.error('Auto-archive failed:', error));
-            }
-
-            // Auto-renewal of expired memberships
-            const studentsToRenew = studentsWithAttendance.filter(s =>
-                !s.archivedAt && s.repetirMensualmente && s.studentCategory === 'membresia' && s.expiryDate && s.expiryDate < today
-            );
-            if (studentsToRenew.length > 0) {
-                (async () => {
-                    for (const st of studentsToRenew) {
-                        const currentExpiry = new Date(st.expiryDate!);
-                        const newExpiry = new Date(currentExpiry);
-                        newExpiry.setMonth(newExpiry.getMonth() + 1);
-                        if (newExpiry.toISOString().split('T')[0] < today) {
-                            const fromToday = new Date();
-                            fromToday.setMonth(fromToday.getMonth() + 1);
-                            newExpiry.setTime(fromToday.getTime());
-                        }
-                        const newExpiryStr = newExpiry.toISOString().split('T')[0];
-                        const membershipTier = inferMembershipTier(st.membershipTier, st.price);
-                        const membershipPlan = MEMBERSHIP_PLANS[membershipTier];
-                        const renewedBonos = membershipPlan.bonuses;
-                        try {
-                            await withTimeout('students.auto_renew', supabase.from('students').update({
-                                classes_remaining: renewedBonos,
-                                bonos_asignados: renewedBonos,
-                                membership_tier: membershipTier,
-                                price: membershipPlan.price,
-                                membership_activated_at: today,
-                                archived_at: null,
-                                expiry_date: newExpiryStr,
-                                status: 'membresia'
-                            }).eq('id', st.id));
-                            setStudents(prev => prev.map(s => s.id === st.id ? {
-                                ...s,
-                                classesRemaining: renewedBonos,
-                                bonosAsignados: renewedBonos,
-                                membershipTier,
-                                price: membershipPlan.price,
-                                membershipActivatedAt: today,
-                                archivedAt: undefined,
-                                expiryDate: newExpiryStr,
-                                status: 'membresia' as const
-                            } : s));
-                            console.log(`Auto-renewed membership for ${st.name}: ${renewedBonos} bonos, expires ${newExpiryStr}`);
-                        } catch (err) { console.error(`Auto-renewal failed for ${st.name}:`, err); }
-                    }
-                })();
-            }
+            // Lifecycle is derived from the payment due date. Loading data must
+            // never renew unpaid memberships or persist automatic archival.
 
             setTeachers((teachersRes.data || []) as Teacher[]);
             setSessions(normalizedSessions);
@@ -326,6 +276,14 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setGiftCards(normalizedGiftCards);
             setInventoryItems((inventoryRes.data || []) as InventoryItem[]);
             setInventoryMovements((movementsRes.data || []) as InventoryMovement[]);
+            setWorkshopSchedule((scheduleRes.data || []).map((row: any) => ({
+                id: row.id,
+                dayOfWeek: Number(row.day_of_week),
+                slotIndex: Number(row.slot_index ?? 0),
+                isOpen: Boolean(row.is_open),
+                opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '',
+                closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : ''
+            })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
             setLoadError(null);
         } catch (error) {
             console.error('Supabase load error', error);
@@ -357,6 +315,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         if (!session) {
             setStudents([]); setSessions([]); setPieces([]);
             setGiftCards([]); setInventoryItems([]); setInventoryMovements([]); setTeachers([]);
+            setWorkshopSchedule([]);
             setLoadError(null);
         }
     }, [session, sedeId, isSuperAdmin, loadAllData]);
@@ -416,15 +375,63 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const deleteInventoryItem = async (id: string) => inventoryOps.deleteInventoryItem(getOpsContext(), id);
     const addInventoryMovement = async (m: Omit<InventoryMovement, 'id'>) => inventoryOps.addInventoryMovement(getOpsContext(), m);
 
+    const updateWorkshopSchedule = async (schedule: WorkshopScheduleDay[]) => {
+        if (!sedeId) {
+            showError('No se pudo identificar la sede activa.');
+            return false;
+        }
+        const rows = schedule.map(day => ({
+            id: day.id || crypto.randomUUID(),
+            sede_id: sedeId,
+            day_of_week: day.dayOfWeek,
+            slot_index: day.slotIndex,
+            is_open: day.isOpen,
+            opens_at: day.isOpen ? day.opensAt : null,
+            closes_at: day.isOpen ? day.closesAt : null
+        }));
+        try {
+            const currentIds = new Set(rows.map(row => row.id));
+            const staleIds = workshopSchedule.map(day => day.id).filter((id): id is string => !!id && !currentIds.has(id));
+            if (staleIds.length) {
+                const { error: deleteError } = await withTimeout('workshop_schedules.delete_stale',
+                    supabase.from('workshop_schedules').delete().eq('sede_id', sedeId).in('id', staleIds)
+                );
+                if (deleteError) {
+                    showError(`No se pudo actualizar el horario. ${deleteError.message || ''}`);
+                    return false;
+                }
+            }
+            const { error } = await withTimeout('workshop_schedules.upsert',
+                supabase.from('workshop_schedules').upsert(rows, { onConflict: 'id' })
+            );
+            if (error) {
+                showError(`No se pudo guardar el horario. ${error.message || ''}`);
+                return false;
+            }
+            setWorkshopSchedule(rows.map(row => ({
+                id: row.id,
+                dayOfWeek: row.day_of_week,
+                slotIndex: row.slot_index,
+                isOpen: row.is_open,
+                opensAt: row.opens_at || '',
+                closesAt: row.closes_at || ''
+            })));
+            return true;
+        } catch (error: any) {
+            showError(`No se pudo guardar el horario. ${error.message || 'Conexión lenta, inténtalo de nuevo.'}`);
+            return false;
+        }
+    };
+
     const value: DataContextType = {
-        students, sessions, pieces, giftCards, inventoryItems, inventoryMovements, teachers, isLoadingData, loadError,
+        students, sessions, pieces, giftCards, inventoryItems, inventoryMovements, teachers, workshopSchedule, isLoadingData, loadError,
         addStudent, updateStudent, deleteStudent, renewStudent,
         addSession, updateSession, deleteSession,
         addTeacher, updateTeacher, deleteTeacher,
         addPiece, updatePiece, deletePiece,
         addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard,
         redeemGiftCardSession, reverseGiftCardSession,
-        addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement,
+        addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement, updateWorkshopSchedule,
         loadAllData
     };
 

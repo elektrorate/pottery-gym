@@ -87,6 +87,7 @@ export const buildStudentPayload = (student: Partial<Student>) => {
     if (student.birthYear !== undefined) payload.birth_year = student.birthYear ? Number(student.birthYear) : null;
     if (student.classesRemaining !== undefined) payload.classes_remaining = student.classesRemaining;
     if (student.status !== undefined) payload.status = student.status;
+    if (student.paymentStatus !== undefined) payload.payment_status = student.paymentStatus;
     if (student.paymentMethod !== undefined) payload.payment_method = student.paymentMethod || null;
     if (student.notes !== undefined) payload.notes = student.notes || null;
     if (student.observations !== undefined) payload.observations = student.observations || null;
@@ -113,6 +114,7 @@ export const buildSessionPayload = (data: Partial<ClassSession>) => {
     if (data.startTime !== undefined || startTimestamp) payload.start_time = startTimestamp ?? data.startTime;
     if (data.endTime !== undefined || endTimestamp) payload.end_time = endTimestamp ?? data.endTime;
     if (data.classType !== undefined) payload.class_type = data.classType;
+    if (data.capacity !== undefined) payload.capacity = data.capacity;
     if (data.teacherId !== undefined) payload.teacher_id = data.teacherId || null;
     if (data.teacherSubstituteId !== undefined) payload.teacher_substitute_id = data.teacherSubstituteId || null;
     if (data.completedAt !== undefined) payload.completed_at = data.completedAt || null;
@@ -132,8 +134,9 @@ export const mapStudentRowToModel = (row: any): Student => ({
     birthDay: row.birth_day ? String(row.birth_day) : undefined,
     birthMonth: row.birth_month ? String(row.birth_month) : undefined,
     birthYear: row.birth_year ? String(row.birth_year) : undefined,
-    classesRemaining: row.student_category === 'temporal' ? Math.min(row.classes_remaining ?? 0, Math.min(3, Math.max(1, row.bonos_asignados ?? 1))) : (row.classes_remaining ?? 0),
+    classesRemaining: row.classes_remaining ?? 0,
     status: row.status || 'new',
+    paymentStatus: row.payment_status || undefined,
     paymentMethod: row.payment_method || undefined,
     notes: row.notes || undefined,
     observations: row.observations || undefined,
@@ -145,7 +148,7 @@ export const mapStudentRowToModel = (row: any): Student => ({
     membershipActivatedAt: row.membership_activated_at || undefined,
     archivedAt: row.archived_at || undefined,
     groupName: row.group_name || undefined,
-    bonosAsignados: row.student_category === 'temporal' ? Math.min(3, Math.max(1, row.bonos_asignados ?? 1)) : (row.bonos_asignados ?? 4),
+    bonosAsignados: row.bonos_asignados ?? (row.student_category === 'temporal' ? 1 : 4),
     repetirMensualmente: row.student_category === 'temporal' ? false : (row.repetir_mensualmente ?? false),
     createdAt: row.created_at || undefined
 });

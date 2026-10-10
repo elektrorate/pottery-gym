@@ -2,7 +2,8 @@ import { showError } from '../context/toast';
 import React, { useState, useMemo, useEffect } from 'react';
 import { Student, AssignedClass, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
-import { isStudentArchived } from '../utils/studentLifecycle';
+import { getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived } from '../utils/studentLifecycle';
+import { useWorkshopDate } from '../utils/useWorkshopDate';
 
 interface StudentListProps {
   students: Student[];
@@ -63,7 +64,8 @@ const StudentList: React.FC<StudentListProps> = ({
   const [studentToArchive, setStudentToArchive] = useState<string | null>(null);
   const [pendingCategory, setPendingCategory] = useState<'membresia' | 'temporal' | null>(null);
   const [pendingMembershipTier, setPendingMembershipTier] = useState<MembershipTier | null>(null);
-  const currentMonthKey = getMonthKey(new Date().toISOString().split('T')[0]);
+  const today = useWorkshopDate();
+  const currentMonthKey = getMonthKey(today);
   const [expandedAttendanceMonth, setExpandedAttendanceMonth] = useState(currentMonthKey);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -100,8 +102,8 @@ const StudentList: React.FC<StudentListProps> = ({
   }, [selectedStudentId, students, onClearSelectedStudent]);
 
   const getCalculatedStatus = (studentData: typeof form) => {
-    const today = new Date().toISOString().split('T')[0];
-    if (studentData.classesRemaining <= 0 || (studentData.expiryDate && studentData.expiryDate < today) || studentData.paymentStatus === 'pending') {
+    if (studentData.studentCategory === 'temporal') return 'new';
+    if (!studentData.expiryDate || studentData.expiryDate < today || studentData.paymentStatus === 'pending') {
       return 'needs_renewal';
     }
     return 'membresia';
@@ -120,9 +122,9 @@ const StudentList: React.FC<StudentListProps> = ({
       phone: student.phone,
       notes: student.notes || '',
       observations: student.observations || '',
-      classesRemaining: isTemporal ? Math.min(student.classesRemaining, Math.min(3, assignedBonuses)) : student.classesRemaining,
+      classesRemaining: student.classesRemaining,
       price: student.price ?? (isTemporal ? 0 : MEMBERSHIP_PLANS[membershipTier].price),
-      paymentStatus: (student.status === 'needs_renewal' && student.classesRemaining > 0) ? 'pending' : 'paid',
+      paymentStatus: getStudentPaymentStatus(student),
       classType: student.classType || 'Modelado',
       expiryDate: student.expiryDate || '',
       assignedClasses: student.assignedClasses || [],
@@ -130,7 +132,7 @@ const StudentList: React.FC<StudentListProps> = ({
       membershipTier,
       membershipActivatedAt: student.membershipActivatedAt || '',
       groupName: student.groupName || '',
-      bonosAsignados: isTemporal ? Math.min(3, Math.max(1, assignedBonuses)) : assignedBonuses,
+      bonosAsignados: assignedBonuses,
       repetirMensualmente: isTemporal ? false : (student.repetirMensualmente ?? false)
     });
     setShowModal(true);
@@ -145,7 +147,7 @@ const StudentList: React.FC<StudentListProps> = ({
       name: '', surname: '', email: '', phone: '', notes: '', observations: '',
       classesRemaining: MEMBERSHIP_PLANS.gold.bonuses, price: MEMBERSHIP_PLANS.gold.price, paymentStatus: 'paid', classType: 'Modelado',
       expiryDate: nextMonth.toISOString().split('T')[0], assignedClasses: [],
-      studentCategory: 'membresia', membershipTier: 'gold', membershipActivatedAt: new Date().toISOString().split('T')[0], groupName: '', bonosAsignados: MEMBERSHIP_PLANS.gold.bonuses, repetirMensualmente: false
+      studentCategory: 'membresia', membershipTier: 'gold', membershipActivatedAt: getWorkshopDate(), groupName: '', bonosAsignados: MEMBERSHIP_PLANS.gold.bonuses, repetirMensualmente: false
     });
     setShowModal(true);
   };
@@ -155,8 +157,8 @@ const StudentList: React.FC<StudentListProps> = ({
     setForm(current => ({
       ...current,
       studentCategory: category,
-      bonosAsignados: category === 'temporal' ? Math.min(3, Math.max(1, current.bonosAsignados)) : plan.bonuses,
-      classesRemaining: category === 'temporal' ? Math.min(3, current.classesRemaining) : Math.min(plan.bonuses, current.classesRemaining),
+      bonosAsignados: category === 'temporal' ? 1 : plan.bonuses,
+      classesRemaining: category === 'temporal' ? Math.min(1, current.classesRemaining) : Math.min(plan.bonuses, current.classesRemaining),
       repetirMensualmente: category === 'membresia' ? current.repetirMensualmente : false
     }));
     setPendingCategory(null);
@@ -193,19 +195,19 @@ const StudentList: React.FC<StudentListProps> = ({
     }
     const isMembership = form.studentCategory === 'membresia';
     const plan = MEMBERSHIP_PLANS[form.membershipTier];
-    const membershipActivatedAt = form.membershipActivatedAt || editingStudent?.membershipActivatedAt || editingStudent?.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0];
-    const shouldUnarchive = Boolean(editingStudent?.archivedAt) && form.classesRemaining > 0 && (!isMembership || form.paymentStatus === 'paid');
+    const membershipActivatedAt = form.membershipActivatedAt || editingStudent?.membershipActivatedAt || editingStudent?.createdAt?.split('T')[0] || getWorkshopDate();
+    const shouldUnarchive = Boolean(editingStudent?.archivedAt) && isMembership && form.paymentStatus === 'paid' && form.expiryDate >= today;
     const { assignedClasses: _assignedClasses, ...studentForm } = form;
     const data = {
       ...studentForm,
       price: isMembership ? plan.price : form.price,
-      bonosAsignados: isMembership ? form.bonosAsignados : Math.min(3, Math.max(1, form.bonosAsignados)),
-      classesRemaining: isMembership ? form.classesRemaining : Math.min(3, Math.max(0, form.classesRemaining)),
+      bonosAsignados: isMembership ? form.bonosAsignados : Math.min(Math.max(1, editingStudent?.studentCategory === 'temporal' ? editingStudent.bonosAsignados ?? 1 : 1), Math.max(1, form.bonosAsignados)),
+      classesRemaining: Math.max(0, form.classesRemaining),
       repetirMensualmente: isMembership ? form.repetirMensualmente : false,
       membershipTier: isMembership ? form.membershipTier : undefined,
       membershipActivatedAt: isMembership ? membershipActivatedAt : undefined,
       archivedAt: shouldUnarchive ? '' : editingStudent?.archivedAt,
-      status: getCalculatedStatus(form) as 'needs_renewal' | 'membresia',
+      status: getCalculatedStatus(form) as Student['status'],
       groupName: ''
     };
     setShowModal(false);
@@ -257,10 +259,9 @@ const StudentList: React.FC<StudentListProps> = ({
   }, {});
 
   const filteredStudents = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
     return students.filter(s => {
       const archived = isStudentArchived(s, today);
-      const isPending = s.status === 'needs_renewal' || s.classesRemaining <= 0 || (s.expiryDate && s.expiryDate < today);
+      const lifecycle = getStudentLifecycle(s, today);
       const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
       const matchesSearch = !searchQuery.trim() || fullName.includes(searchQuery.trim().toLowerCase());
       const cat = s.studentCategory || 'membresia';
@@ -268,12 +269,12 @@ const StudentList: React.FC<StudentListProps> = ({
       const membershipTier = inferMembershipTier(s.membershipTier, s.price);
       const matchesTier = categoryFilter !== 'membresia' || membershipTierFilter === 'todos' || membershipTier === membershipTierFilter;
       if (categoryFilter === 'archivados') return archived && matchesSearch;
-      if (archived) return false;
-      if (activeTab === 'pending') return isPending && matchesCategory;
-      if (activeTab === 'active') return !isPending && matchesCategory && matchesTier;
+      if (archived || !matchesSearch || !matchesCategory || !matchesTier) return false;
+      if (activeTab === 'pending') return lifecycle === 'pending';
+      if (activeTab === 'active') return lifecycle === 'active';
       return matchesSearch && matchesCategory && matchesTier;
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [students, activeTab, searchQuery, categoryFilter, membershipTierFilter]);
+  }, [students, activeTab, searchQuery, categoryFilter, membershipTierFilter, today]);
 
   const suggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -288,7 +289,7 @@ const StudentList: React.FC<StudentListProps> = ({
     const counts: Record<string, number> = { todos: 0, membresia: 0, temporal: 0, archivados: 0 };
     students.forEach(s => {
       const cat = s.studentCategory || 'membresia';
-      if (isStudentArchived(s)) counts.archivados++;
+      if (isStudentArchived(s, today)) counts.archivados++;
       else {
         counts.todos++;
         if (cat === 'membresia') counts.membresia++;
@@ -296,7 +297,7 @@ const StudentList: React.FC<StudentListProps> = ({
       }
     });
     return counts;
-  }, [students]);
+  }, [students, today]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[#F7F3EF] text-neutral-textMain" style={{ fontFamily: "'Outfit', sans-serif" }}>
@@ -334,7 +335,7 @@ const StudentList: React.FC<StudentListProps> = ({
                  {(['all', 'active', 'pending'] as TabType[]).map(tab => <button key={tab} onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`shrink-0 h-9 border-b-2 text-[12px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'border-[#7B3F22] text-[#7B3F22]' : 'border-transparent text-[#8B6B5E] hover:text-[#7B3F22]'}`}>{tab === 'all' ? 'Todos' : tab === 'active' ? 'Al día' : 'Pendientes'}</button>)}
               </div>
               <div className="flex gap-2 sm:ml-auto overflow-x-auto no-scrollbar">
-                 {(['todos', 'membresia', 'temporal', 'archivados'] as CategoryFilter[]).map(cat => <button key={cat} onClick={() => setCategoryFilter(cat)} className={`shrink-0 px-3 h-8 rounded-md text-[12px] font-bold uppercase tracking-[0.08em] border transition-colors ${categoryFilter === cat ? 'bg-[#F0E2D6] border-[#C68952] text-[#7B3F22]' : 'bg-white border-[#DDBFA4] text-[#8B6B5E] hover:border-[#C68952]'}`}>{cat === 'todos' ? 'Todos' : CATEGORY_LABELS[cat]} <span className="opacity-60">{categoryCounts[cat] || 0}</span></button>)}
+                 {(['todos', 'membresia', 'temporal', 'archivados'] as CategoryFilter[]).map(cat => <button key={cat} onClick={() => { setCategoryFilter(cat); setActiveTab('all'); }} className={`shrink-0 px-3 h-8 rounded-md text-[12px] font-bold uppercase tracking-[0.08em] border transition-colors ${categoryFilter === cat ? 'bg-[#F0E2D6] border-[#C68952] text-[#7B3F22]' : 'bg-white border-[#DDBFA4] text-[#8B6B5E] hover:border-[#C68952]'}`}>{cat === 'todos' ? 'Todos' : CATEGORY_LABELS[cat]} <span className="opacity-60">{categoryCounts[cat] || 0}</span></button>)}
               </div>
             </div>
             {categoryFilter === 'membresia' && <div className="flex flex-wrap gap-1.5 mt-2">
@@ -345,9 +346,8 @@ const StudentList: React.FC<StudentListProps> = ({
            <div className="bg-white border border-[#DDBFA4] rounded-xl overflow-hidden">
              <div className="hidden md:grid grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-4 px-5 py-3 border-b border-[#EDE2D8] text-[12px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E]"><span>Alumno</span><span>Actividad</span><span>Bonos</span><span>Estado</span></div>
             {filteredStudents.length === 0 ? <div className="px-6 py-16 text-center"><p className="text-[15px] text-[#7B3F22]" style={{ fontFamily: "'Outfit', sans-serif" }}>No hay alumnos que mostrar</p><p className="text-[12px] text-[#8B6B5E] mt-1">Prueba a cambiar la búsqueda o los filtros.</p></div> : filteredStudents.map(s => {
-              const today = new Date().toISOString().split('T')[0];
               const isArchived = isStudentArchived(s, today);
-              const isPending = s.status === 'needs_renewal' || s.classesRemaining <= 0 || (s.expiryDate && s.expiryDate < today);
+              const isPending = getStudentLifecycle(s, today) === 'pending';
               const cat = s.studentCategory || 'membresia';
               const membershipTier = inferMembershipTier(s.membershipTier, s.price);
               const initials = `${s.name.charAt(0)}${s.surname?.charAt(0) || ''}`.toUpperCase();
@@ -356,7 +356,7 @@ const StudentList: React.FC<StudentListProps> = ({
                   <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{s.name} {s.surname}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{s.classType || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : CATEGORY_LABELS[cat] || cat}</span></span></div>
                   <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{s.classType || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? MEMBERSHIP_PLANS[membershipTier].label : CATEGORY_LABELS[cat] || cat}</span></div>
                   <div className="text-right md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados || 4}</span></strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
-                  <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : isPending ? 'Revisar' : 'Al día'}</span>
+                  <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Inactivo' : cat === 'temporal' ? 'Temporal' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
           </div>
@@ -385,7 +385,7 @@ const StudentList: React.FC<StudentListProps> = ({
                      <div className="flex items-center bg-white border border-[#E7B899] rounded-md overflow-hidden h-10">
                        <button type="button" onClick={() => setForm(f => ({ ...f, bonosAsignados: Math.max(1, f.bonosAsignados - 1) }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Reducir bonos">-</button>
                       <input type="number" readOnly value={form.bonosAsignados} aria-label="Bonos contratados" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />
-                       <button type="button" onClick={() => setForm(f => ({ ...f, bonosAsignados: Math.min(f.studentCategory === 'temporal' ? 3 : MEMBERSHIP_PLANS[f.membershipTier].bonuses, f.bonosAsignados + 1) }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Aumentar bonos">+</button>
+                       <button type="button" onClick={() => setForm(f => ({ ...f, bonosAsignados: Math.min(f.studentCategory === 'temporal' ? Math.max(1, editingStudent?.studentCategory === 'temporal' ? editingStudent.bonosAsignados ?? 1 : 1) : MEMBERSHIP_PLANS[f.membershipTier].bonuses, f.bonosAsignados + 1) }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Aumentar bonos">+</button>
                     </div>
                   </div>
                   <div>
@@ -399,8 +399,8 @@ const StudentList: React.FC<StudentListProps> = ({
                 </div>
                  <div className="h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-2"><div className={`h-full ${form.classesRemaining <= 0 ? 'bg-[#A85D3B]' : 'bg-[#7B3F22]'}`} style={{ width: `${Math.min(100, (form.classesRemaining / form.bonosAsignados) * 100)}%` }} /></div>
                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
-                   <input type="date" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} aria-label="Fecha de expiración" className="h-10 px-2.5 bg-white border border-[#E7B899] rounded-md text-[12px] text-[#A85D3B] outline-none focus:border-[#C68952]" />
-                    {form.studentCategory === 'membresia' && <button type="button" onClick={() => setForm(f => ({ ...f, repetirMensualmente: !f.repetirMensualmente }))} className={`h-10 rounded-md border text-[10px] font-bold uppercase tracking-[0.1em] transition-colors ${form.repetirMensualmente ? 'bg-[#7B3F22] text-white border-[#7B3F22]' : 'bg-white text-[#A85D3B] border-[#E7B899] hover:border-[#C68952]'}`}>{form.repetirMensualmente ? 'Renovación activa' : 'Activar renovación'}</button>}
+                   <input type="date" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} aria-label="Fecha de vencimiento de pago" className="h-10 px-2.5 bg-white border border-[#E7B899] rounded-md text-[12px] text-[#A85D3B] outline-none focus:border-[#C68952]" />
+                    {form.studentCategory === 'membresia' && <p className="text-[12px] text-[#8B6B5E]">Vencimiento de pago: pendiente al vencer e inactivo desde el sexto día. Renovar confirma el pago.</p>}
                 </div>
               </section>
             </div>
@@ -454,7 +454,7 @@ const StudentList: React.FC<StudentListProps> = ({
 
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory === 'temporal' ? 'Temporal' : 'Membresía'}. Se ajustarán sus bonos y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y los bonos contratados.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />
-        <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo al renovar o añadir bonos." confirmText="Archivar" isDestructive={false} onConfirm={() => { if (studentToArchive) { const idToArchive = studentToArchive; setStudentToArchive(null); setShowModal(false); setEditingStudent(null); onUpdate(idToArchive, { archivedAt: new Date().toISOString().split('T')[0] }); } }} onCancel={() => setStudentToArchive(null)} />
+        <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo al renovar o añadir bonos." confirmText="Archivar" isDestructive={false} onConfirm={() => { if (studentToArchive) { const idToArchive = studentToArchive; setStudentToArchive(null); setShowModal(false); setEditingStudent(null); onUpdate(idToArchive, { archivedAt: getWorkshopDate() }); } }} onCancel={() => setStudentToArchive(null)} />
        <ConfirmModal isOpen={!!studentToDelete} title="¿Eliminar alumno?" message="¿Seguro que deseas eliminar el historial de este alumno? Esta acción no se puede deshacer." isDestructive={true} onConfirm={() => { if (studentToDelete) { const idToDelete = studentToDelete; setStudentToDelete(null); setShowModal(false); setEditingStudent(null); onDeleteStudent(idToDelete); } }} onCancel={() => setStudentToDelete(null)} />
     </div>
   );

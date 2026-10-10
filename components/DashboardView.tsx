@@ -2,13 +2,10 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard } from '../types';
 import { showError } from '../context/toast';
-import { isStudentArchived } from '../utils/studentLifecycle';
+import { getStudentLifecycle, getStudentPaymentStatus, isStudentArchived } from '../utils/studentLifecycle';
+import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 
-const getDateKey = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
 
 interface DashboardViewProps {
   students: Student[];
@@ -81,12 +78,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
     return map[type] || 'Sesion';
   };
 
-  const [todayStr, setTodayStr] = useState(getDateKey);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setTodayStr(getDateKey()), 60_000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const todayStr = useWorkshopDate();
 
   // ─── TODAY's data ───
   const todaySessions = useMemo(() =>
@@ -102,21 +94,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
   // ─── GLOBAL stats ───
   const globalStats = useMemo(() => {
     const totalStudents = students.length;
-     const activeStudents = students.filter(s =>
-       !isStudentArchived(s)
-       &&
-       (s.studentCategory || 'membresia') === 'membresia'
-       && s.status !== 'needs_renewal'
-       && s.classesRemaining > 0
-     ).length;
-     const pendingStudents = students.filter(s =>
-       !isStudentArchived(s)
-       &&
-       (s.studentCategory || 'membresia') === 'membresia'
-        && s.status === 'needs_renewal'
-        && s.classesRemaining > 0
-        && !(s.expiryDate && s.expiryDate < todayStr)
-      ).length;
+     const activeStudents = students.filter(s => getStudentLifecycle(s, todayStr) === 'active').length;
+     const pendingStudents = students.filter(s => getStudentLifecycle(s, todayStr) === 'pending').length;
      const totalSessions = sessions.length;
 
     // Students by category
@@ -165,8 +144,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
       const isMembership = (student.studentCategory || 'membresia') === 'membresia';
       const isExpired = Boolean(student.expiryDate && student.expiryDate < todayStr);
       const isPaymentPending = isMembership
-        && student.status === 'needs_renewal'
-        && student.classesRemaining > 0
+        && getStudentPaymentStatus(student) === 'pending'
         && !isExpired;
 
       if (student.classesRemaining <= 1 && student.classesRemaining >= 0) {
@@ -310,17 +288,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
               continue;
             }
 
-            if (student.studentCategory === 'temporal') {
-              throw new Error(`${name} no tiene una Gift Card activa vinculada.`);
-            }
-
             const maxBonuses = student.bonosAsignados ?? 4;
             const nextClassesRemaining = isPresent
               ? Math.max(0, student.classesRemaining - 1)
               : Math.min(maxBonuses, student.classesRemaining + 1);
             await onUpdateStudent(student.id, {
-              classesRemaining: nextClassesRemaining,
-              status: isPresent && nextClassesRemaining <= 0 ? 'needs_renewal' : student.status
+              classesRemaining: nextClassesRemaining
             });
           }
 

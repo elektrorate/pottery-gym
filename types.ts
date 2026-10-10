@@ -45,7 +45,8 @@ export interface Student {
   birthMonth?: string;
   birthYear?: string;
   classesRemaining: number;
-  status: 'membresia' | 'needs_renewal' | 'new';
+  status: 'membresia' | 'needs_renewal' | 'new' | 'active';
+  paymentStatus?: 'paid' | 'pending';
   paymentMethod?: string;
   notes?: string;
   observations?: string;
@@ -69,6 +70,7 @@ export interface ClassSession {
   startTime: string;
   endTime: string;
   classType: 'mesa' | 'torno' | 'coworking' | 'workshop' | 'privada' | 'feriado';
+  capacity?: number;
   students: string[]; // List of student names
   attendance?: Record<string, 'present' | 'absent'>; // Record key is student name or ID
   studentIds?: string[];
@@ -80,6 +82,18 @@ export interface ClassSession {
   workshopName?: string;
   privateReason?: string;
   sessionAudience?: 'membresia' | 'temporal' | 'ambos'; // Audiencia: membresía (permanentes), temporal, o ambos
+}
+
+export const getDefaultSessionCapacity = (classType: ClassSession['classType']): number =>
+  classType === 'torno' ? 5 : 8;
+
+export interface WorkshopScheduleDay {
+  id?: string;
+  dayOfWeek: number; // JavaScript day: 0 Sunday through 6 Saturday
+  slotIndex: number;
+  isOpen: boolean;
+  opensAt: string;
+  closesAt: string;
 }
 
 export interface Teacher {

@@ -1,7 +1,9 @@
-import { showError, showWarning } from '../context/toast';
-import React, { useState } from 'react';
+import { showError } from '../context/toast';
+import React, { useEffect, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../supabaseClient';
+import type { WorkshopScheduleDay } from '../types';
 import * as XLSX from 'xlsx';
 
 /* ─── Collapsible Section ─── */
@@ -10,14 +12,22 @@ const Section: React.FC<{
   title: string;
   subtitle: string;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   badge?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ icon, title, subtitle, defaultOpen = false, badge, children }) => {
-  const [open, setOpen] = useState(defaultOpen);
+}> = ({ icon, title, subtitle, defaultOpen = false, open: controlledOpen, onOpenChange, badge, children }) => {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? internalOpen;
+  const toggleOpen = () => {
+    const nextOpen = !open;
+    if (onOpenChange) onOpenChange(nextOpen);
+    else setInternalOpen(nextOpen);
+  };
   return (
     <div className={`border border-neutral-border rounded-2xl overflow-hidden transition-all duration-300 ${open ? 'bg-white soft-shadow' : 'bg-neutral-sec/60 hover:bg-white hover:shadow-sm'}`}>
       <button
-        onClick={() => setOpen(!open)}
+        onClick={toggleOpen}
         className="w-full flex items-center gap-3 px-4 py-3.5 text-left group"
       >
         <div className={`w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0 transition-colors ${open ? 'bg-brand-soft text-brand' : 'bg-neutral-sec text-neutral-textHelper group-hover:bg-brand-soft group-hover:text-brand'}`}>
@@ -60,10 +70,19 @@ const CompactField: React.FC<{
 const inputClass = "ui-control w-full px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-neutral-textMain focus:outline-none focus:ring-2 focus:ring-brand/15 focus:border-brand transition-all placeholder:text-neutral-textHelper";
 const selectClass = `${inputClass} appearance-none`;
 
+const scheduleDayLabels = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const defaultWorkshopSchedule = (): WorkshopScheduleDay[] => scheduleDayLabels.map((_, dayOfWeek) => ({
+  dayOfWeek,
+  slotIndex: 0,
+  isOpen: false,
+  opensAt: '',
+  closesAt: ''
+}));
+
 
 const SettingsView: React.FC = () => {
-  const { students, sessions, pieces, giftCards, teachers, inventoryItems, inventoryMovements } = useData();
-  const { profile } = useAuth();
+  const { students, sessions, pieces, giftCards, teachers, inventoryItems, inventoryMovements, updateSession, workshopSchedule, updateWorkshopSchedule } = useData();
+  const { profile, sedeId } = useAuth();
 
   // Config states — persisted in localStorage
   const storageKey = `settings_${profile?.id || 'default'}`;
@@ -85,6 +104,120 @@ const SettingsView: React.FC = () => {
   const [passwordForm, setPasswordForm] = useState({ newPassword: '', confirmPassword: '' });
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [capacityDrafts, setCapacityDrafts] = useState<Record<string, string>>({});
+  const [savingCapacityId, setSavingCapacityId] = useState<string | null>(null);
+  const [scheduleDraft, setScheduleDraft] = useState<WorkshopScheduleDay[]>(defaultWorkshopSchedule);
+  const [savingScheduleDay, setSavingScheduleDay] = useState<number | null>(null);
+  const [openScheduleDays, setOpenScheduleDays] = useState<Record<number, boolean>>({});
+  const [isScheduleSectionOpen, setIsScheduleSectionOpen] = useState(false);
+
+  useEffect(() => {
+    if (workshopSchedule.length > 0) {
+      setScheduleDraft(defaultWorkshopSchedule().flatMap(defaultDay => {
+        const savedSlots = workshopSchedule.filter(day => day.dayOfWeek === defaultDay.dayOfWeek);
+        return savedSlots.length ? savedSlots : [defaultDay];
+      }));
+    }
+  }, [workshopSchedule]);
+
+  const replaceDaySlots = (dayOfWeek: number, slots: WorkshopScheduleDay[]) => {
+    setScheduleDraft(previous => [
+      ...previous.filter(day => day.dayOfWeek !== dayOfWeek),
+      ...slots.map((slot, slotIndex) => ({ ...slot, dayOfWeek, slotIndex }))
+    ].sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
+  };
+
+  const toggleScheduleDay = (dayOfWeek: number, isOpen: boolean) => {
+    const currentSlot = scheduleDraft.find(day => day.dayOfWeek === dayOfWeek);
+    setOpenScheduleDays(previous => ({ ...previous, [dayOfWeek]: true }));
+    replaceDaySlots(dayOfWeek, isOpen
+      ? [{ ...(currentSlot || {}), dayOfWeek, slotIndex: 0, isOpen: true, opensAt: currentSlot?.opensAt || '10:00', closesAt: currentSlot?.closesAt || '20:00' }]
+      : [{ ...(currentSlot || {}), dayOfWeek, slotIndex: 0, isOpen: false, opensAt: '', closesAt: '' }]);
+  };
+
+  const addScheduleSlot = (dayOfWeek: number) => {
+    const slots = scheduleDraft.filter(day => day.dayOfWeek === dayOfWeek && day.isOpen);
+    replaceDaySlots(dayOfWeek, [
+      ...slots,
+      {
+        dayOfWeek,
+        slotIndex: slots.length,
+        isOpen: true,
+        opensAt: '16:00',
+        closesAt: '20:00'
+      }
+    ]);
+  };
+
+  const removeScheduleSlot = (dayOfWeek: number, slotIndex: number) => {
+    const slots = scheduleDraft.filter(day => day.dayOfWeek === dayOfWeek && day.isOpen && day.slotIndex !== slotIndex);
+    replaceDaySlots(dayOfWeek, slots.length ? slots : [{ dayOfWeek, slotIndex: 0, isOpen: false, opensAt: '', closesAt: '' }]);
+  };
+
+  const saveWorkshopScheduleDay = async (dayOfWeek: number) => {
+    const daySlots = scheduleDraft
+      .filter(day => day.dayOfWeek === dayOfWeek && day.isOpen)
+      .sort((a, b) => a.opensAt.localeCompare(b.opensAt));
+    const invalidSlot = daySlots.find(day => !day.opensAt || !day.closesAt || day.opensAt >= day.closesAt);
+    if (invalidSlot) {
+      showError(`Revisa el horario del ${scheduleDayLabels[dayOfWeek].toLowerCase()}.`);
+      return;
+    }
+    if (daySlots.some((slot, index) => index > 0 && slot.opensAt < daySlots[index - 1].closesAt)) {
+      showError(`Hay horarios solapados el ${scheduleDayLabels[dayOfWeek].toLowerCase()}.`);
+      return;
+    }
+
+    const persistedSchedule = scheduleDayLabels.flatMap((_, currentDay) => {
+      if (currentDay === dayOfWeek) {
+        return daySlots.length
+          ? daySlots
+          : [{ dayOfWeek: currentDay, slotIndex: 0, isOpen: false, opensAt: '', closesAt: '' }];
+      }
+      const savedSlots = workshopSchedule.filter(day => day.dayOfWeek === currentDay);
+      return savedSlots.length
+        ? savedSlots
+        : [{ dayOfWeek: currentDay, slotIndex: 0, isOpen: false, opensAt: '', closesAt: '' }];
+    });
+
+    setSavingScheduleDay(dayOfWeek);
+    try {
+      const saved = await updateWorkshopSchedule(persistedSchedule);
+      if (saved) {
+        setOpenScheduleDays(previous => ({ ...previous, [dayOfWeek]: false }));
+        setIsScheduleSectionOpen(false);
+      }
+    } finally {
+      setSavingScheduleDay(null);
+    }
+  };
+
+  const getSessionCapacity = (session: typeof sessions[number]) => session.capacity ?? (session.classType === 'torno' ? 5 : 8);
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingSessions = sessions
+    .filter(session => session.date >= today && session.classType !== 'feriado')
+    .sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`))
+    .slice(0, 40);
+
+  const saveSessionCapacity = async (session: typeof sessions[number]) => {
+    const rawValue = capacityDrafts[session.id] ?? String(getSessionCapacity(session));
+    const capacity = Number(rawValue);
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 100) {
+      showError('La capacidad debe ser un número entero entre 1 y 100.');
+      return;
+    }
+    if (capacity < session.students.length) {
+      showError(`No puede ser menor que los ${session.students.length} alumnos inscritos.`);
+      return;
+    }
+    setSavingCapacityId(session.id);
+    try {
+      await updateSession(session.id, { capacity });
+      setCapacityDrafts(previous => ({ ...previous, [session.id]: String(capacity) }));
+    } finally {
+      setSavingCapacityId(null);
+    }
+  };
 
   const saveSettings = () => {
     const config = {
@@ -102,7 +235,7 @@ const SettingsView: React.FC = () => {
   };
 
   // ── Excel Export (real, functional) ──
-  const exportToExcel = (mode: 'all' | 'students' | 'sessions' | 'teachers' | 'pieces' | 'giftcards' | 'inventory') => {
+  const exportToExcel = async (mode: 'all' | 'students' | 'sessions' | 'teachers' | 'pieces' | 'giftcards' | 'inventory') => {
     setIsExporting(true);
 
     try {
@@ -125,29 +258,59 @@ const SettingsView: React.FC = () => {
         XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
       };
 
+      if (mode === 'all') {
+        addSheet('Resumen', [{
+          'Fecha de exportación': today,
+          'Sede ID': sedeId || 'Todas las sedes autorizadas',
+          Alumnos: students.length,
+          Sesiones: sessions.length,
+          Profesores: teachers.length,
+          Piezas: pieces.length,
+          'Bonos regalo': giftCards.length,
+          Inventario: inventoryItems.length,
+          'Movimientos inventario': inventoryMovements.length
+        }]);
+      }
       if (mode === 'all' || mode === 'students') {
         addSheet('Alumnos', students.map(s => ({
+          ID: s.id,
           Nombre: s.name || '', Apellido: s.surname || '', Email: s.email || '',
           Teléfono: s.phone || '', Estado: s.status || '', 'Clases restantes': s.classesRemaining ?? 0,
           'Método de pago': s.paymentMethod || '', Precio: s.price ?? '',
-          'Tipo de clase': s.classType || '', Notas: s.notes || '', Observaciones: s.observations || ''
+          'Tipo de clase': s.classType || '', Categoría: s.studentCategory || '', Grupo: s.groupName || '',
+          'Fecha alta': s.createdAt || '', 'Fecha vencimiento': s.expiryDate || '',
+          Notas: s.notes || '', Observaciones: s.observations || ''
         })));
       }
       if (mode === 'all' || mode === 'sessions') {
         addSheet('Sesiones', sessions.map(s => ({
+          ID: s.id,
           Fecha: s.date || '', Inicio: s.startTime || '', Fin: s.endTime || '',
-          'Tipo de clase': s.classType || '', Alumnos: (s.students || []).join(', '),
-          Taller: s.workshopName || '', Completada: s.completedAt ? 'Sí' : 'No'
+          'Tipo de clase': s.classType || '', 'Cupo máximo': s.capacity ?? (s.classType === 'torno' ? 5 : 8),
+          Inscritos: s.students.length, Alumnos: (s.students || []).join(', '),
+          'Profesor ID': s.teacherId || '', Taller: s.workshopName || '',
+          Audiencia: s.sessionAudience || '', Completada: s.completedAt ? 'Sí' : 'No'
         })));
+        if (mode === 'all') {
+          addSheet('Asistencia', sessions.flatMap(session => session.students.map((studentName, index) => ({
+            'Sesión ID': session.id,
+            Fecha: session.date,
+            'Alumno ID': session.studentIds?.[index] || '',
+            Alumno: studentName,
+            Estado: session.attendance?.[studentName] || 'pendiente'
+          }))));
+        }
       }
       if (mode === 'all' || mode === 'teachers') {
         addSheet('Profesores', teachers.map(t => ({
+          ID: t.id,
           Nombre: t.name || '', Apellido: t.surname || '', Especialidad: t.specialty || '',
           Email: t.email || '', Teléfono: t.phone || '', Notas: t.notes || ''
         })));
       }
       if (mode === 'all' || mode === 'pieces') {
         addSheet('Piezas', pieces.map(p => ({
+          ID: p.id,
           Propietario: p.owner || '', Descripción: p.description || '', Estado: p.status || '',
           'Tipo de esmalte': p.glazeType || '', 'Fecha entrega': p.deliveryDate || '',
           Notas: p.notes || '', Comentarios: p.extraCommentary || ''
@@ -155,13 +318,29 @@ const SettingsView: React.FC = () => {
       }
       if (mode === 'all' || mode === 'giftcards') {
         addSheet('Bonos Regalo', giftCards.map(g => ({
+          ID: g.id, Código: g.code || '',
           Comprador: g.buyer || '', Destinatario: g.recipient || '',
           'Nº Clases': g.numClasses ?? '', Tipo: g.type || '',
-          'Fecha de emisión': g.issuedDate || '', Comentarios: g.extraCommentary || ''
+          Usadas: g.sessionsUsed ?? 0, Restantes: g.sessionsRemaining ?? 0,
+          Estado: g.status || '', 'Fecha de emisión': g.issuedDate || '',
+          'Fecha caducidad': g.expiryDate || '', Comentarios: g.extraCommentary || ''
         })));
+        if (mode === 'all') {
+          addSheet('Mov. Bonos', giftCards.flatMap(card => (card.movements || []).map(movement => ({
+            ID: movement.id,
+            'Bono ID': movement.giftCardId,
+            'Sesión ID': movement.sessionId || '',
+            'Alumno ID': movement.studentId || '',
+            Tipo: movement.type,
+            'Variación clases': movement.sessionsDelta,
+            Nota: movement.note || '',
+            Fecha: movement.createdAt
+          }))));
+        }
       }
       if (mode === 'all' || mode === 'inventory') {
         addSheet('Inventario', inventoryItems.map((item: any) => ({
+          ID: item.id,
           Nombre: item.name || '', Categoría: item.category || '', Código: item.code || '',
           'Cantidad actual': item.current_quantity ?? 0, Unidad: item.unit || '',
           'Cantidad mínima': item.min_quantity ?? 0, Estado: item.status || '',
@@ -169,10 +348,30 @@ const SettingsView: React.FC = () => {
         })));
         if (mode === 'all') {
           addSheet('Movimientos Inv.', inventoryMovements.map((m: any) => ({
+            ID: m.id, 'Artículo ID': m.item_id || '',
             Tipo: m.type || '', Cantidad: m.quantity ?? '', 'Nueva cantidad': m.new_quantity ?? '',
             Unidad: m.unit || '', Razón: m.reason || '', Fecha: m.date || '', Notas: m.notes || ''
           })));
         }
+      }
+
+      if (mode === 'all') {
+        // These tables are not needed by the daily UI, so load them only for the full backup.
+        const extraTables = ['payments', 'packages', 'student_assigned_classes', 'sedes', 'sede_members', 'workshop_schedules'] as const;
+        const extraRows = await Promise.all(extraTables.map(async table => {
+          const { data, error } = await supabase.from(table).select('*');
+          if (error) {
+            console.warn(`Backup: no se pudo exportar ${table}:`, error.message);
+            return { table, rows: [] as Record<string, unknown>[] };
+          }
+          return {
+            table,
+            rows: (data || []).map(row => Object.fromEntries(
+              Object.entries(row as Record<string, unknown>).filter(([key]) => !/(password|token|secret|api.?key)/i.test(key))
+            ))
+          };
+        }));
+        extraRows.forEach(({ table, rows }) => addSheet(table.slice(0, 31), rows));
       }
 
       const fileName = mode === 'all'
@@ -188,8 +387,6 @@ const SettingsView: React.FC = () => {
       setIsExporting(false);
     }
   };
-
-  const totalRecords = students.length + sessions.length + pieces.length + giftCards.length + teachers.length + inventoryItems.length;
 
   /* ── Icons ── */
   const IconWorkshop = (
@@ -214,8 +411,8 @@ const SettingsView: React.FC = () => {
       {/* ── Header ── */}
       <div className="mb-5">
         <p className="eyebrow mb-1.5">Configuración</p>
-        <h2 className="ui-page-title text-neutral-textMain">Ajustes</h2>
-        <p className="ui-secondary mt-1">Personaliza tu taller y gestiona tus datos</p>
+        <h2 className="ui-page-title text-neutral-textMain">Administración del taller</h2>
+        <p className="ui-secondary mt-1">Gestiona capacidades, seguridad y respaldos de tu sede</p>
       </div>
 
       {/* ── Sections ── */}
@@ -309,8 +506,166 @@ const SettingsView: React.FC = () => {
           </div>
         </Section>
 
+        {/* ─── 2. HORARIO Y CUPOS DEL TALLER ─── */}
+        <Section
+          icon={
+            <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="8.5" strokeWidth="2" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 7v5l3 2" />
+            </svg>
+          }
+          title="Horario y cupos del taller"
+          subtitle="Gestiona franjas de apertura y capacidad de cada clase"
+          defaultOpen={false}
+          open={isScheduleSectionOpen}
+          onOpenChange={setIsScheduleSectionOpen}
+        >
+          <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-neutral-textMain">Días y franjas</h3>
+                  <p className="text-[12px] text-neutral-textHelper">Cada día se guarda por separado.</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {scheduleDayLabels.map((label, dayOfWeek) => {
+                  const slots = scheduleDraft.filter(day => day.dayOfWeek === dayOfWeek && day.isOpen);
+                  const isOpen = slots.length > 0;
+                  const isExpanded = openScheduleDays[dayOfWeek] ?? false;
+                  return (
+                    <div key={dayOfWeek} className="rounded-xl border border-neutral-border bg-neutral-sec/50 px-3 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="flex min-h-10 items-center gap-3 text-[13px] font-semibold text-neutral-textMain">
+                          <input
+                            type="checkbox"
+                            checked={isOpen}
+                            onChange={event => toggleScheduleDay(dayOfWeek, event.target.checked)}
+                            className="h-4 w-4 accent-brand"
+                          />
+                          {label}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {isOpen && (
+                            <button
+                              type="button"
+                              onClick={() => { setOpenScheduleDays(previous => ({ ...previous, [dayOfWeek]: true })); addScheduleSlot(dayOfWeek); }}
+                              className="min-h-9 rounded-[9px] border border-brand/30 bg-brand-soft px-3 text-[12px] font-semibold text-brand transition hover:bg-brand/15"
+                            >
+                              + Añadir horario
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setOpenScheduleDays(previous => ({ ...previous, [dayOfWeek]: !isExpanded }))}
+                            className="min-h-9 rounded-[9px] px-3 text-[12px] font-semibold text-neutral-textHelper transition hover:bg-white hover:text-brand"
+                          >
+                            {isExpanded ? 'Ocultar' : 'Editar'}
+                          </button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="mt-2 space-y-2 border-t border-neutral-border pt-2">
+                          {isOpen ? slots.map(slot => (
+                            <div key={`${dayOfWeek}-${slot.slotIndex}`} className="flex flex-wrap items-center gap-2 sm:pl-2">
+                              <span className="w-16 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">Franja {slot.slotIndex + 1}</span>
+                              <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">
+                                Abre
+                                <input
+                                  aria-label={`${label} franja ${slot.slotIndex + 1} hora de apertura`}
+                                  type="time"
+                                  value={slot.opensAt}
+                                  onChange={event => setScheduleDraft(previous => previous.map(item => item.dayOfWeek === dayOfWeek && item.slotIndex === slot.slotIndex ? { ...item, opensAt: event.target.value } : item))}
+                                  className="h-10 rounded-[9px] border border-neutral-border bg-white px-2 text-[13px] font-semibold text-neutral-textMain outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                                />
+                              </label>
+                              <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">
+                                Cierra
+                                <input
+                                  aria-label={`${label} franja ${slot.slotIndex + 1} hora de cierre`}
+                                  type="time"
+                                  value={slot.closesAt}
+                                  onChange={event => setScheduleDraft(previous => previous.map(item => item.dayOfWeek === dayOfWeek && item.slotIndex === slot.slotIndex ? { ...item, closesAt: event.target.value } : item))}
+                                  className="h-10 rounded-[9px] border border-neutral-border bg-white px-2 text-[13px] font-semibold text-neutral-textMain outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => removeScheduleSlot(dayOfWeek, slot.slotIndex)}
+                                aria-label={`Eliminar ${label} franja ${slot.slotIndex + 1}`}
+                                className="ml-auto min-h-9 rounded-[9px] px-2 text-[12px] font-semibold text-[#9E3B2B] transition hover:bg-[#F8E1DA]"
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          )) : <p className="text-[12px] text-neutral-textHelper">Día cerrado.</p>}
+                          <button
+                            type="button"
+                            onClick={() => void saveWorkshopScheduleDay(dayOfWeek)}
+                            disabled={savingScheduleDay === dayOfWeek}
+                            className="mt-2 min-h-10 rounded-[9px] bg-brand px-3 text-[12px] font-semibold text-white transition hover:bg-brand-hover disabled:opacity-60"
+                          >
+                            {savingScheduleDay === dayOfWeek ? 'Guardando...' : `Guardar ${label.toLowerCase()}`}
+                          </button>
+                        </div>
+                      )}
+                      {!isExpanded && <p className="mt-1 text-[12px] text-neutral-textHelper">{isOpen ? slots.map(slot => `${slot.opensAt}–${slot.closesAt}`).join(' · ') : 'Cerrado'}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[12px] leading-relaxed text-neutral-textHelper">El calendario solo permite sesiones completamente dentro de una franja guardada.</p>
+            </div>
 
-        {/* ─── 2. SEGURIDAD ─── */}
+            <div className="border-t border-neutral-border pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-neutral-textMain">Cupo por taller</h3>
+                  <p className="text-[12px] text-neutral-textHelper">Capacidad de próximas sesiones.</p>
+                </div>
+                <span className="text-[16px] font-bold text-brand">{upcomingSessions.length}</span>
+              </div>
+              <div className="space-y-2">
+                {upcomingSessions.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-neutral-border px-4 py-5 text-center text-[13px] text-neutral-textHelper">No hay clases próximas.</p>
+                ) : upcomingSessions.map(session => {
+                  const capacity = getSessionCapacity(session);
+                  const enrolled = session.students.length;
+                  const remaining = capacity - enrolled;
+                  const dateLabel = new Date(`${session.date}T12:00:00`).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+                  return (
+                    <div key={session.id} className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-xl border border-neutral-border bg-neutral-sec/50 px-3 py-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-semibold text-neutral-textMain">{dateLabel} · {session.startTime}–{session.endTime}</p>
+                        <p className="mt-0.5 text-[11px] uppercase tracking-[0.1em] text-neutral-textHelper">{session.classType} · {enrolled} inscritos</p>
+                      </div>
+                      <span className={`text-right text-[12px] font-semibold ${remaining === 0 ? 'text-[#9E3B2B]' : remaining < 3 ? 'text-[#8A5517]' : 'text-[#20663B]'}`}>{remaining === 0 ? 'Completa' : `${remaining} libres`}</span>
+                      <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">
+                        Cupo
+                        <input
+                          aria-label={`Cupo de ${dateLabel}`}
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={capacityDrafts[session.id] ?? String(capacity)}
+                          onChange={event => setCapacityDrafts(previous => ({ ...previous, [session.id]: event.target.value }))}
+                          className="h-10 w-20 rounded-[9px] border border-neutral-border bg-white px-2 text-center text-[13px] font-semibold text-neutral-textMain outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                        />
+                      </label>
+                      <button type="button" onClick={() => void saveSessionCapacity(session)} disabled={savingCapacityId === session.id} className="min-h-10 rounded-[9px] bg-brand px-3 text-[12px] font-semibold text-white transition hover:bg-brand-hover disabled:opacity-60">
+                        {savingCapacityId === session.id ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[12px] leading-relaxed text-neutral-textHelper">Las nuevas sesiones empiezan con 5 plazas para torno y 8 para el resto.</p>
+            </div>
+          </div>
+        </Section>
+
+
+        {/* ─── 4. SEGURIDAD ─── */}
         <Section
           icon={IconSecurity}
           title="Seguridad"
@@ -328,14 +683,11 @@ const SettingsView: React.FC = () => {
         </Section>
 
 
-        {/* ─── 3. RESPALDO ─── */}
+        {/* ─── 5. RESPALDO ─── */}
         <Section
           icon={IconBackup}
           title="Respaldo de datos"
           subtitle="Exportar en Excel (.xlsx)"
-          badge={
-            <span className="text-[16px] font-bold text-brand">{totalRecords}</span>
-          }
         >
           <div className="mt-3">
             {/* Full backup */}
