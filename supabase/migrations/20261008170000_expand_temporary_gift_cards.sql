@@ -46,6 +46,13 @@ create index if not exists gift_cards_status_idx on public.gift_cards(status);
 create index if not exists gift_cards_expiry_date_idx on public.gift_cards(expiry_date);
 
 alter table public.gift_cards
+  drop constraint if exists gift_cards_validity_months_check,
+  drop constraint if exists gift_cards_payment_status_check,
+  drop constraint if exists gift_cards_status_check,
+  drop constraint if exists gift_cards_delivery_format_check,
+  drop constraint if exists gift_cards_sessions_used_check;
+
+alter table public.gift_cards
   add constraint gift_cards_validity_months_check check (validity_months in (3, 6, 8)),
   add constraint gift_cards_payment_status_check check (payment_status in ('pending', 'paid', 'refunded')),
   add constraint gift_cards_status_check check (status in ('pending', 'active', 'exhausted', 'expired', 'cancelled')),

@@ -1,21 +1,26 @@
 import { showError, showWarning } from '../context/toast';
-import React, { useState, useMemo } from 'react';
-import { ClassSession, GiftCard, Student, Teacher, WorkshopScheduleDay, getDefaultSessionCapacity } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { ClassSession, GiftCard, Student, Teacher, WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, getDefaultSessionCapacity } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { getStudentLifecycle, isStudentArchived } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
+import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
+import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
 interface CalendarViewProps {
   sessions: ClassSession[];
   onAddSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
-  onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<void>;
+  onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<boolean | void>;
   onDeleteSession: (id: string) => Promise<void>;
   onUpdateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
   onRedeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
-  onReverseGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
+  onReverseGiftCardSession: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean | void>;
   giftCards: GiftCard[];
   students: Student[];
   teachers: Teacher[];
   workshopSchedule: WorkshopScheduleDay[];
+  workshopScheduleExceptions: WorkshopScheduleException[];
+  capacityDefaults: WorkshopCapacityDefault[];
 }
 
 type CalendarMode = 'day' | 'month';
@@ -28,7 +33,11 @@ const getAttendanceStatus = (attendance: ClassSession['attendance'] | undefined,
   return matchingEntry?.[1] || 'pending';
 };
 
-const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers, workshopSchedule }) => {
+const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
+  const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
+  const getSessionCapacity = (classType: ClassSession['classType']) => getDefaultSessionCapacity(classType, capacityMap);
+  const location = useLocation();
+  const deepLinkHandledRef = useRef('');
   const [viewMode, setViewMode] = useState<CalendarMode>('day');
   const today = useWorkshopDate();
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -54,7 +63,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     startTime: '10:00',
     endTime: '12:00',
     classType: 'mesa' as ClassSession['classType'],
-    capacity: getDefaultSessionCapacity('mesa'),
+    capacity: getSessionCapacity('mesa'),
     selectedStudents: [] as string[],
     teacherId: '',
     workshopName: '',
@@ -64,14 +73,15 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
   const getGiftCardIdForStudent = (session: ClassSession, student?: Student, forReverse = false) => {
     if (!student) return undefined;
-    const today = formatDateKey(new Date());
+    const today = madridDateKey();
     const isUsable = (card: GiftCard) => card.status === 'active'
       && !card.consumedAt
       && (card.sessionsRemaining || 0) > 0
       && (!card.expiryDate || card.expiryDate.slice(0, 10) >= today);
     const linkedId = session.giftCardIdByStudentId?.[student.id];
     const linkedCard = linkedId ? giftCards.find(card => card.id === linkedId) : undefined;
-    if (linkedId && linkedCard && (forReverse ? linkedCard.status !== 'cancelled' : isUsable(linkedCard))) return linkedId;
+    if (linkedId && forReverse && linkedCard?.status !== 'cancelled') return linkedId;
+    if (linkedId && linkedCard && isUsable(linkedCard)) return linkedId;
     return giftCards.find(card => card.recipientStudentId === student.id
       && (forReverse ? (card.status !== 'cancelled' && (card.sessionsUsed || 0) > 0) : isUsable(card)))?.id;
   };
@@ -155,7 +165,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         startTime: session.startTime,
         endTime: session.endTime,
         classType: session.classType,
-        capacity: session.capacity ?? getDefaultSessionCapacity(session.classType),
+        capacity: session.capacity ?? getSessionCapacity(session.classType),
         selectedStudents: [...session.students],
         teacherId: session.teacherId || '',
         workshopName: session.workshopName || '',
@@ -169,7 +179,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         startTime: '10:00',
         endTime: '12:00',
         classType: 'mesa',
-        capacity: getDefaultSessionCapacity('mesa'),
+        capacity: getSessionCapacity('mesa'),
         selectedStudents: [],
         teacherId: '',
         workshopName: '',
@@ -179,6 +189,22 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     }
     setShowSessionModal(true);
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const requestedDate = params.get('date');
+    const requestedSessionId = params.get('sessionId');
+    if (!requestedDate && !requestedSessionId) return;
+    const deepLinkKey = `${requestedDate || ''}:${requestedSessionId || ''}`;
+    if (deepLinkHandledRef.current === deepLinkKey) return;
+    if (requestedDate) setSelectedDate(new Date(`${requestedDate}T12:00:00`));
+    if (requestedSessionId) {
+      const requestedSession = sessions.find(session => session.id === requestedSessionId);
+      if (!requestedSession) return;
+      handleOpenSessionModal(requestedSession);
+    }
+    deepLinkHandledRef.current = deepLinkKey;
+  }, [location.search, sessions]);
 
   // Abrir modal de Control de Asistencia (Nueva funcionalidad separada)
   const handleOpenAttendanceModal = (session: ClassSession) => {
@@ -235,9 +261,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         if (wasPresent === isPresent) continue;
 
         const giftCardId = getGiftCardIdForStudent(attendanceSession, student, wasPresent && !isPresent);
-        if (giftCardId) {
-          if (wasPresent && !isPresent) await onReverseGiftCardSession(giftCardId, attendanceSession.id, student.id);
-          if (!wasPresent && isPresent) await onRedeemGiftCardSession(giftCardId, attendanceSession.id, student.id);
+        if (wasPresent && !isPresent) {
+          const reversed = await onReverseGiftCardSession(giftCardId, attendanceSession.id, student.id);
+          if (reversed) continue;
+        } else if (!wasPresent && isPresent && giftCardId) {
+          await onRedeemGiftCardSession(giftCardId, attendanceSession.id, student.id);
           continue;
         }
 
@@ -396,20 +424,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       showError(`La sesión admite como máximo ${capacity} alumnos.`);
       return;
     }
-    if (workshopSchedule.length > 0 && sessionForm.classType !== 'feriado') {
-      const sessionDate = new Date(`${sessionForm.date}T12:00:00`);
-      const dayIntervals = workshopSchedule
-        .filter(day => day.dayOfWeek === sessionDate.getDay() && day.isOpen)
-        .sort((a, b) => a.opensAt.localeCompare(b.opensAt));
-      const dayLabel = sessionDate.toLocaleDateString('es-ES', { weekday: 'long' });
-      if (!dayIntervals.length) {
-        showError(`El taller está cerrado los ${dayLabel}. Activa ese día desde Administración del taller.`);
-        return;
-      }
-      const isWithinInterval = dayIntervals.some(interval => sessionForm.startTime >= interval.opensAt && sessionForm.endTime <= interval.closesAt);
-      if (!isWithinInterval) {
-        const availableIntervals = dayIntervals.map(interval => `${interval.opensAt}–${interval.closesAt}`).join(', ');
-        showError(`La sesión debe estar dentro de uno de estos horarios: ${availableIntervals}.`);
+    if ((workshopSchedule.length > 0 || workshopScheduleExceptions.length > 0) && sessionForm.classType !== 'feriado') {
+      const conflictReason = getScheduleConflictReason(
+        { date: sessionForm.date, startTime: sessionForm.startTime, endTime: sessionForm.endTime, classType: sessionForm.classType },
+        workshopSchedule,
+        workshopScheduleExceptions
+      );
+      if (conflictReason) {
+        showError(`${conflictReason}. Ajusta la sesión o cambia la disponibilidad desde Administración del taller.`);
         return;
       }
     }
@@ -485,8 +507,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     if (daySessions.length === 0) return 'low' as const;
     if (daySessions.some(session => session.classType === 'feriado')) return 'full' as const;
 
-    const capacity = daySessions.reduce((total, session) => total + (session.classType === 'torno' ? 5 : 8), 0);
-    const occupied = daySessions.reduce((total, session) => total + session.students.length, 0);
+    const capacity = daySessions.reduce((total, session) => total + getSessionCapacity(session.classType), 0);
+    const occupied = daySessions.reduce((total, session) => total + new Set(session.students.map((student, index) => session.studentIds?.[index] || student.toUpperCase())).size, 0);
     const occupancy = capacity > 0 ? occupied / capacity : 0;
 
     if (occupancy >= 0.9 || daySessions.length >= 4) return 'full' as const;
@@ -582,6 +604,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                 const concurrentSessions = sessionsByTime[startTime];
                 const widthPercent = 100 / concurrentSessions.length;
                 return concurrentSessions.map((session, index) => {
+                  const occupancy = getSessionOccupancy(session, capacityMap);
                   const [startH, startM] = session.startTime.split(':').map(Number);
                   const topOffset = ((startH * 60 + startM - startHour * 60) / 60) * HOUR_HEIGHT;
                   const leftOffset = index * widthPercent;
@@ -595,7 +618,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                          <div className="flex w-full flex-col items-start gap-2 pr-14 mb-4">
                            <span className="text-[14px] font-semibold text-neutral-textMain leading-none">{session.startTime} - {session.endTime}</span>
                            <span className={`px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] text-white ${getSessionBadgeClasses(session.classType)}`}>{getSessionLabel(session).toUpperCase()}</span>
-                           {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{session.students.length}/{session.capacity ?? getDefaultSessionCapacity(session.classType)} cupos</span>}
+                          {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{occupancy.enrolled}/{occupancy.capacity} cupos</span>}
                          </div>
                       <div className="text-[13.75px] font-medium text-neutral-textHelper uppercase tracking-widest mb-4">
                         <span>Profesor/a: </span>
@@ -1001,7 +1024,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                           setSessionForm({
                              ...sessionForm,
                              classType,
-                             capacity: getDefaultSessionCapacity(classType),
+                              capacity: getSessionCapacity(classType),
                              teacherId: (classType === 'mesa' || classType === 'torno') ? sessionForm.teacherId : '',
                             workshopName: classType === 'workshop' ? sessionForm.workshopName : '',
                             privateReason: classType === 'privada' ? sessionForm.privateReason : '',

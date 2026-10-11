@@ -87,7 +87,7 @@ test.describe('Alumnos', () => {
     await page.getByRole('textbox', { name: 'Apellidos', exact: true }).fill('Automatizado');
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(email);
     await page.getByRole('textbox', { name: 'Teléfono', exact: true }).fill('600000002');
-    await page.getByRole('button', { name: /Gold/ }).click();
+    await page.getByRole('button', { name: 'Gold 120€ · 4 bonos', exact: true }).click();
     await page.getByRole('button', { name: 'Guardar alumno' }).click();
     await expect(page.getByText(name, { exact: false }).first()).toBeVisible();
 
@@ -167,7 +167,7 @@ test.describe('Calendario', () => {
       await page.getByLabel('Tipo de sesión').selectOption('workshop');
       await page.getByLabel('Nombre del workshop').fill(qaName('CLOSED-DAY'));
       await page.getByRole('button', { name: 'Crear sesión' }).click();
-      await expect(page.getByRole('alert')).toContainText('El taller está cerrado los');
+      await expect(page.getByRole('alert')).toContainText('El taller está cerrado.');
       await expect(page.getByRole('heading', { name: 'Nueva sesión' })).toBeVisible();
 
       const todayDayOfWeek = new Date().getDay();
@@ -186,7 +186,7 @@ test.describe('Calendario', () => {
       await page.getByLabel('Hora de inicio').fill('09:00');
       await page.getByLabel('Hora de fin').fill('16:00');
       await page.getByRole('button', { name: 'Crear sesión' }).click();
-      await expect(page.getByRole('alert')).toContainText('La sesión debe estar dentro de uno de estos horarios: 10:00–14:00, 16:00–18:00.');
+      await expect(page.getByRole('alert')).toContainText('Fuera de horario (10:00–14:00, 16:00–18:00).');
     } finally {
       await deleteRows(request, 'workshop_schedules', scheduleQuery);
       await upsertRows(request, 'workshop_schedules', originalSchedule);

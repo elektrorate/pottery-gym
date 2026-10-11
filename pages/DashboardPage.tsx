@@ -4,7 +4,7 @@ import DashboardView from '../components/DashboardView';
 import { useNavigate } from 'react-router-dom';
 
 const DashboardPage: React.FC = () => {
-    const { students, sessions, giftCards, updateStudent, updateSession, redeemGiftCardSession, reverseGiftCardSession, isLoadingData } = useData();
+    const { students, sessions, giftCards, updateStudent, updateSession, redeemGiftCardSession, reverseGiftCardSession, capacityDefaults, workshopSchedule, workshopScheduleExceptions, isLoadingData } = useData();
     const navigate = useNavigate();
 
     if (isLoadingData) {
@@ -26,6 +26,9 @@ const DashboardPage: React.FC = () => {
             onReverseGiftCardSession={reverseGiftCardSession}
             onNavigate={(view) => navigate(`/${view}`)}
             onOpenStudentProfile={(studentId) => navigate(`/students?selected=${studentId}`)}
+            capacityDefaults={capacityDefaults}
+            workshopSchedule={workshopSchedule}
+            workshopScheduleExceptions={workshopScheduleExceptions}
         />
     );
 };

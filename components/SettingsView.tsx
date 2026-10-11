@@ -3,8 +3,9 @@ import React, { useEffect, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
-import type { WorkshopScheduleDay } from '../types';
+import { getDefaultSessionCapacity, type WorkshopScheduleDay } from '../types';
 import * as XLSX from 'xlsx';
+import WorkshopAvailabilityPanel from './WorkshopAvailabilityPanel';
 
 /* ─── Collapsible Section ─── */
 const Section: React.FC<{
@@ -81,7 +82,7 @@ const defaultWorkshopSchedule = (): WorkshopScheduleDay[] => scheduleDayLabels.m
 
 
 const SettingsView: React.FC = () => {
-  const { students, sessions, pieces, giftCards, teachers, inventoryItems, inventoryMovements, updateSession, workshopSchedule, updateWorkshopSchedule } = useData();
+  const { students, sessions, pieces, giftCards, teachers, inventoryItems, inventoryMovements, updateSession, workshopSchedule, updateWorkshopSchedule, capacityDefaults } = useData();
   const { profile, sedeId } = useAuth();
 
   // Config states — persisted in localStorage
@@ -192,7 +193,7 @@ const SettingsView: React.FC = () => {
     }
   };
 
-  const getSessionCapacity = (session: typeof sessions[number]) => session.capacity ?? (session.classType === 'torno' ? 5 : 8);
+  const getSessionCapacity = (session: typeof sessions[number]) => session.capacity ?? capacityDefaults.find(item => item.classType === session.classType)?.capacity ?? getDefaultSessionCapacity(session.classType);
   const today = new Date().toISOString().slice(0, 10);
   const upcomingSessions = sessions
     .filter(session => session.date >= today && session.classType !== 'feriado')
@@ -286,7 +287,7 @@ const SettingsView: React.FC = () => {
         addSheet('Sesiones', sessions.map(s => ({
           ID: s.id,
           Fecha: s.date || '', Inicio: s.startTime || '', Fin: s.endTime || '',
-          'Tipo de clase': s.classType || '', 'Cupo máximo': s.capacity ?? (s.classType === 'torno' ? 5 : 8),
+          'Tipo de clase': s.classType || '', 'Cupo máximo': getSessionCapacity(s),
           Inscritos: s.students.length, Alumnos: (s.students || []).join(', '),
           'Profesor ID': s.teacherId || '', Taller: s.workshopName || '',
           Audiencia: s.sessionAudience || '', Completada: s.completedAt ? 'Sí' : 'No'
@@ -357,7 +358,7 @@ const SettingsView: React.FC = () => {
 
       if (mode === 'all') {
         // These tables are not needed by the daily UI, so load them only for the full backup.
-        const extraTables = ['payments', 'packages', 'student_assigned_classes', 'sedes', 'sede_members', 'workshop_schedules'] as const;
+        const extraTables = ['payments', 'packages', 'student_assigned_classes', 'sedes', 'sede_members', 'workshop_schedules', 'workshop_capacity_defaults', 'workshop_schedule_exceptions'] as const;
         const extraRows = await Promise.all(extraTables.map(async table => {
           const { data, error } = await supabase.from(table).select('*');
           if (error) {
@@ -422,7 +423,7 @@ const SettingsView: React.FC = () => {
         <Section
           icon={IconWorkshop}
           title="Taller"
-          subtitle="Nombre, duración, capacidad y moneda"
+           subtitle="Nombre, duración, zona horaria y moneda"
           defaultOpen={true}
         >
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
@@ -443,11 +444,6 @@ const SettingsView: React.FC = () => {
                 <option value="150">150 min</option>
                 <option value="180">180 min</option>
               </select>
-            </CompactField>
-
-            <CompactField label="Capacidad máx.">
-              <input type="number" min="1" max="50" value={defaultMaxCapacity}
-                onChange={e => setDefaultMaxCapacity(e.target.value)} className={inputClass} />
             </CompactField>
 
             <CompactField label="Moneda">
@@ -506,6 +502,10 @@ const SettingsView: React.FC = () => {
           </div>
         </Section>
 
+        <WorkshopAvailabilityPanel />
+
+        {/* Legacy editor kept hidden while the availability panel is rolled out. */}
+        <div className="hidden">
         {/* ─── 2. HORARIO Y CUPOS DEL TALLER ─── */}
         <Section
           icon={
@@ -663,6 +663,7 @@ const SettingsView: React.FC = () => {
             </div>
           </div>
         </Section>
+        </div>
 
 
         {/* ─── 4. SEGURIDAD ─── */}
@@ -733,8 +734,8 @@ const SettingsView: React.FC = () => {
         {/* ── Info note ── */}
         <div className="mt-1 px-4 py-3 bg-neutral-sec border border-neutral-border rounded-2xl">
           <p className="text-[13px] text-neutral-textSec leading-relaxed">
-            <strong className="text-neutral-textMain">Nota:</strong> Las configuraciones se guardan localmente.
-            Los backups se descargan en formato .xlsx. Se recomienda hacer un respaldo semanal.
+             <strong className="text-neutral-textMain">Nota:</strong> Los datos del taller, horarios y capacidades se guardan en Supabase por sede.
+             Las preferencias generales se guardan localmente y los backups se descargan en formato .xlsx.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { supabase } from '../../supabaseClient';
-import { inferMembershipTier, Student, ClassSession, GiftCard } from '../../types';
+import { inferMembershipTier, Student, ClassSession, GiftCard, WorkshopCapacityDefault } from '../../types';
 
 export { supabase };
 
@@ -101,6 +101,11 @@ export const buildStudentPayload = (student: Partial<Student>) => {
     if (student.groupName !== undefined) payload.group_name = student.groupName || null;
     if (student.bonosAsignados !== undefined) payload.bonos_asignados = student.bonosAsignados;
     if (student.repetirMensualmente !== undefined) payload.repetir_mensualmente = student.repetirMensualmente;
+    if (student.studentCategory === 'temporal') {
+        payload.membership_tier = null;
+        payload.membership_activated_at = null;
+        payload.repetir_mensualmente = false;
+    }
     return payload;
 };
 
@@ -198,6 +203,7 @@ export interface OpsContext {
     operationLockRef: React.MutableRefObject<boolean>;
     students: Student[];
     sessions: ClassSession[];
+    capacityDefaults: WorkshopCapacityDefault[];
     giftCards: any[];
     pieces: any[];
     setStudents: React.Dispatch<React.SetStateAction<Student[]>>;

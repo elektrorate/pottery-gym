@@ -172,11 +172,24 @@ export const redeemGiftCardSession = async (ctx: OpsContext, giftCardId: string,
 
 export const reverseGiftCardSession = async (ctx: OpsContext, giftCardId: string, sessionId: string, studentId?: string) => {
     try {
+        let resolvedGiftCardId = giftCardId;
+        if (!resolvedGiftCardId && studentId) {
+            const { data } = await withTimeout('gift_cards.resolve_session_link',
+                supabase.from('session_students')
+                    .select('gift_card_id')
+                    .eq('session_id', sessionId)
+                    .eq('student_id', studentId)
+                    .maybeSingle()
+            );
+            resolvedGiftCardId = data?.gift_card_id || '';
+        }
+        if (!resolvedGiftCardId) return false;
         const { data, error } = await withTimeout('gift_cards.reverse', supabase.rpc('reverse_gift_card_session', {
-            p_gift_card_id: giftCardId, p_session_id: sessionId, p_student_id: studentId || null
+            p_gift_card_id: resolvedGiftCardId, p_session_id: sessionId, p_student_id: studentId || null
         }));
         if (error) throw error;
         updateGiftCardFromRpc(ctx, data);
+        return true;
     } catch (err: any) {
         throw new Error(err?.message || 'No se pudo devolver la sesión del bono temporal.');
     }

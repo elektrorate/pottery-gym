@@ -19,7 +19,9 @@ alter table public.workshop_schedules
   alter column slot_index set not null;
 
 alter table public.workshop_schedules
-  drop constraint if exists workshop_schedules_sede_day_unique;
+  drop constraint if exists workshop_schedules_sede_day_unique,
+  drop constraint if exists workshop_schedules_slot_index_valid,
+  drop constraint if exists workshop_schedules_sede_day_slot_unique;
 
 alter table public.workshop_schedules
   add constraint workshop_schedules_slot_index_valid check (slot_index between 0 and 20);

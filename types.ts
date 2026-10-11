@@ -84,8 +84,25 @@ export interface ClassSession {
   sessionAudience?: 'membresia' | 'temporal' | 'ambos'; // Audiencia: membresía (permanentes), temporal, o ambos
 }
 
-export const getDefaultSessionCapacity = (classType: ClassSession['classType']): number =>
-  classType === 'torno' ? 5 : 8;
+export type CapacityActivity = Exclude<ClassSession['classType'], 'feriado'>;
+export type CapacityDefaults = Partial<Record<CapacityActivity, number>>;
+
+export const DEFAULT_CAPACITY_BY_ACTIVITY: Record<CapacityActivity, number> = {
+  mesa: 8,
+  torno: 5,
+  coworking: 8,
+  workshop: 8,
+  privada: 8
+};
+
+export const getDefaultSessionCapacity = (classType: ClassSession['classType'], defaults?: CapacityDefaults): number =>
+  classType === 'feriado' ? 0 : defaults?.[classType] ?? DEFAULT_CAPACITY_BY_ACTIVITY[classType];
+
+export interface WorkshopCapacityDefault {
+  id?: string;
+  classType: CapacityActivity;
+  capacity: number;
+}
 
 export interface WorkshopScheduleDay {
   id?: string;
@@ -94,6 +111,16 @@ export interface WorkshopScheduleDay {
   isOpen: boolean;
   opensAt: string;
   closesAt: string;
+}
+
+export interface WorkshopScheduleException {
+  id?: string;
+  exceptionDate: string;
+  slotIndex: number;
+  isOpen: boolean;
+  opensAt: string;
+  closesAt: string;
+  reason?: string;
 }
 
 export interface Teacher {

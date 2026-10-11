@@ -1,0 +1,50 @@
+Estados de alumnos — pottery-gym
+
+Regla acordada
+- Membresía pagada y vigente: active.
+- Vencimiento de pago (expiry_date) superado entre 1 y 5 días: pending.
+- Desde el sexto día: archived/inactivo, manteniendo historial.
+- Categoría temporal: temporary, excluida de los indicadores de membresías.
+- archived_at conserva los archivados explícitos/preexistentes.
+- Cero clases disponibles no cambia la vigencia de una membresía.
+- Renovar confirma el pago, amplía la fecha y borra el archivado explícito.
+- Eliminar conserva el borrado definitivo con confirmación.
+
+Implementación
+- utils/studentLifecycle.ts centraliza la clasificación del frontend.
+- El día del taller se calcula en Europe/Madrid y se refresca con la app abierta.
+- students.payment_status guarda paid/pending independientemente del saldo.
+- students_with_lifecycle calcula lifecycle_status en cada consulta. No requiere
+  cron ni abrir la app; no modifica status ni archived_at al pasar los días.
+- La vista respeta las políticas RLS de students (security_invoker).
+- La carga de datos ya no archiva físicamente ni renueva sin pago confirmado.
+- El alta manual de temporales asigna una clase. Los saldos históricos y los
+  derechos de Gift Cards existentes se conservan y quedan fuera de membresías.
+
+Compatibilidad de datos
+- No se han inventado pagos históricos: payment_status sigue NULL hasta confirmar.
+- Mientras falta ese campo, status=membresia/active conserva la interpretación
+  anterior de pago al día; needs_renewal/new queda pendiente de revisión.
+- Los archivados anteriores no permiten distinguir una baja manual de un
+  archivado automático antiguo: se conservan hasta revisar o renovar.
+- No se recortan clases históricas al abrir o guardar una ficha.
+
+Verificación
+- 6 pruebas de reglas y fechas; 6 pruebas de interfaz con datos aislados.
+- SQL de integración en supabase/tests/student_payment_lifecycle.sql, con rollback.
+- Migración aplicada en ilkrcakrduibgsfqfzti: 20261010180826_student_payment_lifecycle.
+- TypeScript y build verificados. El build mantiene avisos de tamaño y dependencia
+  circular de chunks de la configuración existente.
+- Esta tarea no ejecuta despliegue del frontend.
+
+Pruebas locales
+  npm run dev -- --host 127.0.0.1 --port 3017 --strictPort
+  BASE_URL=http://127.0.0.1:3017 npx playwright test tests/e2e/student-lifecycle.spec.ts tests/e2e/student-lifecycle-ui.spec.ts
+  npx tsc --noEmit
+  npm run build
+
+La revisión de seguridad no detectó avisos sobre la nueva vista/función.
+Persisten avisos ajenos a este cambio sobre funciones de Gift Cards y protección
+de contraseñas; referencias:
+https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable
+https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection

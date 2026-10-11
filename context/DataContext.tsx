@@ -3,7 +3,8 @@ import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import {
     Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement, AssignedClass,
-    InventoryItem, InventoryMovement, Teacher, MembershipTier, MEMBERSHIP_PLANS, inferMembershipTier, WorkshopScheduleDay
+    InventoryItem, InventoryMovement, Teacher, MembershipTier, MEMBERSHIP_PLANS, inferMembershipTier,
+    WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, CapacityActivity, DEFAULT_CAPACITY_BY_ACTIVITY, getDefaultSessionCapacity
 } from '../types';
 import { showError } from './toast';
 
@@ -33,6 +34,8 @@ interface DataContextType {
     inventoryMovements: InventoryMovement[];
     teachers: Teacher[];
     workshopSchedule: WorkshopScheduleDay[];
+    workshopScheduleExceptions: WorkshopScheduleException[];
+    capacityDefaults: WorkshopCapacityDefault[];
     isLoadingData: boolean;
     loadError: string | null;
 
@@ -44,7 +47,7 @@ interface DataContextType {
 
     // Session CRUD
     addSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
-    updateSession: (id: string, updates: Partial<ClassSession>) => Promise<void>;
+    updateSession: (id: string, updates: Partial<ClassSession>) => Promise<boolean>;
     deleteSession: (id: string) => Promise<void>;
 
     // Teacher CRUD
@@ -64,7 +67,7 @@ interface DataContextType {
     consumeGiftCard: (giftCardId: string, consumedAt?: string) => Promise<void>;
     cancelGiftCard: (giftCardId: string) => Promise<void>;
     redeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
-    reverseGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
+    reverseGiftCardSession: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean>;
 
     // Inventory CRUD
     addInventoryItem: (item: InventoryItem) => Promise<void>;
@@ -73,6 +76,8 @@ interface DataContextType {
     deleteInventoryItem: (id: string) => Promise<void>;
     addInventoryMovement: (movement: Omit<InventoryMovement, 'id'>) => Promise<void>;
     updateWorkshopSchedule: (schedule: WorkshopScheduleDay[]) => Promise<boolean>;
+    updateWorkshopScheduleException: (exceptionDate: string, slots: Omit<WorkshopScheduleException, 'id' | 'exceptionDate'>[]) => Promise<boolean>;
+    updateCapacityDefault: (classType: CapacityActivity, capacity: number) => Promise<boolean>;
 
     // Refresh
     loadAllData: () => Promise<void>;
@@ -102,6 +107,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const [inventoryMovements, setInventoryMovements] = useState<InventoryMovement[]>([]);
     const [teachers, setTeachers] = useState<Teacher[]>([]);
     const [workshopSchedule, setWorkshopSchedule] = useState<WorkshopScheduleDay[]>([]);
+    const [workshopScheduleExceptions, setWorkshopScheduleExceptions] = useState<WorkshopScheduleException[]>([]);
+    const [capacityDefaults, setCapacityDefaults] = useState<WorkshopCapacityDefault[]>(
+        Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity }))
+    );
     const [isLoadingData, setIsLoadingData] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const hasLoadedOnceRef = useRef(false);
@@ -122,12 +131,19 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 return query;
             };
 
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes] = await Promise.all([
+            const isMissingOptionalTable = (error: any) => {
+                const message = String(error?.message || '').toLowerCase();
+                return error?.code === '42P01' || error?.code === 'PGRST205' || message.includes('does not exist') || message.includes('could not find the table');
+            };
+
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
                 buildQuery('session_students'),
                 buildQuery('pieces'), Promise.resolve(buildQuery('gift_cards')).catch(error => ({ data: [], error })),
                 Promise.resolve(buildQuery('gift_card_movements')).catch(error => ({ data: [], error })),
-                buildQuery('inventory_items'), buildQuery('inventory_movements'), buildQuery('workshop_schedules')
+                buildQuery('inventory_items'), buildQuery('inventory_movements'), buildQuery('workshop_schedules'),
+                Promise.resolve(buildQuery('workshop_capacity_defaults')).catch(error => ({ data: [], error })),
+                Promise.resolve(buildQuery('workshop_schedule_exceptions')).catch(error => ({ data: [], error }))
             ]);
 
             if (studentsRes.error) throw studentsRes.error;
@@ -140,6 +156,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (inventoryRes.error) throw inventoryRes.error;
             if (movementsRes.error) throw movementsRes.error;
             if (scheduleRes.error) throw scheduleRes.error;
+            if (capacityDefaultsRes.error && !isMissingOptionalTable(capacityDefaultsRes.error)) throw capacityDefaultsRes.error;
+            if (exceptionsRes.error && !isMissingOptionalTable(exceptionsRes.error)) throw exceptionsRes.error;
 
 
             // Normalize students and apply lifecycle rules before exposing them to the UI.
@@ -183,6 +201,13 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 sessionStudentsMap[row.session_id].push(row);
             });
 
+            const loadedCapacityDefaults = (capacityDefaultsRes.error ? [] : (capacityDefaultsRes.data || []))
+                .filter((row: any) => row.class_type !== 'feriado')
+                .map((row: any) => ({ id: row.id, classType: row.class_type as CapacityActivity, capacity: Number(row.capacity) }));
+            const configuredCapacityDefaults = loadedCapacityDefaults.length
+                ? loadedCapacityDefaults.reduce<Record<string, number>>((result, item) => ({ ...result, [item.classType]: item.capacity }), {})
+                : DEFAULT_CAPACITY_BY_ACTIVITY;
+
             const normalizedSessions: ClassSession[] = (sessionsRes.data || []).map((row: any) => {
                 const linked = sessionStudentsMap[row.id] || [];
                 const attendance: Record<string, 'present' | 'absent'> = {};
@@ -196,7 +221,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     id: row.id, date: String(row.date).split('T')[0],
                     startTime: extractTime(row.start_time), endTime: extractTime(row.end_time),
                     classType: row.class_type,
-                    capacity: row.capacity ?? (row.class_type === 'torno' ? 5 : 8),
+                    capacity: row.capacity ?? getDefaultSessionCapacity(row.class_type, configuredCapacityDefaults),
                     students: linked.map((item: any) => item.student_name),
                     studentIds: linked.map((item: any) => item.student_id || ''),
                     attendance: Object.keys(attendance).length ? attendance : undefined,
@@ -283,7 +308,19 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 isOpen: Boolean(row.is_open),
                 opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '',
                 closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : ''
-            })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
+             })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
+             setCapacityDefaults(loadedCapacityDefaults.length
+                ? loadedCapacityDefaults
+                : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
+            setWorkshopScheduleExceptions((exceptionsRes.error ? [] : (exceptionsRes.data || [])).map((row: any) => ({
+                id: row.id,
+                exceptionDate: String(row.exception_date).slice(0, 10),
+                slotIndex: Number(row.slot_index ?? 0),
+                isOpen: Boolean(row.is_open),
+                opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '',
+                closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '',
+                reason: row.reason || undefined
+            })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
             setLoadError(null);
         } catch (error) {
             console.error('Supabase load error', error);
@@ -316,6 +353,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setStudents([]); setSessions([]); setPieces([]);
             setGiftCards([]); setInventoryItems([]); setInventoryMovements([]); setTeachers([]);
             setWorkshopSchedule([]);
+            setWorkshopScheduleExceptions([]);
+            setCapacityDefaults(Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
             setLoadError(null);
         }
     }, [session, sedeId, isSuperAdmin, loadAllData]);
@@ -327,16 +366,19 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const sessionsRef = useRef(sessions);
     const piecesRef = useRef(pieces);
     const giftCardsRef = useRef(giftCards);
+    const capacityDefaultsRef = useRef(capacityDefaults);
     useEffect(() => { studentsRef.current = students; }, [students]);
     useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
     useEffect(() => { piecesRef.current = pieces; }, [pieces]);
     useEffect(() => { giftCardsRef.current = giftCards; }, [giftCards]);
+    useEffect(() => { capacityDefaultsRef.current = capacityDefaults; }, [capacityDefaults]);
 
     const getOpsContext = useCallback((): OpsContext => ({
         sedeId, isSuperAdmin, operationLockRef,
         get students() { return studentsRef.current; },
         get sessions() { return sessionsRef.current; },
         get giftCards() { return giftCardsRef.current; },
+        get capacityDefaults() { return capacityDefaultsRef.current; },
         get pieces() { return piecesRef.current; },
         setStudents, setSessions, setTeachers, setPieces, setGiftCards,
         setInventoryItems, setInventoryMovements, safeReload
@@ -367,7 +409,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const consumeGiftCard = async (giftCardId: string, consumedAt?: string) => giftCardOps.consumeGiftCard(getOpsContext(), giftCardId, consumedAt);
     const cancelGiftCard = async (giftCardId: string) => giftCardOps.cancelGiftCard(getOpsContext(), giftCardId);
     const redeemGiftCardSession = async (giftCardId: string, sessionId: string, studentId?: string) => giftCardOps.redeemGiftCardSession(getOpsContext(), giftCardId, sessionId, studentId);
-    const reverseGiftCardSession = async (giftCardId: string, sessionId: string, studentId?: string) => giftCardOps.reverseGiftCardSession(getOpsContext(), giftCardId, sessionId, studentId);
+    const reverseGiftCardSession = async (giftCardId: string | undefined, sessionId: string, studentId?: string) => giftCardOps.reverseGiftCardSession(getOpsContext(), giftCardId || '', sessionId, studentId);
 
     const addInventoryItem = async (i: InventoryItem) => inventoryOps.addInventoryItem(getOpsContext(), i);
     const updateInventoryItem = async (id: string, u: Partial<InventoryItem>) => inventoryOps.updateInventoryItem(getOpsContext(), id, u);
@@ -381,8 +423,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             return false;
         }
         const rows = schedule.map(day => ({
-            id: day.id || crypto.randomUUID(),
-            sede_id: sedeId,
             day_of_week: day.dayOfWeek,
             slot_index: day.slotIndex,
             is_open: day.isOpen,
@@ -390,32 +430,22 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             closes_at: day.isOpen ? day.closesAt : null
         }));
         try {
-            const currentIds = new Set(rows.map(row => row.id));
-            const staleIds = workshopSchedule.map(day => day.id).filter((id): id is string => !!id && !currentIds.has(id));
-            if (staleIds.length) {
-                const { error: deleteError } = await withTimeout('workshop_schedules.delete_stale',
-                    supabase.from('workshop_schedules').delete().eq('sede_id', sedeId).in('id', staleIds)
-                );
-                if (deleteError) {
-                    showError(`No se pudo actualizar el horario. ${deleteError.message || ''}`);
-                    return false;
-                }
-            }
-            const { error } = await withTimeout('workshop_schedules.upsert',
-                supabase.from('workshop_schedules').upsert(rows, { onConflict: 'id' })
+            const { data, error } = await withTimeout('workshop_schedules.replace',
+                supabase.rpc('replace_workshop_schedule', { p_sede_id: sedeId, p_schedule: rows })
             );
             if (error) {
                 showError(`No se pudo guardar el horario. ${error.message || ''}`);
                 return false;
             }
-            setWorkshopSchedule(rows.map(row => ({
+            const savedRows = (data || rows.map(row => ({ ...row, id: crypto.randomUUID() }))) as any[];
+            setWorkshopSchedule(savedRows.map(row => ({
                 id: row.id,
-                dayOfWeek: row.day_of_week,
-                slotIndex: row.slot_index,
-                isOpen: row.is_open,
+                dayOfWeek: Number(row.day_of_week),
+                slotIndex: Number(row.slot_index),
+                isOpen: Boolean(row.is_open),
                 opensAt: row.opens_at || '',
                 closesAt: row.closes_at || ''
-            })));
+            })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
             return true;
         } catch (error: any) {
             showError(`No se pudo guardar el horario. ${error.message || 'Conexión lenta, inténtalo de nuevo.'}`);
@@ -423,15 +453,80 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         }
     };
 
+    const updateWorkshopScheduleException = async (exceptionDate: string, slots: Omit<WorkshopScheduleException, 'id' | 'exceptionDate'>[]) => {
+        if (!sedeId) {
+            showError('No se pudo identificar la sede activa.');
+            return false;
+        }
+        const rows = slots.map(slot => ({
+            slot_index: slot.slotIndex,
+            is_open: slot.isOpen,
+            opens_at: slot.isOpen ? slot.opensAt : null,
+            closes_at: slot.isOpen ? slot.closesAt : null,
+            reason: slot.reason || null
+        }));
+        try {
+            const { data, error } = await withTimeout('workshop_schedule_exceptions.replace',
+                supabase.rpc('replace_workshop_schedule_exception', {
+                    p_sede_id: sedeId,
+                    p_exception_date: exceptionDate,
+                    p_slots: rows
+                })
+            );
+            if (error) {
+                showError(`No se pudo guardar la excepción. ${error.message || ''}`);
+                return false;
+            }
+            const savedRows = (data || rows.map(row => ({ ...row, exception_date: exceptionDate, id: crypto.randomUUID() }))) as any[];
+            const mapped = savedRows.map(row => ({
+                id: row.id,
+                exceptionDate,
+                slotIndex: Number(row.slot_index ?? row.slotIndex),
+                isOpen: Boolean(row.is_open ?? row.isOpen),
+                opensAt: row.opens_at || row.opensAt || '',
+                closesAt: row.closes_at || row.closesAt || '',
+                reason: row.reason || undefined
+            }));
+            setWorkshopScheduleExceptions(previous => [...previous.filter(item => item.exceptionDate !== exceptionDate), ...mapped]
+                .sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
+            return true;
+        } catch (error: any) {
+            showError(`No se pudo guardar la excepción. ${error.message || 'Conexión lenta, inténtalo de nuevo.'}`);
+            return false;
+        }
+    };
+
+    const updateCapacityDefault = async (classType: CapacityActivity, capacity: number) => {
+        if (!sedeId) {
+            showError('No se pudo identificar la sede activa.');
+            return false;
+        }
+        try {
+            const { data, error } = await withTimeout('workshop_capacity_defaults.upsert',
+                supabase.from('workshop_capacity_defaults').upsert({ sede_id: sedeId, class_type: classType, capacity }, { onConflict: 'sede_id,class_type' }).select().single()
+            );
+            if (error) {
+                showError(`No se pudo guardar la capacidad predeterminada. ${error.message || ''}`);
+                return false;
+            }
+            const saved = { id: data?.id, classType, capacity };
+            setCapacityDefaults(previous => [...previous.filter(item => item.classType !== classType), saved]);
+            return true;
+        } catch (error: any) {
+            showError(`No se pudo guardar la capacidad predeterminada. ${error.message || 'Conexión lenta, inténtalo de nuevo.'}`);
+            return false;
+        }
+    };
+
     const value: DataContextType = {
-        students, sessions, pieces, giftCards, inventoryItems, inventoryMovements, teachers, workshopSchedule, isLoadingData, loadError,
+        students, sessions, pieces, giftCards, inventoryItems, inventoryMovements, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults, isLoadingData, loadError,
         addStudent, updateStudent, deleteStudent, renewStudent,
         addSession, updateSession, deleteSession,
         addTeacher, updateTeacher, deleteTeacher,
         addPiece, updatePiece, deletePiece,
         addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard,
         redeemGiftCardSession, reverseGiftCardSession,
-        addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement, updateWorkshopSchedule,
+        addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement, updateWorkshopSchedule, updateWorkshopScheduleException, updateCapacityDefault,
         loadAllData
     };
 

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate } from '../../utils/studentLifecycle';
+import { getStudentLifecycle, getStudentLifecycleCounts, getStudentLifecycleReason, getStudentPaymentStatus, getWorkshopDate } from '../../utils/studentLifecycle';
 import type { Student } from '../../types';
 
 const member: Student = {
@@ -39,6 +39,27 @@ test('missing dates and ambiguous legacy payments stay pending', () => {
   expect(getStudentPaymentStatus({ status: 'needs_renewal' })).toBe('pending');
   expect(getStudentPaymentStatus({ status: 'new' })).toBe('pending');
   expect(getStudentPaymentStatus({ status: 'needs_renewal', paymentStatus: 'paid' })).toBe('paid');
+});
+
+test('lifecycle counts form one exclusive partition and expose safe reasons', () => {
+  const students: Student[] = [
+    member,
+    { ...member, id: 'pending', paymentStatus: 'pending', expiryDate: '2026-10-20' },
+    { ...member, id: 'temporary', studentCategory: 'temporal', classesRemaining: 0 },
+    { ...member, id: 'archived', archivedAt: '2026-01-01', expiryDate: '2027-01-01' }
+  ];
+  const counts = getStudentLifecycleCounts(students, '2026-10-10');
+  expect(counts).toEqual({ active: 1, pending: 1, temporary: 1, archived: 1 });
+  expect(Object.values(counts).reduce((total, count) => total + count, 0)).toBe(students.length);
+  expect(getStudentLifecycleReason(students[0], '2026-10-10')).toContain('Membresía vigente hasta');
+  expect(getStudentLifecycleReason(students[2], '2026-10-10')).toBe('Clase individual');
+  expect(getStudentLifecycleReason(students[3], '2026-10-10')).toContain('Archivado el');
+});
+
+test('unrecognized runtime categories never become active silently', () => {
+  const legacyRecord = { ...member, studentCategory: 'legacy_category' } as unknown as Student;
+  expect(getStudentLifecycle(legacyRecord, '2026-10-10')).toBe('pending');
+  expect(getStudentLifecycleReason(legacyRecord, '2026-10-10')).toContain('Categoría no reconocida');
 });
 
 test('calendar days remain correct across month, year, leap day and DST boundaries', () => {

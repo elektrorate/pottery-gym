@@ -1,10 +1,12 @@
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { Student, ClassSession, AppView, GiftCard } from '../types';
+import { Student, ClassSession, AppView, GiftCard, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
 import { showError } from '../context/toast';
 import { getStudentLifecycle, getStudentPaymentStatus, isStudentArchived } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
+import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
+import { getScheduleConflictReason } from '../utils/workshopSchedule';
 
 
 interface DashboardViewProps {
@@ -14,9 +16,12 @@ interface DashboardViewProps {
   onUpdateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
   onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<void>;
   onRedeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
-  onReverseGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
+  onReverseGiftCardSession: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean | void>;
   onNavigate: (view: AppView) => void;
   onOpenStudentProfile: (studentId: string) => void;
+  capacityDefaults?: WorkshopCapacityDefault[];
+  workshopSchedule?: WorkshopScheduleDay[];
+  workshopScheduleExceptions?: WorkshopScheduleException[];
 }
 
 type DashboardAlert = { id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' };
@@ -52,7 +57,7 @@ const AlertGroup: React.FC<{
   );
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftCards, onUpdateStudent, onUpdateSession, onRedeemGiftCardSession, onReverseGiftCardSession, onNavigate, onOpenStudentProfile }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftCards, onUpdateStudent, onUpdateSession, onRedeemGiftCardSession, onReverseGiftCardSession, onNavigate, onOpenStudentProfile, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(false);
   const alertAudioContextRef = useRef<AudioContext | null>(null);
@@ -63,8 +68,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
   const debounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingUpdatesRef = useRef<Record<string, Record<string, 'present' | 'absent' | undefined>>>({});
 
-  const DEFAULT_CAPACITY_TORNO = 5;
-  const DEFAULT_CAPACITY_MESA = 8;
+  const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
 
   const getSessionTypeLabel = (type: ClassSession['classType']) => {
     const map: Record<ClassSession['classType'], string> = {
@@ -102,7 +106,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
     const byCategory: Record<string, number> = { membresia: 0, temporal: 0 };
     students.forEach(s => {
       const cat = s.studentCategory || 'membresia';
-       if (byCategory[cat] !== undefined && !isStudentArchived(s)) byCategory[cat]++;
+        if (byCategory[cat] !== undefined && !isStudentArchived(s, todayStr)) byCategory[cat]++;
     });
 
      return { totalStudents, activeStudents, pendingStudents, totalSessions, byCategory };
@@ -117,12 +121,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
     let mesasTotales = 0;
     let mesasOcupadas = 0;
 
-    todaySessions.forEach(s => {
-      const cap = s.classType === 'torno' ? DEFAULT_CAPACITY_TORNO : DEFAULT_CAPACITY_MESA;
-      totalSpots += cap;
-      occupiedSpots += s.students.length;
-      if (s.classType === 'torno') { tornosTotales += cap; tornosOcupados += s.students.length; }
-      else { mesasTotales += cap; mesasOcupadas += s.students.length; }
+     todaySessions.forEach(s => {
+       if (s.classType === 'feriado') return;
+       const occupancy = getSessionOccupancy(s, capacityMap);
+       totalSpots += occupancy.capacity;
+       occupiedSpots += occupancy.enrolled;
+       if (s.classType === 'torno') { tornosTotales += occupancy.capacity; tornosOcupados += occupancy.enrolled; }
+       else { mesasTotales += occupancy.capacity; mesasOcupadas += occupancy.enrolled; }
     });
 
     return {
@@ -132,7 +137,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
       totalSessions: todaySessions.length,
       globalOccupancy: totalSpots > 0 ? Math.round((occupiedSpots / totalSpots) * 100) : 0
     };
-  }, [todaySessions, uniqueStudentsToday]);
+  }, [capacityMap, todaySessions, uniqueStudentsToday]);
 
   // ─── Alerts ───
   const alerts = useMemo(() => {
@@ -282,9 +287,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
               && (card.sessionsRemaining || 0) > 0
             )?.id;
 
-            if (giftCardId) {
-              if (wasPresent && !isPresent) await onReverseGiftCardSession(giftCardId, sessionId, student.id);
-              if (!wasPresent && isPresent) await onRedeemGiftCardSession(giftCardId, sessionId, student.id);
+            if (wasPresent && !isPresent) {
+              const reversed = await onReverseGiftCardSession(giftCardId, sessionId, student.id);
+              if (reversed) continue;
+            } else if (!wasPresent && isPresent && giftCardId) {
+              await onRedeemGiftCardSession(giftCardId, sessionId, student.id);
               continue;
             }
 
@@ -392,10 +399,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
                   </button>
                 </div>
               ) : (
-                todaySessions.map(session => {
-                  const capacity = session.classType === 'torno' ? DEFAULT_CAPACITY_TORNO : DEFAULT_CAPACITY_MESA;
-                  const isFull = session.students.length >= capacity;
-                  return (
+                 todaySessions.map(session => {
+                   const occupancy = getSessionOccupancy(session, capacityMap);
+                   const conflict = getScheduleConflictReason(session, workshopSchedule, workshopScheduleExceptions);
+                   const isFull = occupancy.availability === 'full' || occupancy.availability === 'over_capacity';
+                   return (
                      <div key={session.id} className="group flex items-center justify-between rounded-[18px] border border-neutral-border bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-soft md:p-4">
                       <div className="flex items-center gap-3 md:gap-5">
                         <div className="min-w-[50px] text-center">
@@ -405,10 +413,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
                         <div className="h-8 w-[1px] bg-neutral-border"></div>
                         <div>
                            <p className="ui-card-title text-neutral-textMain">{getSessionTypeLabel(session.classType)}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                             <span className={`ui-meta font-semibold ${isFull ? 'text-[#9E3B2B]' : 'text-[#20663B]'}`}>
-                              {session.students.length}/{capacity} {isFull ? 'Completo' : 'Lugares'}
-                            </span>
+                           <div className="mt-1 flex flex-wrap items-center gap-2">
+                              {session.classType === 'feriado' ? <span className="ui-meta font-semibold text-neutral-textHelper">Día bloqueado</span> : <span className={`ui-meta font-semibold ${isFull ? 'text-[#9E3B2B]' : 'text-[#20663B]'}`}>
+                               {occupancy.enrolled}/{occupancy.capacity} {sessionAvailabilityLabel[occupancy.availability]}
+                             </span>}
+                             {conflict && <span className="ui-meta font-semibold text-[#916438]">Conflicto de horario</span>}
                           </div>
                         </div>
                       </div>

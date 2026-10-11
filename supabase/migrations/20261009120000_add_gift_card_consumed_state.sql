@@ -81,7 +81,6 @@ set search_path = public
 as $$
 declare
   card public.gift_cards;
-  inserted_id uuid;
 begin
   select * into card from public.gift_cards where id = p_gift_card_id for update;
   if card.id is null then raise exception 'Bono temporal no encontrado'; end if;

@@ -142,7 +142,8 @@ const updateSessionAttendance = async (ctx: OpsContext, sessionId: string, atten
 };
 
 export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession, 'id'>) => {
-    const capacity = newSession.capacity ?? getDefaultSessionCapacity(newSession.classType);
+    const configuredCapacity = ctx.capacityDefaults.find(item => item.classType === newSession.classType)?.capacity;
+    const capacity = newSession.capacity ?? configuredCapacity ?? getDefaultSessionCapacity(newSession.classType);
     if (newSession.students.length > capacity) {
         showError(`La sesión supera su capacidad máxima de ${capacity} alumnos.`);
         return;
@@ -162,6 +163,7 @@ export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession,
     // IMMEDIATE UI update
     const newSessionWithId: ClassSession = {
         ...newSession,
+        capacity,
         id: data.id,
         students: newSession.students || [],
     };
@@ -178,23 +180,25 @@ export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession,
     ctx.safeReload();
 };
 
-export const updateSession = async (ctx: OpsContext, id: string, updates: Partial<ClassSession>) => {
+export const updateSession = async (ctx: OpsContext, id: string, updates: Partial<ClassSession>): Promise<boolean> => {
     if (updates.students) {
         const currentSession = ctx.sessions.find(session => session.id === id);
-        const capacity = updates.capacity ?? currentSession?.capacity ?? getDefaultSessionCapacity(currentSession?.classType || 'mesa');
+        const classType = currentSession?.classType || 'mesa';
+        const configuredCapacity = ctx.capacityDefaults.find(item => item.classType === classType)?.capacity;
+        const capacity = updates.capacity ?? currentSession?.capacity ?? configuredCapacity ?? getDefaultSessionCapacity(classType);
         if (updates.students.length > capacity) {
             showError(`La sesión supera su capacidad máxima de ${capacity} alumnos.`);
-            return;
+            return false;
         }
     }
     const payload = buildSessionPayload(updates);
     if (Object.keys(payload).length) {
         try {
             const { error } = await withTimeout('sessions.update', supabase.from('sessions').update(payload).eq('id', id));
-            if (error) { showError(`No se pudo actualizar la sesión. ${error.message || ''}`); return; }
+            if (error) { showError(`No se pudo actualizar la sesión. ${error.message || ''}`); return false; }
         } catch (error: any) {
             showError(`No se pudo actualizar la sesión. ${error.message || 'Conexión lenta, intenta de nuevo.'}`);
-            return;
+            return false;
         }
     }
     if (updates.classType === 'feriado') {
@@ -212,6 +216,7 @@ export const updateSession = async (ctx: OpsContext, id: string, updates: Partia
         await updateSessionAttendance(ctx, id, updates.attendance);
     }
     ctx.safeReload();
+    return true;
 };
 
 export const deleteSession = async (ctx: OpsContext, id: string) => {

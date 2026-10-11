@@ -19,6 +19,11 @@ revoke all on table public.workshop_schedules from anon;
 grant select, insert, update, delete on table public.workshop_schedules to authenticated;
 alter table public.workshop_schedules enable row level security;
 
+drop policy if exists "workshop_schedules_select_authorized" on public.workshop_schedules;
+drop policy if exists "workshop_schedules_insert_authorized" on public.workshop_schedules;
+drop policy if exists "workshop_schedules_update_authorized" on public.workshop_schedules;
+drop policy if exists "workshop_schedules_delete_authorized" on public.workshop_schedules;
+
 create policy "workshop_schedules_select_authorized"
 on public.workshop_schedules for select to authenticated
 using ((select private.can_access_sede(sede_id)));
