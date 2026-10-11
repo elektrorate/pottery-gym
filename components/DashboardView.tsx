@@ -26,6 +26,7 @@ interface DashboardViewProps {
 }
 
 type DashboardAlert = { key?: string; id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' };
+type WorkshopActivity = { id: string; title: string; date: string; time: string; description: string };
 
 const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studentId: string) => void }> = ({ alert, onOpenStudentProfile }) => {
   const palette = alert.type === 'critical'
@@ -60,6 +61,10 @@ const AlertGroup: React.FC<{
 
 const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNavigate, onOpenStudentProfile, onOpenSession, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [activities, setActivities] = useState<WorkshopActivity[]>([]);
+  const [activityFormOpen, setActivityFormOpen] = useState(false);
+  const [activityPendingDelete, setActivityPendingDelete] = useState<WorkshopActivity | null>(null);
+  const [activityForm, setActivityForm] = useState({ title: '', date: '', time: '', description: '' });
   const alertAudioContextRef = useRef<AudioContext | null>(null);
   const previousAlertKeysRef = useRef<Set<string> | null>(null);
 
@@ -78,6 +83,26 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
   };
 
   const todayStr = useWorkshopDate();
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem('taller-workshop-activities');
+      if (stored) setActivities(JSON.parse(stored));
+    } catch { setActivities([]); }
+  }, []);
+
+  const saveActivities = (next: WorkshopActivity[]) => {
+    setActivities(next);
+    window.localStorage.setItem('taller-workshop-activities', JSON.stringify(next));
+  };
+  const todayActivities = useMemo(() => activities.filter(activity => activity.date === todayStr).sort((a, b) => a.time.localeCompare(b.time)), [activities, todayStr]);
+  const submitActivity = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!activityForm.title.trim() || !activityForm.date || !activityForm.time) return;
+    saveActivities([...activities, { id: crypto.randomUUID(), title: activityForm.title.trim(), date: activityForm.date, time: activityForm.time, description: activityForm.description.trim() }]);
+    setActivityForm({ title: '', date: todayStr, time: '', description: '' });
+    setActivityFormOpen(false);
+  };
 
   // ─── TODAY's data ───
   const todaySessions = useMemo(() =>
@@ -228,33 +253,33 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
 
         {/* ─── GLOBAL STATS ROW ─── */}
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-5">
-           <div className="group relative flex min-h-[9rem] cursor-pointer flex-col justify-between rounded-[28px] border-0 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-soft md:p-5"
+           <div className="group relative flex min-h-[7rem] cursor-pointer flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-soft md:min-h-[8rem] md:rounded-[26px] md:p-4"
              onClick={() => onNavigate(AppView.STUDENTS)}
              style={{ cursor: 'pointer' }}>
-             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
-             <p className="eyebrow text-neutral-textSec">Activos de membresía</p>
-              <span className="ui-kpi text-neutral-textMain">{globalStats.activeStudents}</span>
+             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Activos de membresía</p>
+              <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{globalStats.activeStudents}</span>
            </div>
-             <div className="relative flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:p-5">
-             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
-             <p className="eyebrow text-neutral-textSec">Pendientes de pago</p>
-               <span className="ui-kpi text-neutral-textMain">{globalStats.pendingStudents}</span>
+             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
+             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Pendientes de pago</p>
+               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{globalStats.pendingStudents}</span>
             </div>
-            <div className="relative flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:p-5">
-             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
-             <p className="eyebrow text-neutral-textSec">Bonos agotándose</p>
-               <span className="ui-kpi text-neutral-textMain">{bonusAlerts.length}</span>
+            <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
+             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Bonos agotándose</p>
+               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{bonusAlerts.length}</span>
             </div>
            {/* Today's metrics */}
-            <div className="relative flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:p-5">
-             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
-             <p className="eyebrow text-neutral-textSec">Alumnos Hoy</p>
-               <span className="ui-kpi text-neutral-textMain">{todayStats.totalAlumnos}</span>
+            <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
+             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Alumnos Hoy</p>
+               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalAlumnos}</span>
             </div>
-            <div className="relative col-span-2 flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:col-span-1 md:p-5">
-             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
-             <p className="eyebrow text-neutral-textSec">Sesiones Hoy</p>
-               <span className="ui-kpi text-neutral-textMain">{todayStats.totalSessions}</span>
+            <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
+             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Sesiones Hoy</p>
+               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalSessions}</span>
            </div>
         </div>
 
@@ -275,26 +300,32 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
 
           {/* ─── TODAY TIMELINE (Left Column) ─── */}
           <div className="lg:col-span-12 space-y-5">
-           <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-3">
                 <div className="w-1.5 h-6 bg-brand rounded-full"></div>
-                <h4 className="text-[20px] font-bold text-neutral-textMain md:text-[16px]">Agenda de Hoy</h4>
+                <h4 className="text-[20px] font-bold text-neutral-textMain md:text-[16px]">Actividades de hoy</h4>
               </div>
-               <button onClick={() => onNavigate(AppView.CALENDAR)} className="min-h-[36px] px-2 text-[12px] font-semibold text-brand hover:text-brand-hover transition-colors">
-                Ver Calendario Completo
+               <button onClick={() => { setActivityForm({ title: '', date: todayStr, time: '', description: '' }); setActivityFormOpen(true); }} className="min-h-[36px] px-2 text-[12px] font-semibold text-brand hover:text-brand-hover transition-colors">
+                Añadir actividad
               </button>
             </div>
 
             <div className="space-y-3">
-              {todaySessions.length === 0 ? (
+              {todayActivities.length === 0 && todaySessions.length === 0 ? (
                 <div className="bg-white/60 border border-dashed border-neutral-border p-8 md:p-10 rounded-2xl text-center">
-                  <p className="text-neutral-textHelper text-[13px]">No hay sesiones programadas para hoy</p>
-                  <button onClick={() => onNavigate(AppView.CALENDAR)} className="mt-4 min-h-[44px] px-4 py-2.5 bg-brand text-white text-[14px] font-semibold rounded-[10px] hover:bg-brand-hover transition-all">
-                    Crear Sesión
+                  <p className="text-neutral-textHelper text-[13px]">No hay actividades programadas para hoy</p>
+                  <button onClick={() => { setActivityForm({ title: '', date: todayStr, time: '', description: '' }); setActivityFormOpen(true); }} className="mt-4 min-h-[44px] px-4 py-2.5 bg-brand text-white text-[14px] font-semibold rounded-[10px] hover:bg-brand-hover transition-all">
+                    Añadir actividad
                   </button>
                 </div>
               ) : (
-                 todaySessions.map(session => {
+                 <>
+                 {todayActivities.map(activity => <div key={activity.id} className="flex items-start gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
+                   <time className="min-w-[46px] pt-0.5 text-[13px] font-semibold text-neutral-textMain">{activity.time}</time>
+                   <div className="min-w-0 flex-1"><p className="text-[14px] font-semibold text-neutral-textMain">{activity.title}</p><p className="mt-1 text-[14px] leading-snug text-neutral-textHelper">{activity.description || 'Sin descripción'}</p></div>
+                   <button type="button" aria-label={`Eliminar ${activity.title}`} onClick={() => setActivityPendingDelete(activity)} className="text-[12px] text-neutral-textHelper hover:text-brand">Eliminar</button>
+                 </div>)}
+                 {todaySessions.map(session => {
                    const occupancy = getSessionOccupancy(session, capacityMap);
                    const conflict = getScheduleConflictReason(session, workshopSchedule, workshopScheduleExceptions);
                    const isFull = occupancy.availability === 'full' || occupancy.availability === 'over_capacity';
@@ -333,11 +364,31 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
                       </div>
                     </div>
                   );
-                })
+                })}
+                </>
               )}
             </div>
 
           </div>
+
+          {activityFormOpen && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="Añadir actividad">
+            <form onSubmit={submitActivity} className="w-full max-w-md rounded-[24px] bg-white p-5 shadow-xl">
+              <div className="mb-4 flex items-center justify-between"><h3 className="text-[18px] font-bold text-neutral-textMain">Añadir actividad</h3><button type="button" onClick={() => setActivityFormOpen(false)} className="text-neutral-textHelper">×</button></div>
+              <div className="space-y-3">
+                <input required autoFocus value={activityForm.title} onChange={event => setActivityForm({ ...activityForm, title: event.target.value })} placeholder="Nombre de la actividad" className="w-full rounded-xl border border-neutral-border px-3 py-2.5 text-[14px]" />
+                <div className="grid grid-cols-2 gap-3"><input required type="date" value={activityForm.date} onChange={event => setActivityForm({ ...activityForm, date: event.target.value })} className="rounded-xl border border-neutral-border px-3 py-2.5 text-[14px]" /><input required type="time" value={activityForm.time} onChange={event => setActivityForm({ ...activityForm, time: event.target.value })} className="rounded-xl border border-neutral-border px-3 py-2.5 text-[14px]" /></div>
+                <textarea value={activityForm.description} onChange={event => setActivityForm({ ...activityForm, description: event.target.value })} placeholder="Descripción breve (opcional)" rows={3} className="w-full resize-none rounded-xl border border-neutral-border px-3 py-2.5 text-[14px]" />
+              </div>
+              <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setActivityFormOpen(false)} className="rounded-xl px-3 py-2 text-[13px] text-neutral-textHelper">Cancelar</button><button type="submit" className="rounded-xl bg-brand px-4 py-2 text-[13px] font-semibold text-white">Guardar</button></div>
+            </form>
+          </div>}
+          {activityPendingDelete && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/30 p-4" role="alertdialog" aria-modal="true" aria-labelledby="delete-activity-title">
+            <div className="w-full max-w-sm rounded-[22px] bg-white p-5 shadow-xl">
+              <h3 id="delete-activity-title" className="text-[17px] font-bold text-neutral-textMain">¿Eliminar actividad?</h3>
+              <p className="mt-2 text-[14px] leading-snug text-neutral-textHelper">Se eliminará “{activityPendingDelete.title}” de la agenda.</p>
+              <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setActivityPendingDelete(null)} className="rounded-xl px-3 py-2 text-[13px] text-neutral-textHelper">Cancelar</button><button type="button" onClick={() => { saveActivities(activities.filter(item => item.id !== activityPendingDelete.id)); setActivityPendingDelete(null); }} className="rounded-xl bg-[#9E3B2B] px-4 py-2 text-[13px] font-semibold text-white">Eliminar</button></div>
+            </div>
+          </div>}
 
           {/* ─── ALERTS ─── */}
           <section className="mt-1 rounded-2xl border border-neutral-border bg-[#FBF7F2] p-4 md:p-5 lg:col-span-12">
