@@ -104,7 +104,7 @@ export const DaySelector: React.FC<{ days: { num: string, name: string }[], acti
         className={`day-pill shrink-0 shadow-none outline-none ${day.num === activeDay ? 'day-pill-active' : 'text-neutral-textHelper hover:bg-white'}`}
       >
         <div className={`text-[24px] font-bold mb-0.5 leading-none ${day.num === activeDay ? 'text-white' : 'text-neutral-textMain'}`}>{day.num}</div>
-        <div className={`text-[10px] font-semibold uppercase tracking-[0.1em] ${day.num === activeDay ? 'text-white/70' : 'opacity-70'}`}>{day.name}</div>
+        <div className={`text-[11px] font-semibold uppercase tracking-[0.1em] ${day.num === activeDay ? 'text-white/70' : 'opacity-70'}`}>{day.name}</div>
       </div>
     ))}
   </div>

@@ -1,0 +1,179 @@
+-- Included only by domain_read.fixture.psql in a disposable database, never by pgTAP discovery.
+create function public.domain_test_assert(ok boolean, label text) returns void
+language plpgsql as $$ begin
+  if ok is distinct from true then raise exception 'FAIL: %', label; end if;
+  raise notice 'PASS: %', label;
+end $$;
+create function public.domain_test_request(operation text default 'student.summary.get',
+  student text default '10000000-0000-0000-0000-000000000001',
+  sede text default '30000000-0000-0000-0000-000000000001') returns jsonb
+language sql as $$ select jsonb_build_object('version',1,'operation',operation,'studentId',student,'sedeId',sede); $$;
+create function public.domain_test_denied(request jsonb, expected_code text default '42501') returns void
+language plpgsql as $$ begin
+  begin
+    perform public.domain_read_v1(request);
+  exception when others then
+    if sqlstate <> expected_code then raise; end if;
+    raise notice 'PASS: rejected with %', expected_code;
+    return;
+  end;
+  raise exception 'FAIL: unauthorized/invalid request accepted';
+end $$;
+
+insert into private.domain_read_principals(user_id,kind,enabled,expires_at) values
+  ('00000000-0000-0000-0000-000000000001','staff',true,now()+interval '1 day'),
+  ('00000000-0000-0000-0000-000000000002','integration',true,now()+interval '1 day');
+insert into private.domain_read_grants(user_id,sede_id,student_id,operation,enabled,expires_at)
+select u.user_id, '30000000-0000-0000-0000-000000000001', s.id,
+  op.operation, true, now()+interval '1 day'
+from (values ('00000000-0000-0000-0000-000000000001'::uuid),
+  ('00000000-0000-0000-0000-000000000002'::uuid)) u(user_id)
+cross join public.students s cross join (values ('student.summary.get'),('membership.status.get')) op(operation)
+where s.id in ('10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004')
+  and not (u.user_id='00000000-0000-0000-0000-000000000001' and op.operation='membership.status.get');
+
+-- Authorization cannot be self-provisioned, and anon/service JWTs cannot call.
+select public.domain_test_assert(not has_table_privilege('authenticated','private.domain_read_grants','SELECT')
+  and not has_table_privilege('authenticated','private.domain_read_grants','INSERT')
+  and not has_table_privilege('authenticated','private.domain_read_principals','UPDATE')
+  and not has_table_privilege('service_role','private.domain_read_grants','INSERT'), 'owner-only provisioning');
+select public.domain_test_assert(not has_function_privilege('anon','public.domain_read_v1(jsonb)','EXECUTE')
+  and not has_function_privilege('service_role','public.domain_read_v1(jsonb)','EXECUTE'), 'no anon/service RPC access');
+select public.domain_test_assert((select provolatile='s' and prosecdef and proconfig=array['search_path=""']
+  from pg_proc where oid='public.domain_read_v1(jsonb)'::regprocedure), 'stable definer with empty search path');
+
+begin read only;
+set local role authenticated;
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.domain_test_assert(public.domain_read_v1(public.domain_test_request()) =
+  '{"version":1,"operation":"student.summary.get","data":{"studentId":"10000000-0000-0000-0000-000000000001","sedeId":"30000000-0000-0000-0000-000000000001","category":"membresia","archived":false}}',
+  'staff exact minimized response works in read-only transaction');
+select public.domain_test_denied(public.domain_test_request('membership.status.get'));
+select public.domain_test_denied(public.domain_test_request('student.summary.get','10000000-0000-0000-0000-000000000002'));
+select public.domain_test_denied(public.domain_test_request('student.summary.get','10000000-0000-0000-0000-000000000003','30000000-0000-0000-0000-000000000002'));
+select public.domain_test_denied(public.domain_test_request('student.summary.get','10000000-0000-0000-0000-000000000099'));
+select public.domain_test_denied(public.domain_test_request('student.summary.get','10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002'));
+-- Metadata cannot turn an ordinary/unprovisioned user into a privileged caller.
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000004';
+set local request.jwt.claim.user_metadata = '{"role":"super_admin"}';
+select public.domain_test_denied(public.domain_test_request());
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000003';
+select public.domain_test_denied(public.domain_test_request());
+set local request.jwt.claim.sub = '';
+select public.domain_test_denied(public.domain_test_request());
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000002';
+set local request.jwt.claim.role = 'service_role';
+select public.domain_test_denied(public.domain_test_request());
+set local request.jwt.claim.role = 'authenticated';
+select public.domain_test_assert((select count(*)=0 from public.students), 'dedicated integration has no raw-table tenant read');
+select public.domain_test_assert((public.domain_read_v1(public.domain_test_request('membership.status.get'))->'data') =
+  jsonb_build_object('studentId','10000000-0000-0000-0000-000000000001','sedeId','30000000-0000-0000-0000-000000000001',
+    'effectivePeriodId','20000000-0000-0000-0000-000000000002','tier','platinum','allocatedClasses',8,
+    'classesRemaining',8,'startsOn',private.membership_today()-1,'endsOn',private.membership_today()+28,'paymentStatus','pending'),
+  'due successor read is authoritative without materialization');
+select public.domain_test_assert(public.domain_read_v1(public.domain_test_request('membership.status.get',
+  '10000000-0000-0000-0000-000000000004'))->'data'='null'::jsonb, 'nonmembership read stays unmanaged');
+select public.domain_test_assert(public.domain_read_v1(public.domain_test_request('student.summary.get',
+  '10000000-0000-0000-0000-000000000004'))->'data'->'archived'='true'::jsonb, 'archive observation preserved');
+-- JSON/SQL injection remains data, never an executable operation or identifier.
+select public.domain_test_denied(public.domain_test_request('student.update'),'22023');
+select public.domain_test_denied(public.domain_test_request('''; DROP TABLE public.students; --'),'22023');
+select public.domain_test_denied(public.domain_test_request('student.summary.get',''' OR true --'),'22023');
+select public.domain_test_denied(public.domain_test_request() || '{"sql":"SELECT * FROM public.students"}','22023');
+select public.domain_test_denied(public.domain_test_request() - 'sedeId','22023');
+select public.domain_test_denied(public.domain_test_request() || '{"version":"1"}','22023');
+select public.domain_test_denied('[]','22023');
+select public.domain_test_denied(null,'22023');
+select public.domain_test_denied(jsonb_build_object('operation',repeat('x',4097)),'22023');
+commit;
+
+-- Every grant state is evaluated again; no positive authorization cache.
+do $$ declare target text; statement text; undo text;
+begin
+  foreach target in array array['principals','grants'] loop
+    foreach statement in array array['enabled=false','revoked_at=now()','expires_at=now()-interval ''1 second'''] loop
+      execute format('update private.domain_read_%s set %s where user_id=$1',target,statement)
+        using '00000000-0000-0000-0000-000000000002'::uuid;
+      perform set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
+      perform set_config('request.jwt.claim.role','authenticated',true);
+      perform public.domain_test_denied(public.domain_test_request());
+      undo := 'enabled=true, revoked_at=null, expires_at=now()+interval ''1 day''';
+      execute format('update private.domain_read_%s set %s where user_id=$1',target,undo)
+        using '00000000-0000-0000-0000-000000000002'::uuid;
+    end loop;
+  end loop;
+end $$;
+
+-- Defaults deny and required finite expiry prevents incomplete provisioning.
+insert into private.domain_read_principals(user_id,kind,expires_at)
+  values ('00000000-0000-0000-0000-000000000004','integration',now()+interval '1 day');
+insert into private.domain_read_grants(user_id,sede_id,student_id,operation,expires_at) values
+  ('00000000-0000-0000-0000-000000000004','30000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001','student.summary.get',now()+interval '1 day');
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000004';
+set request.jwt.claim.role = 'authenticated';
+select public.domain_test_denied(public.domain_test_request());
+do $$ begin
+  begin
+    insert into private.domain_read_principals(user_id,kind,expires_at)
+      values ('00000000-0000-0000-0000-000000000003','staff',null);
+    raise exception 'FAIL: missing expiry accepted';
+  exception when not_null_violation then raise notice 'PASS: missing expiry rejected'; end;
+  begin
+    insert into private.domain_read_principals(user_id,kind,expires_at)
+      values ('00000000-0000-0000-0000-000000000003','staff','infinity');
+    raise exception 'FAIL: infinite expiry accepted';
+  exception when check_violation then raise notice 'PASS: infinite expiry rejected'; end;
+end $$;
+
+-- Provisions do not override revoked staff membership or inactive tenants.
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+delete from public.sede_members where user_id='00000000-0000-0000-0000-000000000001';
+select public.domain_test_denied(public.domain_test_request());
+insert into public.sede_members values
+  ('30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001');
+update public.sedes set is_active=false where id='30000000-0000-0000-0000-000000000001';
+select public.domain_test_denied(public.domain_test_request());
+update public.sedes set is_active=true where id='30000000-0000-0000-0000-000000000001';
+update public.profiles set role=null where id='00000000-0000-0000-0000-000000000001';
+select public.domain_test_denied(public.domain_test_request());
+update public.profiles set role='staff' where id='00000000-0000-0000-0000-000000000001';
+
+-- An integration cannot combine its allowlist with privileged app membership.
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000002';
+insert into public.sede_members values
+  ('30000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002');
+select public.domain_test_denied(public.domain_test_request());
+delete from public.sede_members where user_id='00000000-0000-0000-0000-000000000002';
+update public.profiles set role='super_admin' where id='00000000-0000-0000-0000-000000000002';
+select public.domain_test_denied(public.domain_test_request());
+update public.profiles set role='tallerista' where id='00000000-0000-0000-0000-000000000002';
+update public.sedes set owner_id='00000000-0000-0000-0000-000000000002' where id='30000000-0000-0000-0000-000000000002';
+select public.domain_test_denied(public.domain_test_request());
+update public.sedes set owner_id=null where id='30000000-0000-0000-0000-000000000002';
+
+-- Explicit but inconsistent grant/period links still cannot cross tenant scope.
+insert into private.domain_read_grants(user_id,sede_id,student_id,operation,enabled,expires_at) values
+  ('00000000-0000-0000-0000-000000000002','30000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000003','student.summary.get',true,now()+interval '1 day');
+select public.domain_test_denied(public.domain_test_request('student.summary.get','10000000-0000-0000-0000-000000000003'));
+update public.student_membership_periods set sede_id='30000000-0000-0000-0000-000000000002'
+  where id='20000000-0000-0000-0000-000000000002';
+select public.domain_test_denied(public.domain_test_request('membership.status.get'));
+update public.student_membership_periods set sede_id='30000000-0000-0000-0000-000000000001'
+  where id='20000000-0000-0000-0000-000000000002';
+
+-- Read unknown legacy payment without inventing a period/payment observation.
+insert into private.domain_read_grants(user_id,sede_id,student_id,operation,enabled,expires_at) values
+  ('00000000-0000-0000-0000-000000000002','30000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000002','membership.status.get',true,now()+interval '1 day');
+begin read only;
+set local role authenticated;
+select public.domain_test_assert(public.domain_read_v1(public.domain_test_request('membership.status.get',
+  '10000000-0000-0000-0000-000000000002'))->'data'->'paymentStatus'='null'::jsonb,
+  'legacy unknown payment stays null');
+commit;
+select public.domain_test_assert(students=(select jsonb_agg(to_jsonb(s) order by s.id) from public.students s)
+  and periods=(select jsonb_agg(to_jsonb(p) order by p.id) from public.student_membership_periods p),
+  'all student fields and period history unchanged, no materialization or writes') from public.domain_test_snapshot;

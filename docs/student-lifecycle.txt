@@ -1,19 +1,23 @@
-Estados de alumnos — pottery-gym
+Estados de alumnos — pottery-gym (contrato posterior al PR #1)
 
 Regla acordada
 - Membresía pagada y vigente: active.
 - Vencimiento de pago (expiry_date) superado entre 1 y 5 días: pending.
-- Desde el sexto día: archived/inactivo, manteniendo historial.
+- Desde el sexto día: expired/vencida. No archiva a la persona.
 - Categoría temporal: temporary, excluida de los indicadores de membresías.
 - archived_at conserva los archivados explícitos/preexistentes.
 - Cero clases disponibles no cambia la vigencia de una membresía.
-- Renovar confirma el pago, amplía la fecha y borra el archivado explícito.
-- Eliminar conserva el borrado definitivo con confirmación.
+- Renovar crea un período pendiente; la renovación anticipada empieza después
+  del vencimiento actual y no reinicia el saldo antes de su fecha de inicio.
+- Confirmar pago actúa sobre el período seleccionado y no reinicia clases.
+- Reactivar solo borra archived_at; no renueva ni confirma pagos.
+- El historial de membresías y consumos impide eliminar personas vinculadas.
 
 Implementación
 - utils/studentLifecycle.ts centraliza la clasificación del frontend.
 - El día del taller se calcula en Europe/Madrid y se refresca con la app abierta.
-- students.payment_status guarda paid/pending independientemente del saldo.
+- student_membership_periods conserva pagos, fechas y plan por período.
+- students.payment_status es una proyección paid/pending/NULL, no contabilidad.
 - students_with_lifecycle calcula lifecycle_status en cada consulta. No requiere
   cron ni abrir la app; no modifica status ni archived_at al pasar los días.
 - La vista respeta las políticas RLS de students (security_invoker).
@@ -23,23 +27,26 @@ Implementación
 
 Compatibilidad de datos
 - No se han inventado pagos históricos: payment_status sigue NULL hasta confirmar.
-- Mientras falta ese campo, status=membresia/active conserva la interpretación
-  anterior de pago al día; needs_renewal/new queda pendiente de revisión.
+- Ningún status antiguo acredita cobro. NULL es desconocido, no pagado ni deuda.
 - Los archivados anteriores no permiten distinguir una baja manual de un
-  archivado automático antiguo: se conservan hasta revisar o renovar.
+  archivado automático antiguo: se conservan hasta reactivación explícita.
 - No se recortan clases históricas al abrir o guardar una ficha.
 
 Verificación
-- 6 pruebas de reglas y fechas; 6 pruebas de interfaz con datos aislados.
+- Las verificaciones y limitaciones actuales figuran en docs/development-delivery.md.
 - SQL de integración en supabase/tests/student_payment_lifecycle.sql, con rollback.
-- Migración aplicada en ilkrcakrduibgsfqfzti: 20261010180826_student_payment_lifecycle.
+- El estado remoto debe verificarse por separado, con autorización. Esta rama
+  no ejecuta migraciones remotas ni reconciliación automática del historial.
 - TypeScript y build verificados. El build mantiene avisos de tamaño y dependencia
   circular de chunks de la configuración existente.
 - Esta tarea no ejecuta despliegue del frontend.
 
 Pruebas locales
-  npm run dev -- --host 127.0.0.1 --port 3017 --strictPort
-  BASE_URL=http://127.0.0.1:3017 npx playwright test tests/e2e/student-lifecycle.spec.ts tests/e2e/student-lifecycle-ui.spec.ts
+  npm run test:local
+  npm run test:unit
+  npm run test:sql:gift-cards
+  npm run test:sql:sessions
+  npm run test:sql:domain-read
   npx tsc --noEmit
   npm run build
 

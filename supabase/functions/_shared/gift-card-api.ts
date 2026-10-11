@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'content-type, x-api-key, authorization',
+  'Access-Control-Allow-Headers': 'content-type, x-api-key, authorization, idempotency-key',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
 };
 
@@ -66,6 +66,8 @@ export const parseBody = async (req: Request) => {
   }
 };
 
+// Legacy shipped response includes contact details, notes and metadata. Preserve
+// read compatibility until the privacy/permission matrix approves a narrower contract.
 export const publicGiftCard = (row: Record<string, any>, movements?: Record<string, any>[]) => ({
   id: row.id,
   code: row.code,

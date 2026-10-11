@@ -151,7 +151,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <button aria-label="Alertas" className="w-11 h-11 flex items-center justify-center text-neutral-textHelper hover:text-brand transition-all relative">
             <Icon.Bell />
             {alertsCount > 0 && (
-              <span className="absolute top-2 right-2 w-4 h-4 bg-brand border-2 border-neutral-base rounded-full flex items-center justify-center text-[9px] text-white font-semibold">
+              <span className="absolute top-2 right-2 w-4 h-4 bg-brand border-2 border-neutral-base rounded-full flex items-center justify-center text-[11px] text-white font-semibold">
                 {alertsCount}
               </span>
             )}

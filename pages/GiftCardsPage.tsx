@@ -3,7 +3,7 @@ import { useData } from '../context/DataContext';
 import GiftCardView from '../components/GiftCardView';
 
 const GiftCardsPage: React.FC = () => {
-    const { giftCards, addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard, isLoadingData } = useData();
+    const { giftCards, students, addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard, confirmGiftCardPayment, loadError, isLoadingData } = useData();
 
     if (isLoadingData) {
         return (
@@ -13,13 +13,17 @@ const GiftCardsPage: React.FC = () => {
         );
     }
 
+    if (loadError) return <p role="alert">{loadError}</p>;
+
     return (
         <GiftCardView
             giftCards={giftCards}
+            students={students}
             onAddGiftCard={addGiftCard}
             onUpdateGiftCard={updateGiftCard}
             onConsumeGiftCard={consumeGiftCard}
             onCancelGiftCard={cancelGiftCard}
+            onConfirmGiftCardPayment={confirmGiftCardPayment}
             onDeleteGiftCard={deleteGiftCard}
         />
     );

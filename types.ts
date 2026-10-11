@@ -96,6 +96,7 @@ export interface Student {
 
 export interface ClassSession {
   id: string;
+  revision?: number; // Server revision required for atomic writes.
   date: string; // ISO format
   startTime: string;
   endTime: string;
@@ -104,7 +105,7 @@ export interface ClassSession {
   students: string[]; // List of student names
   attendance?: Record<string, 'present' | 'absent'>; // Record key is student name or ID
   studentIds?: string[];
-  attendanceByStudentId?: Record<string, 'present' | 'absent'>;
+  attendanceByStudentId?: Record<string, 'present' | 'absent' | 'pending'>;
   giftCardIdByStudentId?: Record<string, string>;
   teacherId?: string;
   teacherSubstituteId?: string;

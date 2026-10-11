@@ -63,6 +63,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Track if initial load is done to prevent onAuthStateChange from interfering
     const initializedRef = useRef(false);
     const profileRef = useRef<Profile | null>(null);
+    const loginInProgressRef = useRef(false);
 
     useEffect(() => {
         profileRef.current = profile;
@@ -236,9 +237,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             }
 
             if (event === 'SIGNED_IN' && newSession?.user) {
-                // Only load if login() hasn't already set the profile
-                // login() sets profileRef.current synchronously before this fires
-                if (!profileRef.current) {
+                // Password login owns its authorization lookup. A parallel listener
+                // could sign out an unlinked user before login finishes reading it.
+                if (!loginInProgressRef.current && !profileRef.current) {
                     await loadUserData(newSession);
                 }
             }
@@ -252,6 +253,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }, [loadUserData]);
 
     const login = async (email: string, password: string): Promise<{ success: boolean; role?: UserRole; error?: string }> => {
+        if (loginInProgressRef.current) return { success: false, error: 'El inicio de sesión ya está en curso.' };
+        loginInProgressRef.current = true;
         setError(null);
 
         try {
@@ -276,7 +279,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             const userProfile = await fetchProfile(data.user.id);
 
             if (!userProfile) {
-                await supabase.auth.signOut();
+                await supabase.auth.signOut({ scope: 'local' });
                 setError('No se encontró el perfil del usuario.');
                 return { success: false, error: 'No se encontró el perfil del usuario.' };
             }
@@ -306,6 +309,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             const errorMessage = 'Error inesperado al iniciar sesión.';
             setError(errorMessage);
             return { success: false, error: errorMessage };
+        } finally {
+            loginInProgressRef.current = false;
         }
     };
 

@@ -2,17 +2,19 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { showError } from '../context/toast';
-import { GiftCard } from '../types';
+import { GiftCard, Student } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
 import DiagonalPattern from './shared/DiagonalPattern';
 
 interface GiftCardViewProps {
   giftCards: GiftCard[];
-  onAddGiftCard: (card: Omit<GiftCard, 'id' | 'createdAt'>) => Promise<void>;
+  students?: Student[];
+  onAddGiftCard: (card: Omit<GiftCard, 'id' | 'createdAt'> & { recipientStudentId: string }) => Promise<void>;
   onUpdateGiftCard: (id: string, updates: Partial<GiftCard>) => Promise<void>;
   onConsumeGiftCard: (id: string, consumedAt?: string) => Promise<void>;
   onCancelGiftCard: (id: string) => Promise<void>;
   onDeleteGiftCard: (id: string) => Promise<void>;
+  onConfirmGiftCardPayment?: (id: string) => Promise<void>;
 }
 
 type GiftCardForm = {
@@ -21,6 +23,7 @@ type GiftCardForm = {
   buyerPhone: string;
   buyerEmail: string;
   recipient: string;
+  recipientStudentId: string;
   recipientEmail: string;
   type: GiftCard['type'];
   numClasses: number;
@@ -92,11 +95,9 @@ const getEffectiveExpiryDate = (card: GiftCard) => {
 const getLifecycleStatus = (card: GiftCard, today: string): GiftCardLifecycle => {
   if (card.status === 'consumed' || card.consumedAt) return 'consumed';
   if (card.status === 'cancelled') return 'cancelled';
-  const redeemedSessions = (card.movements || [])
-    .reduce((total, movement) => total + (movement.type === 'redeem' ? movement.sessionsDelta : 0), 0);
+  // The server balance is net of reversals; historical movements are not a current balance.
   const hasFullConsumption = card.status === 'exhausted'
-    || (card.sessionsUsed || 0) >= card.numClasses
-    || redeemedSessions >= card.numClasses;
+    || (card.sessionsUsed || 0) >= card.numClasses;
   if (hasFullConsumption) return 'consumed';
   const expiryDate = getEffectiveExpiryDate(card);
   return card.status === 'expired' || (expiryDate ? expiryDate < today : false) ? 'expired' : 'active';
@@ -109,7 +110,7 @@ const getFirstConsumptionDate = (card: GiftCard) => card.consumedAt || card.move
 const createInitialForm = (): GiftCardForm => {
   const activatedAt = todayKey();
   return {
-    code: '', buyer: '', buyerPhone: '', buyerEmail: '', recipient: '', recipientEmail: '',
+    code: '', buyer: '', buyerPhone: '', buyerEmail: '', recipient: '', recipientStudentId: '', recipientEmail: '',
     type: 'modelado', numClasses: 1, dedication: '', deliveryFormat: 'digital',
     validityMonths: 6, activatedAt, expiryDate: addMonths(activatedAt, 6), price: 0,
     paymentStatus: 'pending', status: 'pending', sessionsUsed: 0, issuedDate: activatedAt,
@@ -152,19 +153,28 @@ const GiftCardItem: React.FC<{ card: GiftCard; lifecycleStatus: GiftCardLifecycl
   );
 };
 
-const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, onAddGiftCard, onUpdateGiftCard, onConsumeGiftCard, onCancelGiftCard }) => {
+const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], onAddGiftCard, onUpdateGiftCard, onConsumeGiftCard, onCancelGiftCard, onConfirmGiftCardPayment }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingCard, setEditingCard] = useState<GiftCard | null>(null);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
   const [cardToConsume, setCardToConsume] = useState<string | null>(null);
+  const [cardToConfirmPayment, setCardToConfirmPayment] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState<GiftCardForm>(createInitialForm);
   const [activeTab, setActiveTab] = useState<GiftCardTab>('active');
   const [searchQuery, setSearchQuery] = useState('');
+  const [recipientSearch, setRecipientSearch] = useState('');
   const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
   const [today, setToday] = useState(todayKey);
 
-  const remaining = Math.max(0, form.numClasses - form.sessionsUsed);
+  const remaining = editingCard && form.numClasses === editingCard.numClasses ? editingCard.sessionsRemaining ?? Math.max(0, form.numClasses - form.sessionsUsed) : Math.max(0, form.numClasses - form.sessionsUsed);
+  const termsLocked = Boolean(editingCard && (editingCard.movements?.length || editingCard.sessionsUsed || editingCard.consumedAt));
+  const recipientChanged = form.recipientStudentId !== (editingCard?.recipientStudentId || '');
+  const recipientAvailable = students.some(student => student.id === form.recipientStudentId);
+  // An existing link remains selected even when it is absent from a refreshed student list.
+  const recipientValid = Boolean(form.recipientStudentId && (recipientAvailable || (!recipientChanged && editingCard?.recipientStudentId)));
+  const identityRequired = !editingCard || Boolean(editingCard.recipientStudentId) || form.recipient !== editingCard.recipient || recipientChanged;
+  const matchingStudents = students.filter(student => student.id === form.recipientStudentId || normalizeSearchValue(`${student.name} ${student.surname || ''} ${student.email || ''} ${student.id}`).includes(normalizeSearchValue(recipientSearch)));
 
   useEffect(() => {
     const timer = window.setInterval(() => setToday(todayKey()), 60_000);
@@ -174,11 +184,11 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, onAddGiftCard, o
   useEffect(() => {
     if (!showModal) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !cardToDelete && !cardToConsume) setShowModal(false);
+      if (event.key === 'Escape' && !isSubmitting && !cardToDelete && !cardToConsume && !cardToConfirmPayment) setShowModal(false);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cardToConsume, cardToDelete, showModal]);
+  }, [cardToConsume, cardToDelete, cardToConfirmPayment, isSubmitting, showModal]);
 
   const durationOptions = useMemo(() => {
     const durations = giftCards.map(card => card.validityMonths).filter((value): value is number => typeof value === 'number');
@@ -217,63 +227,88 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, onAddGiftCard, o
     const validityMonths = card.validityMonths ?? 6;
     const lifecycleStatus = getLifecycleStatus(card, today);
     setEditingCard(card);
+    setRecipientSearch('');
     setForm({
       code: card.code || '', buyer: card.buyer || '', buyerPhone: card.buyerPhone || '', buyerEmail: card.buyerEmail || '',
-      recipient: card.recipient || '', recipientEmail: card.recipientEmail || '', type: card.type, numClasses: card.numClasses,
+      recipient: card.recipient || '', recipientStudentId: card.recipientStudentId || '', recipientEmail: card.recipientEmail || '', type: card.type, numClasses: card.numClasses,
       dedication: card.dedication || '', deliveryFormat: card.deliveryFormat || 'digital', validityMonths,
-      activatedAt, expiryDate: getEffectiveExpiryDate(card) || addMonths(activatedAt, validityMonths), price: card.price || 0,
-      paymentStatus: card.paymentStatus || 'paid', status: lifecycleStatus === 'consumed' ? 'consumed' : card.status || 'active', sessionsUsed: card.sessionsUsed || 0,
+      activatedAt, expiryDate: getEffectiveExpiryDate(card) || '', price: card.price || 0,
+      paymentStatus: card.paymentStatus || 'pending', status: lifecycleStatus === 'consumed' ? 'consumed' : card.status || 'active', sessionsUsed: card.sessionsUsed || 0,
       issuedDate: card.issuedDate?.slice(0, 10) || '', internalNotes: card.extraCommentary || ''
     });
     setShowModal(true);
   };
 
-  const handleCreateClick = () => { setEditingCard(null); setForm(createInitialForm()); setShowModal(true); };
+  const handleCreateClick = () => { setEditingCard(null); setRecipientSearch(''); setForm(createInitialForm()); setShowModal(true); };
 
   const setField = <K extends keyof GiftCardForm>(key: K, value: GiftCardForm[K]) => setForm(current => {
-    if (editingCard && (key === 'status' || key === 'sessionsUsed' || key === 'paymentStatus')) return current;
+    if (key === 'status' || key === 'sessionsUsed' || (editingCard && key === 'paymentStatus')) return current;
+    if (termsLocked && (key === 'numClasses' || key === 'type')) return current;
     return { ...current, [key]: value };
   });
 
   const handleValidityChange = (value: NonNullable<GiftCard['validityMonths']>) => {
+    if (termsLocked) return;
     setForm(current => ({ ...current, validityMonths: value, expiryDate: current.activatedAt ? addMonths(current.activatedAt, value) : '' }));
   };
 
   const handlePaymentChange = (value: GiftCardForm['paymentStatus']) => {
-    if (editingCard) return;
-    setForm(current => ({ ...current, paymentStatus: value, status: value === 'paid' && current.status === 'pending' ? 'active' : value === 'refunded' ? 'cancelled' : current.status }));
+    if (editingCard || !['pending', 'paid'].includes(value)) return;
+    setForm(current => ({ ...current, paymentStatus: value }));
+  };
+
+  const handleRecipientChange = (id: string) => {
+    if (termsLocked) return;
+    const student = students.find(candidate => candidate.id === id);
+    if (id && !student) return;
+    setForm(current => ({ ...current, recipientStudentId: id, ...(student ? {
+      recipient: `${student.name} ${student.surname || ''}`.trim(), recipientEmail: student.email || ''
+    } : {}) }));
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (isSubmitting) return;
+    if (identityRequired && !recipientValid) {
+      showError('Selecciona un alumno autorizado como destinatario. El nombre no vincula una identidad ni crea alumnos.');
+      return;
+    }
     if (!form.buyer.trim() || !form.buyerPhone.trim() || !form.buyerEmail.trim() || !form.recipient.trim()) {
       showError('Completa comprador, teléfono, email y destinatario.');
       return;
     }
-    if (![1, 2, 4].includes(form.numClasses) || !form.validityMonths) {
+    if ((!editingCard && ![1, 2, 4].includes(form.numClasses)) || !form.validityMonths) {
       showError('Selecciona un número de sesiones válido y una vigencia para el bono.');
       return;
     }
     setIsSubmitting(true);
-    const activationDate = editingCard ? (form.activatedAt || editingCard.activatedAt?.slice(0, 10) || todayKey()) : todayKey();
-    const expiryDate = addMonths(activationDate, form.validityMonths);
-    const isConsumedCard = Boolean(editingCard && lifecycleByCard[editingCard.id] === 'consumed');
     const cardData: Omit<GiftCard, 'id' | 'createdAt'> = {
       code: form.code.trim() || undefined,
       buyer: form.buyer.trim(), buyerPhone: form.buyerPhone.trim(), buyerEmail: form.buyerEmail.trim(),
-      recipient: form.recipient.trim(), recipientEmail: form.recipientEmail.trim() || undefined,
-      type: form.type, numClasses: form.numClasses, dedication: form.dedication.trim() || undefined,
-      deliveryFormat: form.deliveryFormat, validityMonths: form.validityMonths, activatedAt: activationDate,
-      expiryDate, price: form.price || undefined, paymentStatus: form.paymentStatus,
-      status: isConsumedCard ? 'consumed' : form.status, consumedAt: editingCard?.consumedAt,
-      sessionsUsed: form.sessionsUsed, issuedDate: (editingCard ? form.issuedDate : activationDate) ? `${editingCard ? form.issuedDate : activationDate}T10:00:00` : undefined,
-      extraCommentary: form.internalNotes.trim() || undefined
+      recipient: form.recipient.trim(), recipientEmail: form.recipientEmail.trim(),
+      type: form.type, numClasses: form.numClasses, dedication: form.dedication.trim(),
+      deliveryFormat: form.deliveryFormat, price: form.price,
+      extraCommentary: form.internalNotes.trim()
     };
-    setShowModal(false);
-    setIsSubmitting(false);
-    if (editingCard) await onUpdateGiftCard(editingCard.id, cardData);
-    else await onAddGiftCard(cardData);
+    try {
+      if (editingCard) {
+        const updates: Partial<GiftCard> = {};
+        for (const key of Object.keys(cardData) as (keyof typeof cardData)[]) {
+          const previous = key === 'price' ? editingCard.price ?? 0 : key === 'deliveryFormat' ? editingCard.deliveryFormat || 'digital' : editingCard[key] ?? '';
+          if ((cardData[key] ?? '') !== previous) Object.assign(updates, { [key]: cardData[key] });
+        }
+        if (recipientChanged) updates.recipientStudentId = form.recipientStudentId;
+        if (form.validityMonths !== (editingCard.validityMonths ?? 6)) updates.validityMonths = form.validityMonths;
+        if (Object.keys(updates).length) await onUpdateGiftCard(editingCard.id, updates);
+      } else {
+        await onAddGiftCard({ ...cardData, recipientStudentId: form.recipientStudentId, validityMonths: form.validityMonths, paymentStatus: form.paymentStatus });
+      }
+      setShowModal(false);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'No se pudo guardar el bono.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getPreviewCard = (): GiftCard => ({
@@ -315,10 +350,27 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, onAddGiftCard, o
     if (!cardToConsume) return;
     setIsSubmitting(true);
     try {
-      await onConsumeGiftCard(cardToConsume, todayKey());
+      await onConsumeGiftCard(cardToConsume);
       setCardToConsume(null);
       setShowModal(false);
       setEditingCard(null);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'No se pudo consumir el bono.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const confirmPayment = async () => {
+    if (!cardToConfirmPayment || !onConfirmGiftCardPayment || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onConfirmGiftCardPayment(cardToConfirmPayment);
+      setCardToConfirmPayment(null);
+      setShowModal(false);
+      setEditingCard(null);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'No se pudo confirmar el pago del bono.');
     } finally {
       setIsSubmitting(false);
     }
@@ -358,24 +410,62 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, onAddGiftCard, o
 
        {showModal && <div className="fixed inset-0 z-[100] flex items-end bg-[#2F1E17]/45 p-0 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-5"><form onSubmit={handleSubmit} className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[#FFFCF8] text-[#2F211B] shadow-[0_24px_70px_rgba(59,35,24,0.2)] sm:h-auto sm:max-h-[94dvh] sm:max-w-3xl sm:rounded-[24px] sm:border sm:border-[#E8D9CC]"><header className="flex shrink-0 items-start justify-between border-b border-[#E8D9CC] px-5 py-4 sm:px-8"><div><p className="ui-label uppercase tracking-[0.16em] text-[#B07D4E]">Gestión de gift card</p><h2 className="ui-section-title mt-1 font-['Playfair_Display'] text-[#7B3F22]">{editingCard ? 'Editar bono temporal' : 'Nuevo bono temporal'}</h2><p className="ui-meta mt-1">Sin reserva automática. El saldo se descuenta al validar asistencia.</p></div><button type="button" onClick={() => setShowModal(false)} className="flex h-10 w-10 items-center justify-center rounded-full text-[#8B6B5E] hover:bg-[#F3E7DC]" aria-label="Cerrar"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 18 18 6M6 6l12 12" /></svg></button></header><div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 custom-scrollbar sm:px-8">
           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">01 · Comprador</legend><div className="grid gap-3 md:grid-cols-2"><Field label="Nombre del comprador" required value={form.buyer} onChange={value => setField('buyer', value)} placeholder="Nombre completo" /><Field label="Teléfono" required type="tel" value={form.buyerPhone} onChange={value => setField('buyerPhone', value)} placeholder="+34 600 000 000" /><Field label="Email" required type="email" value={form.buyerEmail} onChange={value => setField('buyerEmail', value)} placeholder="comprador@email.com" /></div></fieldset>
-          <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">02 · Destinatario</legend><div className="grid gap-3 md:grid-cols-2"><Field label="Nombre del destinatario" required value={form.recipient} onChange={value => setField('recipient', value)} placeholder="Nombre completo" /><Field label="Email del destinatario" type="email" value={form.recipientEmail} onChange={value => setField('recipientEmail', value)} placeholder="Opcional" /><label className="md:col-span-2"><span className="mb-1.5 block text-[11px] font-semibold text-[#6E5145]">Dedicatoria personalizada</span><textarea value={form.dedication} onChange={event => setField('dedication', event.target.value)} maxLength={180} rows={2} className="w-full resize-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#C68952]" placeholder="Un mensaje breve para la experiencia..." /></label></div></fieldset>
-           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">03 · Bono temporal</legend><div className="grid gap-3 md:grid-cols-2"><SelectField label="Tipo de clase" value={form.type} onChange={value => setField('type', value as GiftCard['type'])} options={[['modelado', 'Modelado'], ['torno', 'Torno']]} /><SelectField label="Número de sesiones" value={String(form.numClasses)} onChange={value => setField('numClasses', Number(value))} options={[['1', '1 sesión'], ['2', '2 sesiones'], ['4', '4 sesiones']]} /><SelectField label="Formato de entrega" value={form.deliveryFormat} onChange={value => setField('deliveryFormat', value as NonNullable<GiftCard['deliveryFormat']>)} options={[['digital', 'Digital'], ['physical', 'Físico']]} /><Field label="Importe pagado (€)" type="number" value={String(form.price || '')} onChange={value => setField('price', Number(value) || 0)} placeholder="0" /><SelectField label="Vigencia" value={String(form.validityMonths)} onChange={value => handleValidityChange(Number(value) as NonNullable<GiftCard['validityMonths']>)} options={[['3', '3 meses'], ['6', '6 meses'], ['8', '8 meses']]} /><div className="flex items-end rounded-[10px] bg-[#F8EEE5] px-3 py-2"><div><span className="block text-[10px] uppercase tracking-[0.12em] text-[#9B8175]">Regla</span><strong className="text-[12px] text-[#7B3F22]">{editingCard ? `Caduca el ${formatDateOnly(form.expiryDate)}` : 'Caducidad calculada desde la fecha de activación'}</strong></div></div></div></fieldset>
-          <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">04 · Control interno</legend><div className="grid gap-3 md:grid-cols-2"><Field label="Código de validación" value={form.code} onChange={value => setField('code', value.toUpperCase())} placeholder="Se genera automáticamente" /><SelectField label="Estado del pago" value={form.paymentStatus} onChange={value => handlePaymentChange(value as GiftCardForm['paymentStatus'])} options={[['pending', 'Pendiente'], ['paid', 'Pagado'], ['refunded', 'Reembolsado']]} /><SelectField label="Estado del bono" value={form.status} onChange={value => setField('status', value as GiftCardForm['status'])} options={Object.entries(statusMeta).map(([value, meta]) => [value, meta.label])} /><Field label="Sesiones utilizadas" type="number" value={String(form.sessionsUsed)} onChange={value => setField('sessionsUsed', Math.min(form.numClasses, Math.max(0, Number(value) || 0)))} placeholder="0" /><div className="rounded-[10px] border border-[#DDBFA4] bg-[#FFFCF8] px-3 py-2"><span className="block text-[10px] uppercase tracking-[0.12em] text-[#9B8175]">Sesiones restantes</span><strong className="text-[20px] text-[#7B3F22]">{remaining}</strong><span className="ml-1 text-[11px] text-[#8B6B5E]">de {form.numClasses}</span></div><div className="rounded-[10px] border border-[#E8D9CC] bg-[#FFFCF8] px-3 py-2"><span className="block text-[10px] uppercase tracking-[0.12em] text-[#9B8175]">Fecha de creación</span><strong className="text-[12px] text-[#7B3F22]">{editingCard ? formatDateOnly(editingCard.createdAt) : 'Al guardar'}</strong></div><label><span className="mb-1.5 block text-[11px] font-semibold text-[#6E5145]">Observaciones internas</span><textarea value={form.internalNotes} onChange={event => setField('internalNotes', event.target.value)} rows={2} className="w-full resize-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#C68952]" placeholder="Notas administrativas..." /></label></div>{editingCard?.movements && editingCard.movements.length > 0 && <div className="mt-4 rounded-[10px] border border-[#E8D9CC] bg-[#FFFCF8] p-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">Historial de uso</p><div className="mt-2 max-h-28 space-y-2 overflow-y-auto">{editingCard.movements.slice(0, 8).map(movement => <div key={movement.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[#6E5145]">{movementLabel(movement.type)}</span><span className={movement.sessionsDelta > 0 ? 'font-semibold text-[#9C4235]' : 'font-semibold text-[#47704D]'}>{movement.sessionsDelta > 0 ? `-${movement.sessionsDelta}` : `+${Math.abs(movement.sessionsDelta)}`} sesión · {formatDateOnly(movement.createdAt)}</span></div>)}</div></div>}<div className="mt-4 flex flex-col gap-3 rounded-[12px] bg-[#F8EEE5] p-3 sm:flex-row sm:items-center"><GiftCardQr value={form.code || 'CR-PENDIENTE'} /><div className="min-w-0"><p className="text-[11px] font-semibold text-[#7B3F22]">Código QR de validación</p><p className="mt-1 break-all text-[12px] text-[#8B6B5E]">{form.code || 'Se generará al guardar el bono'}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={downloadPdf} className="rounded-[8px] bg-[#7B3F22] px-3 py-2 text-[11px] font-semibold text-white hover:bg-[#5F301C]">Descargar PDF</button><button type="button" onClick={sendByEmail} className="rounded-[8px] border border-[#DDBFA4] bg-white px-3 py-2 text-[11px] font-semibold text-[#7B3F22] hover:bg-[#FFF9F4]">Preparar email</button></div></div></div></fieldset>
-         </div><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#E8D9CC] bg-white px-5 py-4 sm:px-8">{editingCard && lifecycleByCard[editingCard.id] === 'active' && <button type="button" onClick={requestConsume} className="text-[12px] font-semibold text-[#2B5C86] hover:text-[#1D4768]">Bono consumido</button>}{editingCard ? <button type="button" onClick={requestDelete} className="text-[11px] font-semibold text-[#9C4235] hover:text-[#7B3F22]">Anular / eliminar</button> : <span className="text-[11px] text-[#9B8175]">El código se genera al guardar</span>}<div className="ml-auto flex gap-2"><button type="button" onClick={() => setShowModal(false)} className="rounded-[9px] px-4 py-2.5 text-[12px] font-semibold text-[#8B6B5E] hover:bg-[#F8EEE5]">Cancelar</button><button type="submit" disabled={isSubmitting} className="rounded-[9px] bg-[#C68952] px-5 py-2.5 text-[12px] font-semibold text-white hover:bg-[#B87543] disabled:cursor-not-allowed disabled:opacity-60">{isSubmitting ? 'Guardando…' : editingCard ? 'Guardar cambios' : 'Crear bono'}</button></div></footer></form></div>}
+          <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4">
+            <legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">02 · Destinatario</legend>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Buscar alumno destinatario" value={recipientSearch} onChange={setRecipientSearch} disabled={termsLocked} placeholder="Nombre, email o identidad" />
+              <SelectField label="Alumno destinatario" value={form.recipientStudentId} onChange={handleRecipientChange} disabled={termsLocked} options={[
+                ['', 'Selecciona un alumno existente'],
+                ...(!recipientAvailable && form.recipientStudentId ? [[form.recipientStudentId, `Vinculo existente: ${form.recipientStudentId}`]] : []),
+                ...matchingStudents.map(student => [student.id, `${student.name} ${student.surname || ''} | ${student.email || student.studentCategory || 'Alumno'} | ${student.id}`])
+              ]} />
+              <p className={`md:col-span-2 text-[12px] ${identityRequired && !recipientValid ? 'text-[#9C4235]' : 'text-[#6E5145]'}`} role="status">
+                {identityRequired && !recipientValid ? 'Sin alumno seleccionado: no se puede guardar. Busca y selecciona una identidad autorizada.' : form.recipientStudentId ? `Identidad vinculada: ${form.recipientStudentId}. Editar el nombre no cambia el alumno.` : 'Bono antiguo sin identidad. Selecciona un alumno antes de cambiar el destinatario o confirmar su pago.'}
+                {' '}No se crean alumnos ni se vinculan por coincidencia de nombre.
+              </p>
+              {termsLocked && <p className="md:col-span-2 text-[12px] text-[#6E5145]">El destinatario y las condiciones no se pueden cambiar tras un movimiento.</p>}
+              <Field label="Nombre del destinatario" required value={form.recipient} onChange={value => setField('recipient', value)} placeholder="Nombre mostrado en el bono" />
+              <Field label="Email del destinatario" type="email" value={form.recipientEmail} onChange={value => setField('recipientEmail', value)} placeholder="Opcional" />
+              <label className="md:col-span-2"><span className="mb-1.5 block text-[11px] font-semibold text-[#6E5145]">Dedicatoria personalizada</span><textarea value={form.dedication} onChange={event => setField('dedication', event.target.value)} maxLength={180} rows={2} className="w-full resize-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#C68952]" placeholder="Un mensaje breve para la experiencia..." /></label>
+            </div>
+          </fieldset>
+           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">03 · Bono temporal</legend><div className="grid gap-3 md:grid-cols-2"><SelectField label="Tipo de clase" value={form.type} disabled={termsLocked} onChange={value => setField('type', value as GiftCard['type'])} options={[['modelado', 'Modelado'], ['torno', 'Torno']]} /><SelectField label="Número de sesiones" value={String(form.numClasses)} disabled={termsLocked} onChange={value => setField('numClasses', Number(value))} options={[...(![1, 2, 4].includes(form.numClasses) ? [[String(form.numClasses), `${form.numClasses} sesiones (existente)`]] : []), ['1', '1 sesión'], ['2', '2 sesiones'], ['4', '4 sesiones']]} /><SelectField label="Formato de entrega" value={form.deliveryFormat} onChange={value => setField('deliveryFormat', value as NonNullable<GiftCard['deliveryFormat']>)} options={[['digital', 'Digital'], ['physical', 'Físico']]} /><Field label="Importe del bono (€)" type="number" value={String(form.price || '')} onChange={value => setField('price', Number(value) || 0)} placeholder="0" /><SelectField label="Vigencia" value={String(form.validityMonths)} disabled={termsLocked} onChange={value => handleValidityChange(Number(value) as NonNullable<GiftCard['validityMonths']>)} options={[['3', '3 meses'], ['6', '6 meses'], ['8', '8 meses']]} /><div className="flex items-end rounded-[10px] bg-[#F8EEE5] px-3 py-2"><div><span className="block text-[11px] uppercase tracking-[0.12em] text-[#9B8175]">Regla</span><strong className="text-[12px] text-[#7B3F22]">{editingCard ? `Caducidad guardada: ${formatDateOnly(editingCard.expiryDate)}` : 'Caducidad calculada por el servidor al guardar'}</strong></div></div></div></fieldset>
+          <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4">
+            <legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">04 · Control interno</legend>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Código de validación" value={form.code} onChange={value => setField('code', value.toUpperCase())} placeholder="Se genera automáticamente" />
+              <SelectField label="Estado del pago" value={form.paymentStatus} disabled={Boolean(editingCard)} onChange={value => handlePaymentChange(value as GiftCardForm['paymentStatus'])} options={[['pending', 'Pendiente'], ['paid', 'Pagado'], ...(editingCard?.paymentStatus === 'refunded' ? [['refunded', 'Reembolsado']] : [])]} />
+              <SelectField label="Estado del bono" value={form.status} disabled onChange={() => {}} options={Object.entries(statusMeta).map(([value, meta]) => [value, meta.label])} />
+              <Field label="Sesiones utilizadas" type="number" value={String(form.sessionsUsed)} disabled onChange={() => {}} placeholder="0" />
+              <p className="md:col-span-2 text-[12px] text-[#6E5145]">El servidor controla el pago de bonos existentes, la caducidad, el estado y el saldo.</p>
+              {editingCard?.paymentStatus === 'pending' && editingCard.status === 'pending' && <div className="md:col-span-2">
+                <button type="button" disabled={isSubmitting || !onConfirmGiftCardPayment || !editingCard.recipientStudentId} onClick={() => setCardToConfirmPayment(editingCard.id)} className="rounded-[9px] bg-[#47704D] px-4 py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">Confirmar pago del bono</button>
+                {!onConfirmGiftCardPayment && <p className="mt-1 text-[12px] text-[#6E5145]">Confirmación de pago no disponible hasta conectar la operación autorizada.</p>}
+                {!editingCard.recipientStudentId && <p className="mt-1 text-[12px] text-[#9C4235]">Guarda primero la identidad del destinatario.</p>}
+              </div>}
+              <div className="rounded-[10px] border border-[#DDBFA4] bg-[#FFFCF8] px-3 py-2"><span className="block text-[11px] uppercase tracking-[0.12em] text-[#9B8175]">Sesiones restantes</span><strong className="text-[20px] text-[#7B3F22]">{remaining}</strong><span className="ml-1 text-[11px] text-[#8B6B5E]">de {form.numClasses}</span></div>
+              <div className="rounded-[10px] border border-[#E8D9CC] bg-[#FFFCF8] px-3 py-2"><span className="block text-[11px] uppercase tracking-[0.12em] text-[#9B8175]">Fecha de creación</span><strong className="text-[12px] text-[#7B3F22]">{editingCard ? formatDateOnly(editingCard.createdAt) : 'Al guardar'}</strong></div>
+              <label><span className="mb-1.5 block text-[11px] font-semibold text-[#6E5145]">Observaciones internas</span><textarea value={form.internalNotes} onChange={event => setField('internalNotes', event.target.value)} rows={2} className="w-full resize-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#C68952]" placeholder="Notas administrativas..." /></label>
+            </div>
+            {editingCard?.movements && editingCard.movements.length > 0 && <div className="mt-4 rounded-[10px] border border-[#E8D9CC] bg-[#FFFCF8] p-3"><p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">Historial de uso</p><div className="mt-2 max-h-28 space-y-2 overflow-y-auto">{editingCard.movements.slice(0, 8).map(movement => <div key={movement.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-[#6E5145]">{movementLabel(movement.type)}</span><span className={movement.sessionsDelta > 0 ? 'font-semibold text-[#9C4235]' : 'font-semibold text-[#47704D]'}>{movement.sessionsDelta > 0 ? `-${movement.sessionsDelta}` : `+${Math.abs(movement.sessionsDelta)}`} sesión · {formatDateOnly(movement.createdAt)}</span></div>)}</div></div>}
+            <div className="mt-4 flex flex-col gap-3 rounded-[12px] bg-[#F8EEE5] p-3 sm:flex-row sm:items-center"><GiftCardQr value={form.code || 'CR-PENDIENTE'} /><div className="min-w-0"><p className="text-[11px] font-semibold text-[#7B3F22]">Código QR de validación</p><p className="mt-1 break-all text-[12px] text-[#8B6B5E]">{form.code || 'Se generará al guardar el bono'}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={downloadPdf} className="rounded-[8px] bg-[#7B3F22] px-3 py-2 text-[11px] font-semibold text-white hover:bg-[#5F301C]">Descargar PDF</button><button type="button" onClick={sendByEmail} className="rounded-[8px] border border-[#DDBFA4] bg-white px-3 py-2 text-[11px] font-semibold text-[#7B3F22] hover:bg-[#FFF9F4]">Preparar email</button></div></div></div>
+          </fieldset>
+         </div><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#E8D9CC] bg-white px-5 py-4 sm:px-8">{editingCard && lifecycleByCard[editingCard.id] === 'active' && editingCard.paymentStatus === 'paid' && editingCard.recipientStudentId && <button type="button" disabled={isSubmitting} onClick={requestConsume} className="text-[12px] font-semibold text-[#2B5C86] hover:text-[#1D4768]">Bono consumido</button>}{editingCard ? <button type="button" disabled={isSubmitting} onClick={requestDelete} className="text-[11px] font-semibold text-[#9C4235] hover:text-[#7B3F22]">Anular / eliminar</button> : <span className="text-[11px] text-[#9B8175]">El código se genera al guardar</span>}<div className="ml-auto flex gap-2"><button type="button" disabled={isSubmitting} onClick={() => setShowModal(false)} className="rounded-[9px] px-4 py-2.5 text-[12px] font-semibold text-[#8B6B5E] hover:bg-[#F8EEE5]">Cancelar</button><button type="submit" disabled={isSubmitting || (identityRequired && !recipientValid)} className="rounded-[9px] bg-[#C68952] px-5 py-2.5 text-[12px] font-semibold text-white hover:bg-[#B87543] disabled:cursor-not-allowed disabled:opacity-60">{isSubmitting ? 'Guardando…' : editingCard ? 'Guardar cambios' : 'Crear bono'}</button></div></footer></form></div>}
 
         <ConfirmModal isOpen={!!cardToDelete} title="¿Anular este bono?" message="El bono quedará anulado y no podrá utilizarse. Sus movimientos históricos se conservarán." confirmText="Anular bono" isDestructive loading={isSubmitting} onConfirm={async () => { if (!cardToDelete) return; setIsSubmitting(true); try { await onCancelGiftCard(cardToDelete); setCardToDelete(null); setShowModal(false); } finally { setIsSubmitting(false); } }} onCancel={() => setCardToDelete(null)} />
        <ConfirmModal isOpen={!!cardToConsume} title="¿Marcar bono como consumido?" message="Se archivará como consumido y ya no podrá utilizarse. Toda la información y el historial se conservarán." confirmText="Bono consumido" isDestructive={false} loading={isSubmitting} loadingText="Guardando..." onConfirm={confirmConsume} onCancel={() => setCardToConsume(null)} />
+       <ConfirmModal isOpen={!!cardToConfirmPayment} title="¿Confirmar pago del bono?" message="Se confirmará el pago del bono guardado mediante la operación autorizada. Los cambios sin guardar de este formulario no se aplicarán." confirmText="Confirmar pago" isDestructive={false} loading={isSubmitting} onConfirm={confirmPayment} onCancel={() => setCardToConfirmPayment(null)} />
     </div>
   );
 };
 
-const Field: React.FC<{ label: string; value: string; onChange: (value: string) => void; type?: string; required?: boolean; placeholder?: string }> = ({ label, value, onChange, type = 'text', required, placeholder }) => <label><span className="ui-label mb-1.5 block text-[#6E5145]">{label}{required && <span className="text-[#9C4235]"> *</span>}</span><input required={required} type={type} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="ui-control w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20" /></label>;
+const Field: React.FC<{ label: string; value: string; onChange: (value: string) => void; type?: string; required?: boolean; disabled?: boolean; placeholder?: string }> = ({ label, value, onChange, type = 'text', required, disabled, placeholder }) => <label><span className="ui-label mb-1.5 block text-[#6E5145]">{label}{required && <span className="text-[#9C4235]"> *</span>}</span><input aria-label={label} required={required} disabled={disabled} type={type} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="ui-control w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 disabled:opacity-60" /></label>;
 
-const SelectField: React.FC<{ label: string; value: string; onChange: (value: string) => void; options: string[][] }> = ({ label, value, onChange, options }) => (
+const SelectField: React.FC<{ label: string; value: string; onChange: (value: string) => void; options: string[][]; disabled?: boolean }> = ({ label, value, onChange, options, disabled }) => (
   <label>
     <span className="ui-label mb-1.5 block text-[#6E5145]">{label}</span>
     <span className="relative block">
-      <select value={value} onChange={event => onChange(event.target.value)} className="ui-control w-full appearance-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 pr-9 text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20">
+      <select aria-label={label} value={value} disabled={disabled} onChange={event => onChange(event.target.value)} className="ui-control w-full appearance-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 pr-9 text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 disabled:opacity-60">
         {options.map(([optionValue, labelValue]) => <option key={optionValue} value={optionValue}>{labelValue}</option>)}
       </select>
       <svg className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m7 10 5 5 5-5" /></svg>

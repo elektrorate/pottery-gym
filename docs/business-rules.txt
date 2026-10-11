@@ -1,0 +1,101 @@
+POTTERY GYM - DECISIONES OPERATIVAS DE LA ISSUE #8
+
+Fecha: 2026-10-11T21:06:35+02:00
+Responsable de la decision: solicitante del proyecto en esta conversacion.
+Registro: OpenCode, mediante respuestas explicitas del solicitante.
+
+ESTADO
+
+Reglas comerciales aprobadas. PENDIENTES de implementacion y pruebas.
+Este documento no afirma que las reglas nuevas ya esten activas ni autoriza
+migraciones remotas, fusion de PRs o despliegues en produccion.
+
+REGLAS APROBADAS
+
+1. Pago pendiente o desconocido
+   Una membresia vigente con saldo necesita una aprobacion explicita para
+   financiar asistencia si su pago esta pendiente o no se conoce.
+   Esa aprobacion no acredita un cobro ni cambia payment_status a paid.
+
+2. Membresia vencida
+   Usar el saldo de una membresia vencida requiere aprobacion explicita.
+   No se renueva automaticamente ni se trasladan clases al siguiente periodo.
+   No se aprobo una habilitacion automatica por los cinco dias de gracia.
+
+3. Sin credito valido
+   Puede autorizarse una asistencia sin descuento para ese alumno y sesion.
+   Se registra como excepcion; no se fabrica saldo ni una confirmacion de pago.
+
+4. Momento de consumo
+   El descuento se realiza AL FINALIZAR LA SESION.
+   Reservar o guardar asistencia provisional no descuenta clases.
+   Finalizar/reintentar debe ser transaccional e idempotente.
+
+5. Falta sin asistencia
+   Si el alumno reservo y no asistio ni cancelo a tiempo, se descuenta UNA clase.
+   Se conserva el motivo, la sesion, el alumno y el derecho que financia el cargo.
+
+6. Cancelacion a tiempo
+   El plazo es de OCHO HORAS antes de la hora de inicio.
+   Cancelar con al menos ocho horas de antelacion no consume clase.
+
+7. Cancelacion tardia
+   Cancelar despues de ese corte consume UNA clase.
+   No se autorizo un importe adicional en euros.
+   El consumo se aplica con la finalizacion y no se duplica por reintentos.
+
+8. Penalizacion sin credito valido
+   Registrar una incidencia PENDIENTE de resolucion administrativa.
+   No dejar saldo negativo, fabricar pagos ni descontar automaticamente
+   clases de un periodo posterior o de otro bono.
+
+PERMISOS APROBADOS
+
+- Cualquier empleado autorizado de ese taller puede aprobar una excepcion
+  de asistencia por pago pendiente/desconocido, vencimiento o falta de credito.
+- Cada aprobacion vincula UN alumno y UNA sesion concretos, con motivo y actor.
+- No se reutiliza para otra sesion ni para todo el periodo.
+- Solo el PROPIETARIO DE ESE TALLER puede eximir o revertir una penalizacion
+  registrada por falta o cancelacion tardia, con motivo y trazabilidad.
+- Aprobar excepciones no concede permiso para quitar penalizaciones.
+- El rol superadministrador no otorga por si solo esa ultima facultad:
+  el solicitante eligio exclusivamente al propietario del taller.
+- Identidad, taller, alumno, sesion, permiso y aprobacion deben verificarse
+  en el servidor; texto libre o parametros del cliente no prueban autorizacion.
+
+EJEMPLOS DE ACEPTACION A IMPLEMENTAR
+
+- Membresia pagada, vigente y con cuatro clases: guardar presencia provisional
+  conserva cuatro; finalizar presencia deja tres.
+- Falta cobrable con credito valido: finalizar deja una clase menos.
+- Sesion a las 18:00: cancelar a las 10:00 cumple ocho horas y no penaliza;
+  cancelar a las 10:01 es tardio y consume una clase al finalizar.
+- Pago pendiente/desconocido o membresia vencida: no financiar asistencia
+  sin aprobacion explicita; aprobar nunca modifica el estado del pago.
+- Asistencia sin credito aprobada: no hay descuento ni saldo negativo, pero
+  existe un registro trazable de la excepcion individual.
+- Falta/cancelacion tardia sin credito: incidencia pendiente, saldo y pagos
+  sin modificar; no cargar silenciosamente el periodo siguiente.
+- Empleado de la sede: puede aprobar la excepcion individual, pero no eximir
+  ni revertir una penalizacion. Propietario de otra sede: tampoco puede hacerlo.
+- Misma finalizacion reintentada: mismo recibo y un unico efecto financiero.
+
+LIMITES Y DECISIONES TODAVIA PENDIENTES
+
+La issue #8 sigue abierta. Faltan los otros acuerdos de la matriz completa:
+fuente que acredita cobros, permisos de cambios financieros, delegacion,
+autonomia de agentes, privacidad/exportaciones, plazos de correccion historica,
+retencion de auditoria y clientes/transporte MCP.
+
+Antes de activar estas reglas tambien se deben fijar la fecha de entrada en
+vigor, su aplicacion a reservas existentes y el tratamiento de avisos de
+cancelacion registrados despues de la hora real en que el alumno aviso.
+No se permite reconstruir ni recobrar registros historicos automaticamente.
+
+La fecha de corte de cancelacion debe seguir la convencion horaria aprobada
+del taller y validarse alrededor de cambios de hora; no reinterpretar los
+timestamps historicos silenciosamente.
+
+La version de codigo actual todavia consume al guardar presencia, rechaza
+la financiacion de membresia pendiente/vencida y no penaliza faltas.
+Las pruebas actuales prueban ese contrato anterior, no estas reglas nuevas.
