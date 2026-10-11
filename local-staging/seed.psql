@@ -1,0 +1,302 @@
+-- Runner contract: all tracked migrations applied, Auth users already created,
+-- -v staff_id=... -v other_id=... -v reader_id=..., and in this same psql session:
+-- -c "set app.local_staging = 'pottery-gym-local-staging'" -f seed.psql
+\set ON_ERROR_STOP on
+
+begin;
+
+do $$
+begin
+  if current_setting('app.local_staging', true) is distinct from 'pottery-gym-local-staging' then
+    raise exception 'Refusing seed outside the authorized local staging project';
+  end if;
+  if session_user <> 'postgres' or current_user <> 'postgres' then
+    raise exception 'Local staging bootstrap requires a genuine postgres admin session';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('pottery-gym-local-staging/seed/v1', 0));
+
+  if to_regclass('private.local_staging_setup') is null then
+    create table private.local_staging_setup (
+      version integer primary key check (version = 1),
+      installed_at timestamptz not null default now()
+    );
+    alter table private.local_staging_setup enable row level security;
+    revoke all on private.local_staging_setup from public, anon, authenticated, service_role;
+  end if;
+end $$;
+
+-- The baseline export disables RLS in its session; explicitly restore it here.
+set local row_security = on;
+set local timezone = 'UTC';
+set local client_min_messages = notice;
+
+-- psql does not interpolate variables inside dollar-quoted bodies.
+create temporary table seed_config on commit drop as
+select :'staff_id'::uuid as staff_id, :'other_id'::uuid as other_id, :'reader_id'::uuid as reader_id;
+
+do $$
+declare
+  config record;
+  today date := (now() at time zone 'UTC')::date;
+  own_sede constant uuid := '30000000-0000-0000-0000-000000000001';
+  other_sede constant uuid := '30000000-0000-0000-0000-000000000002';
+  member_id constant uuid := '10000000-0000-0000-0000-000000000001';
+  temporary_id constant uuid := '10000000-0000-0000-0000-000000000002';
+  other_member_id constant uuid := '10000000-0000-0000-0000-000000000003';
+  pending_id constant uuid := '10000000-0000-0000-0000-000000000004';
+  teacher_id constant uuid := '70000000-0000-0000-0000-000000000001';
+  temporary_gift constant uuid := '40000000-0000-0000-0000-000000000001';
+  member_gift constant uuid := '40000000-0000-0000-0000-000000000002';
+  period_id uuid;
+  schedule jsonb;
+  operation text;
+  response jsonb;
+begin
+  if exists (select 1 from private.local_staging_setup where version = 1) then
+    raise notice 'Local staging seed v1 already installed; existing data left untouched.';
+    return;
+  end if;
+
+  select * into strict config from pg_temp.seed_config;
+  if config.staff_id is null or config.other_id is null or config.reader_id is null
+    or config.staff_id = config.other_id or config.staff_id = config.reader_id
+    or config.other_id = config.reader_id then
+    raise exception 'Three distinct, non-null Auth user IDs are required';
+  end if;
+  if (select count(*) from auth.users where
+    (id = config.staff_id and email = 'staff@pottery.local')
+    or (id = config.other_id and email = 'other@pottery.local')
+    or (id = config.reader_id and email = 'reader@pottery.local')) <> 3 then
+    raise exception 'Runner must create the three synthetic local Auth users before seeding';
+  end if;
+
+  insert into public.profiles (id, email, full_name, role) values
+    (config.staff_id, 'staff@pottery.local', 'Local Staging Staff', 'tallerista'),
+    (config.other_id, 'other@pottery.local', 'Local Staging Other', 'tallerista'),
+    (config.reader_id, 'reader@pottery.local', 'Local Staging Reader', 'tallerista')
+  on conflict (id) do nothing;
+  if (select count(*) from public.profiles where role = 'tallerista' and (
+    (id = config.staff_id and email = 'staff@pottery.local')
+    or (id = config.other_id and email = 'other@pottery.local')
+    or (id = config.reader_id and email = 'reader@pottery.local'))) <> 3 then
+    raise exception 'Existing synthetic profiles do not match the least-privilege fixture';
+  end if;
+  if exists (select 1 from public.sedes where owner_id = config.reader_id)
+    or exists (select 1 from public.sede_members where user_id = config.reader_id) then
+    raise exception 'Integration reader must not own or belong to any sede';
+  end if;
+
+  -- Collisions abort the whole transaction, never adopt or reset existing rows.
+  insert into public.sedes (id, name, slug, owner_id, is_active, contact_email) values
+    (own_sede, 'Pottery Local Staging', 'pottery-gym-local-staging', config.staff_id, true, 'staff@pottery.local'),
+    (other_sede, 'Pottery Other Staging', 'pottery-gym-local-staging-other', config.other_id, true, 'other@pottery.local');
+  insert into public.teachers (id, sede_id, name, surname, email) values
+    (teacher_id, own_sede, 'Docente', 'Staging', 'docente@pottery.local');
+  insert into public.workshop_capacity_defaults (sede_id, class_type, capacity)
+    select sede_id, class_type, 5
+    from unnest(array[own_sede, other_sede]) as sedes(sede_id)
+    cross join (values ('mesa'), ('torno'), ('coworking'), ('workshop'), ('privada')) as activities(class_type)
+  on conflict (sede_id, class_type) do nothing;
+  select jsonb_agg(jsonb_build_object('day_of_week', day, 'slot_index', 0,
+    'is_open', true, 'opens_at', '09:00', 'closes_at', '20:00') order by day)
+    into schedule from generate_series(0, 6) as days(day);
+
+  perform set_config('request.jwt.claim.sub', config.staff_id::text, true);
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', config.staff_id, 'role', 'authenticated')::text, true);
+  execute 'set local role authenticated';
+  if auth.uid() is distinct from config.staff_id or auth.role() is distinct from 'authenticated'
+    or not row_security_active('public.students') then
+    raise exception 'Staff fixture must run with a real authenticated RLS context';
+  end if;
+
+  -- Membership triggers initialize the period, fixed plan and balance themselves.
+  insert into public.students (id, sede_id, full_name, name, surname, email,
+    student_category, membership_tier, class_type, status) values
+    (member_id, own_sede, 'Alex Perez', 'Alex', 'Perez', 'alex-member@pottery.local', 'membresia', 'gold', 'Modelado', 'active'),
+    (pending_id, own_sede, 'Pat Pending', 'Pat', 'Pending', 'pending@pottery.local', 'membresia', 'gold', 'Modelado', 'new');
+  insert into public.students (id, sede_id, full_name, name, surname, email,
+    student_category, class_type, status, bonos_asignados, classes_remaining, payment_status) values
+    (temporary_id, own_sede, 'Alex Perez', 'Alex', 'Perez', 'alex-temporal@pottery.local',
+      'temporal', 'Modelado', 'new', 1, 1, 'paid');
+  select current_membership_period_id into strict period_id from public.students where id = member_id;
+  perform public.confirm_student_membership_payment(period_id);
+
+  insert into public.gift_cards (id, sede_id, code, buyer, buyer_email, recipient,
+    recipient_student_id, recipient_email, num_classes, type, sessions_used,
+    payment_status, status, validity_months, activated_at) values
+    (temporary_gift, own_sede, 'STAGING-TEMP', 'Local Staging', 'buyer@pottery.local', 'Alex Perez',
+      temporary_id, 'alex-temporal@pottery.local', 2, 'modelado', 0, 'paid', 'active', 3, today),
+    (member_gift, own_sede, 'STAGING-MEMBER', 'Local Staging', 'buyer@pottery.local', 'Alex Perez',
+      member_id, 'alex-member@pottery.local', 2, 'modelado', 0, 'paid', 'active', 3, today);
+  perform public.replace_workshop_schedule(own_sede, schedule);
+
+  perform public.save_session_reservation(
+    '20000000-0000-0000-0000-000000000001', '60000000-0000-0000-0000-000000000001', 0, own_sede,
+    jsonb_build_object('date', today::text, 'start_time', today::text || 'T10:00:00Z',
+      'end_time', today::text || 'T12:00:00Z', 'class_type', 'mesa', 'capacity', 2,
+      'teacher_id', teacher_id, 'session_audience', 'ambos'),
+    array[member_id, temporary_id], jsonb_build_object(temporary_id::text, temporary_gift));
+  -- Modelado cards fund mesa, not workshop; retain membership funding here.
+  perform public.save_session_reservation(
+    '20000000-0000-0000-0000-000000000002', '60000000-0000-0000-0000-000000000002', 0, own_sede,
+    jsonb_build_object('date', today::text, 'start_time', today::text || 'T14:00:00Z',
+      'end_time', today::text || 'T16:00:00Z', 'class_type', 'workshop', 'capacity', 5,
+      'teacher_id', teacher_id, 'workshop_name', 'Staging Workshop', 'session_audience', 'membresia'),
+    array[member_id], '{}'::jsonb);
+  perform public.save_session_reservation(
+    '20000000-0000-0000-0000-000000000003', '60000000-0000-0000-0000-000000000003', 0, own_sede,
+    jsonb_build_object('date', (today + 1)::text, 'start_time', (today + 1)::text || 'T10:00:00Z',
+      'end_time', (today + 1)::text || 'T12:00:00Z', 'class_type', 'torno', 'capacity', 5,
+      'teacher_id', teacher_id, 'session_audience', 'membresia'),
+    array[member_id], '{}'::jsonb);
+
+  perform set_config('request.jwt.claim.sub', config.other_id::text, true);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', config.other_id, 'role', 'authenticated')::text, true);
+  if auth.uid() is distinct from config.other_id or not private.can_access_sede(other_sede)
+    or private.can_access_sede(own_sede) then
+    raise exception 'Other owner fixture must be isolated from the staff sede';
+  end if;
+  insert into public.students (id, sede_id, full_name, name, surname, email,
+    student_category, membership_tier, class_type, status) values
+    (other_member_id, other_sede, 'Other Member', 'Other', 'Member', 'other-member@pottery.local',
+      'membresia', 'gold', 'Modelado', 'active');
+  select current_membership_period_id into strict period_id from public.students where id = other_member_id;
+  perform public.confirm_student_membership_payment(period_id);
+  perform public.replace_workshop_schedule(other_sede, schedule);
+  perform public.save_session_reservation(
+    '20000000-0000-0000-0000-000000000004', '60000000-0000-0000-0000-000000000004', 0, other_sede,
+    jsonb_build_object('date', today::text, 'start_time', today::text || 'T10:00:00Z',
+      'end_time', today::text || 'T12:00:00Z', 'class_type', 'mesa', 'capacity', 5,
+      'session_audience', 'membresia'), array[other_member_id], '{}'::jsonb);
+
+  execute 'set local role postgres';
+  insert into private.domain_read_principals (user_id, kind, enabled, expires_at) values
+    (config.reader_id, 'integration', true, now() + interval '1 day'),
+    (config.staff_id, 'staff', true, now() + interval '1 day');
+  insert into private.domain_read_grants (user_id, sede_id, student_id, operation, enabled, expires_at)
+    select principals.user_id, own_sede, member_id, operations.operation, true, now() + interval '1 day'
+    from unnest(array[config.reader_id, config.staff_id]) as principals(user_id)
+    cross join (values ('student.summary.get'), ('membership.status.get')) as operations(operation);
+
+  if (select count(*) from public.students s join public.student_membership_periods p
+      on p.id = s.current_membership_period_id and p.student_id = s.id and p.sede_id = s.sede_id
+      where s.id in (member_id, other_member_id) and s.student_category = 'membresia'
+        and s.membership_tier = 'gold' and s.bonos_asignados = 4 and s.classes_remaining = 4
+        and s.payment_status = 'paid' and p.membership_tier = 'gold' and p.allocated_classes = 4
+        and p.payment_status = 'paid' and p.confirmed_at is not null
+        and p.confirmed_by = case when s.id = member_id then config.staff_id else config.other_id end) <> 2 then
+    raise exception 'Server-initialized paid membership fixtures must each retain four classes';
+  end if;
+  if not exists (select 1 from public.students where id = temporary_id and student_category = 'temporal'
+      and bonos_asignados = 1 and classes_remaining = 1 and current_membership_period_id is null
+      and membership_tier is null)
+    or exists (select 1 from public.student_membership_periods where student_id = temporary_id) then
+    raise exception 'Temporary fixture must retain its independent one-class balance and no membership';
+  end if;
+  if not exists (select 1 from public.students s join public.student_membership_periods p
+      on p.id = s.current_membership_period_id and p.student_id = s.id
+      where s.id = pending_id and s.sede_id = own_sede and s.payment_status = 'pending'
+        and s.classes_remaining = 4 and p.payment_status = 'pending' and p.confirmed_at is null) then
+    raise exception 'Pending payment fixture must remain unconfirmed';
+  end if;
+  if (select count(*) from public.gift_cards where id in (temporary_gift, member_gift)
+      and sede_id = own_sede and num_classes = 2 and sessions_used = 0 and type = 'modelado'
+      and payment_status = 'paid' and status = 'active' and consumed_at is null
+      and activated_at = today and validity_months = 3
+      and expiry_date = (today + interval '3 months')::date
+      and recipient_student_id = case when id = temporary_gift then temporary_id else member_id end) <> 2 then
+    raise exception 'Gift fixtures must retain explicit recipients, unused balances and canonical expiry';
+  end if;
+  if (select count(*) from public.workshop_schedules where sede_id in (own_sede, other_sede)
+      and is_open and slot_index = 0 and opens_at = '09:00'::time and closes_at = '20:00'::time) <> 14
+    or (select count(*) from public.workshop_capacity_defaults
+      where sede_id in (own_sede, other_sede) and capacity = 5) <> 10 then
+    raise exception 'Both fixture sedes must have seven open days and five activity defaults';
+  end if;
+  if (select count(*) from public.sessions where sede_id in (own_sede, other_sede)
+      and revision = 1 and completed_at is null) <> 4
+    or (select count(*) from public.session_students where sede_id in (own_sede, other_sede)
+      and attendance = 'pending' and membership_period_id is null) <> 5
+    or (select count(*) from public.session_operation_receipts receipts where sede_id in (own_sede, other_sede)
+      and receipts.operation = 'reservation') <> 4
+    or not exists (select 1 from public.session_students where
+      session_id = '20000000-0000-0000-0000-000000000001' and student_id = temporary_id and gift_card_id = temporary_gift)
+    or exists (select 1 from public.session_students where sede_id in (own_sede, other_sede)
+      and student_id <> temporary_id and gift_card_id is not null)
+    or exists (select 1 from public.session_credit_movements where sede_id in (own_sede, other_sede))
+    or exists (select 1 from public.gift_card_movements where sede_id in (own_sede, other_sede))
+    or exists (select 1 from public.student_membership_class_adjustments where sede_id in (own_sede, other_sede)) then
+    raise exception 'Reservation fixtures must persist ID rosters and receipts without spending any credits';
+  end if;
+
+  perform set_config('request.jwt.claim.sub', config.staff_id::text, true);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', config.staff_id, 'role', 'authenticated')::text, true);
+  execute 'set local role authenticated';
+  if current_user <> 'authenticated' or auth.uid() is distinct from config.staff_id
+    or auth.role() is distinct from 'authenticated' or not row_security_active('public.students')
+    or (select count(*) from public.students where sede_id = own_sede) <> 3
+    or (select count(*) from public.sessions where sede_id = own_sede) <> 3
+    or exists (select 1 from public.students where sede_id = other_sede)
+    or exists (select 1 from public.sessions where sede_id = other_sede)
+    or exists (select 1 from public.student_membership_periods where sede_id = other_sede) then
+    raise exception 'Actual staff RLS must allow only its own fixture sede';
+  end if;
+  foreach operation in array array['student.summary.get', 'membership.status.get'] loop
+    response := public.domain_read_v1(jsonb_build_object('version', 1, 'operation', operation,
+      'sedeId', own_sede, 'studentId', member_id));
+    if response #>> '{data,studentId}' is distinct from member_id::text
+      or response #>> '{data,sedeId}' is distinct from own_sede::text then
+      raise exception 'Staff domain grants must resolve only the explicit member fixture';
+    end if;
+  end loop;
+  begin
+    perform public.domain_read_v1(jsonb_build_object('version', 1, 'operation', 'student.summary.get',
+      'sedeId', other_sede, 'studentId', other_member_id));
+    raise exception 'Staff domain API unexpectedly exposed the other owner fixture';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  perform set_config('request.jwt.claim.sub', config.reader_id::text, true);
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', config.reader_id, 'role', 'authenticated')::text, true);
+  if current_user <> 'authenticated' or auth.uid() is distinct from config.reader_id
+    or auth.role() is distinct from 'authenticated' or not row_security_active('public.students')
+    or exists (select 1 from public.sedes) or exists (select 1 from public.sede_members)
+    or exists (select 1 from public.students) or exists (select 1 from public.sessions)
+    or exists (select 1 from public.student_membership_periods) or exists (select 1 from public.gift_cards) then
+    raise exception 'Integration reader must have no broad application access under actual RLS';
+  end if;
+  foreach operation in array array['student.summary.get', 'membership.status.get'] loop
+    response := public.domain_read_v1(jsonb_build_object('version', 1, 'operation', operation,
+      'sedeId', own_sede, 'studentId', member_id));
+    if response #>> '{data,studentId}' is distinct from member_id::text
+      or response #>> '{data,sedeId}' is distinct from own_sede::text
+      or (operation = 'membership.status.get' and (
+        response #>> '{data,allocatedClasses}' is distinct from '4'
+        or response #>> '{data,classesRemaining}' is distinct from '4'
+        or response #>> '{data,paymentStatus}' is distinct from 'paid')) then
+      raise exception 'Integration reader must resolve exactly its allowlisted member data';
+    end if;
+  end loop;
+  begin
+    perform public.domain_read_v1(jsonb_build_object('version', 1, 'operation', 'student.summary.get',
+      'sedeId', own_sede, 'studentId', temporary_id));
+    raise exception 'Integration reader unexpectedly exposed an ungranted same-name student';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.domain_read_v1(jsonb_build_object('version', 1, 'operation', 'membership.status.get',
+      'sedeId', other_sede, 'studentId', other_member_id));
+    raise exception 'Integration reader unexpectedly exposed the other owner fixture';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  execute 'set local role postgres';
+  insert into private.local_staging_setup (version) values (1);
+  raise notice 'Local staging seed v1 installed; fixture and authorization checks passed.';
+end $$;
+
+commit;

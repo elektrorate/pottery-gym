@@ -95,11 +95,9 @@ const getEffectiveExpiryDate = (card: GiftCard) => {
 const getLifecycleStatus = (card: GiftCard, today: string): GiftCardLifecycle => {
   if (card.status === 'consumed' || card.consumedAt) return 'consumed';
   if (card.status === 'cancelled') return 'cancelled';
-  const redeemedSessions = (card.movements || [])
-    .reduce((total, movement) => total + (movement.type === 'redeem' ? movement.sessionsDelta : 0), 0);
+  // The server balance is net of reversals; historical movements are not a current balance.
   const hasFullConsumption = card.status === 'exhausted'
-    || (card.sessionsUsed || 0) >= card.numClasses
-    || redeemedSessions >= card.numClasses;
+    || (card.sessionsUsed || 0) >= card.numClasses;
   if (hasFullConsumption) return 'consumed';
   const expiryDate = getEffectiveExpiryDate(card);
   return card.status === 'expired' || (expiryDate ? expiryDate < today : false) ? 'expired' : 'active';

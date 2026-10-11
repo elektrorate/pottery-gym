@@ -1,0 +1,65 @@
+project_id = "pottery-gym-local-staging"
+
+[api]
+enabled = true
+port = 55321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 55322
+shadow_port = 55320
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 55329
+
+[db.seed]
+enabled = false
+
+[studio]
+enabled = true
+port = 55323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 55324
+smtp_port = 55325
+pop3_port = 55326
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3017"
+additional_redirect_urls = ["http://localhost:3017"]
+jwt_expiry = 3600
+enable_signup = false
+
+[auth.email]
+# Keep the email provider available for password login. Global signup stays off.
+enable_signup = true
+enable_confirmations = false
+
+[edge_runtime]
+enabled = true
+policy = "per_worker"
+inspector_port = 55328
+
+[analytics]
+enabled = false
+port = 55327
+
+[functions.domain-read]
+verify_jwt = true
+
+[functions.bonos-read]
+verify_jwt = false
+
+[functions.bonos-write]
+verify_jwt = false

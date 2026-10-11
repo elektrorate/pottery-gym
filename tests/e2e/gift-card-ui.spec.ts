@@ -192,6 +192,72 @@ test('buyer/duration/archive filters retain existing selection behavior', async 
   await expect(page.getByLabel('Alumno destinatario', { exact: true })).toHaveValue(temporaryId);
   await expect(page.getByRole('button', { name: 'Bono consumido', exact: true })).toHaveCount(0);
 });
+test('redeem/reverse/redeem retains the net active balance and historical snapshot', async ({ page }) => {
+  const snapshot = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!).find(card => card.id === 'cycle');
+  expect(snapshot).toMatchObject({ status: 'active', numClasses: 2, sessionsUsed: 1, sessionsRemaining: 1 });
+  expect(snapshot.movements.map(movement => [movement.type, movement.sessionsDelta])).toEqual([['redeem', 1], ['reverse', -1], ['redeem', 1]]);
+  const row = page.getByRole('button').filter({ hasText: 'Bono con ciclo' });
+  await expect(row).toContainText('Activo');
+  await expect(row).not.toContainText('Consumido');
+  await expect(row.locator('strong')).toHaveText('1');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(row).toBeVisible();
+  await page.getByRole('tab', { name: /Archivados/ }).click();
+  await expect(row).toHaveCount(0);
+  await page.getByRole('tab', { name: /Activos/ }).click();
+  await open(page, 'Bono con ciclo');
+  await expect(page.getByLabel('Estado del bono')).toHaveValue('active');
+  await expect(page.getByLabel('Sesiones utilizadas')).toHaveValue('1');
+  await expect(page.getByRole('button', { name: 'Bono consumido', exact: true })).toBeVisible();
+  await page.getByLabel('Dedicatoria personalizada').fill('Ciclo conservado');
+  await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
+  expect(await calls(page)).toEqual([{ action: 'update', id: 'cycle', data: { dedication: 'Ciclo conservado' } }]);
+  const saved = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!).find(card => card.id === 'cycle');
+  expect(saved).toEqual({ ...snapshot, dedication: 'Ciclo conservado' });
+  await expect(row).toContainText('Activo');
+});
+test('duplicate or ambiguous movements cannot infer exhaustion or overwrite unknown snapshots', async ({ page }) => {
+  const snapshots = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!);
+  for (const [id, recipient] of [['duplicate-history', 'Bono con duplicados'], ['unknown-balance', 'Historial sin saldo']]) {
+    const snapshot = snapshots.find(card => card.id === id);
+    expect(snapshot.movements.reduce((net, movement) => net + movement.sessionsDelta, 0)).toBe(2);
+    const row = page.getByRole('button').filter({ hasText: recipient });
+    await expect(row).toBeVisible();
+    await expect(row).not.toContainText('Consumido');
+    await page.getByRole('tab', { name: /Archivados/ }).click();
+    await expect(row).toHaveCount(0);
+    await page.getByRole('tab', { name: /Activos/ }).click();
+    await open(page, recipient);
+    await page.getByLabel('Dedicatoria personalizada').fill('Solo metadatos');
+    await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
+    expect((await calls(page)).at(-1)).toEqual({ action: 'update', id, data: { dedication: 'Solo metadatos' } });
+    const saved = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!).find(card => card.id === id);
+    expect(saved).toEqual({ ...snapshot, dedication: 'Solo metadatos' });
+  }
+});
+test('manual consumption, legacy archive markers and cancelled/expired status remain authoritative', async ({ page }) => {
+  const snapshots = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!);
+  for (const [id, recipient, label] of [
+    ['manual-cycle', 'Consumo manual corregido', 'Consumido'],
+    ['legacy-consumed', 'Consumo antiguo fechado', 'Consumido'],
+    ['exhausted', 'Agotado antiguo', 'Consumido'],
+    ['cancelled-cycle', 'Ciclo anulado', 'Anulado'],
+    ['expired-cycle', 'Ciclo caducado', 'Caducado']
+  ]) {
+    const row = page.getByRole('button').filter({ hasText: recipient });
+    await expect(row).toHaveCount(0);
+    await page.getByRole('tab', { name: /Archivados/ }).click();
+    await expect(row).toContainText(label);
+    await open(page, recipient);
+    await expect(page.getByRole('button', { name: 'Bono consumido', exact: true })).toHaveCount(0);
+    await page.getByLabel('Dedicatoria personalizada').fill('Archivo conservado');
+    await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
+    expect((await calls(page)).at(-1)).toEqual({ action: 'update', id, data: { dedication: 'Archivo conservado' } });
+    const saved = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!).find(card => card.id === id);
+    expect(saved).toEqual({ ...snapshots.find(card => card.id === id), dedication: 'Archivo conservado' });
+    await page.getByRole('tab', { name: /Activos/ }).click();
+  }
+});
 test('failed callback keeps the form and selected ID with no automatic retry', async ({ page }) => {
   await page.getByRole('button', { name: 'Simular fallo', exact: true }).click();
   await fillNew(page);

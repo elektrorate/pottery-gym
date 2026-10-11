@@ -25,22 +25,26 @@ commits. Generated Supabase CLI metadata is also excluded.
 | #4 Atomic reservations/attendance | Partial | Session ID/revision RPCs; whole-batch balance + attendance transaction; exact roster; original funding records; retry receipts; deterministic locks; server cup/conflict checks; Calendar integration; Dashboard opens same control | Atomic SQL fixtures/races, session client and Calendar browser tests | Approve cancellation/no-show/eligibility policy. Unknown historical funding rejects. Historical re-debit after period rollover rejects rather than charging successor. Physical deletion disabled to preserve history |
 | #5 Minimal authorized domain API | Partial | Version 1 student summary / membership status; shared SQL/Edge contracts, strict fields, no administrative client key; metadata-only audit | SQL and in-memory HTTP/contract tests | Session/reservation/report read catalog, rate limits and deployed gateway validation still pending. Direct RPC calls are not covered by Edge request audit |
 | #6 MCP adapter | Partial | Two read tools adapt exactly the same API; fixed destination; bounded schemas; no SQL/CRUD/write tools | Adapter contract/negative input tests | No live MCP transport/server. Agree clients, authentication/consent/revocation and run client conformance before enabling |
-| #7 Integration/deployment | Partial | Reproducible isolated runners, regression suite, rollout/recovery gates | See evidence below | Real staging browser/Auth/PostgREST tests, backup restoration rehearsal and coordinated rollout remain pending. No deployment authorization inferred |
+| #7 Integration/deployment | Partial | Reproducible isolated runners, regression suite, separate local Supabase staging, rollout/recovery gates | Local Auth/PostgreSQL/Edge/browser integration now passed; see evidence below | Remote staging/preview integration, backup restoration rehearsal and coordinated rollout remain pending. No deployment authorization inferred |
 
 No issue was closed. Writing code is not evidence of production readiness.
 
 ## Evidence
 
-Executed in this development session:
+Executed in the initial development session and local-staging follow-up:
 
-- `npm run test:unit`: 34/34 passed.
+- `npm run test:unit`: latest 37/37 passed, including administrative-log redaction.
 - `npm run test:sql:gift-cards`: passed, including real concurrent transactions.
 - `npm run test:sql:sessions`: passed, including rollback of mixed funding,
   final-seat races, full-capacity edits, original-period corrections and lost replies.
 - `npm run test:sql:domain-read`: passed, including revocation, injected data,
   forged scopes, minimized fields and unchanged historical snapshots.
-- `npm run test:local`: 99/99 passed, including 28 Calendar/Gift browser
-  tests using actual React components with synthetic callbacks.
+- `npm run test:local`: latest 102/102 passed, including the three additional
+  gift lifecycle regressions from the staging review.
+- `npm run staging:test`: 4/4 real local-stack integration scenarios passed,
+  without altering the demonstration seed or deleting fixture history.
+- The owned local Supabase schema passed `db lint`.
+- Owned local `supabase test db`: 3/3 passed; all fixture writes rolled back.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed; existing circular chunk / bundle-size warnings remain.
 
@@ -53,7 +57,9 @@ files discovered by `supabase test db` against an application database.
 `npm run test:local` additionally self-hosts a Vite test server without `.env`
 loading. `operations.spec.ts` is deliberately excluded: its configured remote
 fallback and broad QA cleanup are not suitable for this new development session.
-No production/staging E2E or migration commands were run in this session.
+No production/remote-staging E2E or remote migration commands were run.
+The local-staging follow-up installed the schema only in its separate Docker
+project, not in the existing local cluster or a hosted project.
 
 ## Migration Gate
 
@@ -95,7 +101,20 @@ clear historical archives or invent payment observations.
 ## Next Session
 
 Approve the capabilities/eligibility matrix and MCP transport/client targets.
-Prepare synthetic real Supabase staging, verify all target grants/triggers,
-exercise browser + database + gateway jointly, rehearse backup/restore, then
-request explicit migration/deployment authorization. No changes to production
-are required to review this draft.
+Synthetic local Supabase staging is now available; see docs/local-staging.txt.
+Its four real browser/Auth/PostgreSQL/Edge scenarios passed, including lost
+committed replies, original-source correction, homonyms, foreign RLS and scoped
+reader authorization. Fixtures and grants are retained; no production data was
+copied or changed. The local environment has a separate project identity and
+ports and does not load production .env files.
+
+The tests exposed and verified fixes for cumulative gift-redeem UI inference
+and concurrent login authorization. Remote staging/preview integration,
+backup restoration rehearsal and deployment authorization remain pending.
+No changes to production are required to review this draft.
+
+Developer-only staging limitations are documented in docs/local-staging.txt:
+Docker publishes service ports on all host interfaces unless the firewall
+restricts access; the reader grants intentionally expire after one day; and a
+Windows CLI-shim timeout can leave a native descendant running. This tooling
+must never contain real data or be exposed as a public staging service.

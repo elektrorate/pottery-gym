@@ -13,6 +13,15 @@ const base: GiftCard = { id: '', code: '', buyer: 'Comprador local', buyerPhone:
   recipient: 'Etiqueta conservada', recipientStudentId: temporaryId, numClasses: 2, type: 'modelado', validityMonths: 6,
   activatedAt: '2026-01-31', expiryDate: '2027-04-30', paymentStatus: 'paid', status: 'active', sessionsUsed: 0,
   createdAt: '2026-01-31T10:00:00Z' };
+const cycle: GiftCard = { ...base, id: 'cycle', code: 'CR-CYCLE', recipient: 'Bono con ciclo', sessionsUsed: 1, sessionsRemaining: 1,
+  movements: [
+    { id: 'cycle-redeem-1', giftCardId: 'cycle', sessionId: 'cycle-session', studentId: temporaryId, type: 'redeem', sessionsDelta: 1, createdAt: '2026-10-08T12:00:00Z' },
+    { id: 'cycle-reverse', giftCardId: 'cycle', sessionId: 'cycle-session', studentId: temporaryId, type: 'reverse', sessionsDelta: -1, createdAt: '2026-10-09T12:00:00Z' },
+    { id: 'cycle-redeem-2', giftCardId: 'cycle', sessionId: 'cycle-session', studentId: temporaryId, type: 'redeem', sessionsDelta: 1, createdAt: '2026-10-10T12:00:00Z' }
+  ] };
+const duplicateHistory: GiftCard = { ...cycle, id: 'duplicate-history', code: 'CR-DUPLICATE', recipient: 'Bono con duplicados',
+  movements: [...cycle.movements!, { ...cycle.movements![2], id: 'duplicate-redeem' }]
+    .map(movement => ({ ...movement, giftCardId: 'duplicate-history' })) };
 const fixtures: GiftCard[] = [
   { ...base, id: 'linked', code: 'CR-LINKED' },
   { ...base, id: 'pending', code: 'CR-PENDING', recipient: 'Pago pendiente', status: 'pending', paymentStatus: 'pending' },
@@ -20,7 +29,22 @@ const fixtures: GiftCard[] = [
   { ...base, id: 'missing', code: 'CR-MISSING', recipient: 'Vinculo fuera de lista', recipientStudentId: '20000000-0000-0000-0000-000000000003' },
   { ...base, id: 'used', code: 'CR-USED', recipient: 'Bono con historial', numClasses: 3, sessionsUsed: 1,
     movements: [{ id: 'movement', giftCardId: 'used', sessionId: 'session', studentId: temporaryId, type: 'redeem', sessionsDelta: 1, createdAt: '2026-10-10T12:00:00Z' }] },
-  { ...base, id: 'archived', code: 'CR-ARCHIVED', buyer: 'Comprador archivado', recipient: 'Bono archivado', status: 'consumed', sessionsUsed: 2, consumedAt: '2026-10-10' }
+  { ...base, id: 'archived', code: 'CR-ARCHIVED', buyer: 'Comprador archivado', recipient: 'Bono archivado', status: 'consumed', sessionsUsed: 2, consumedAt: '2026-10-10' },
+  cycle,
+  duplicateHistory,
+  { ...duplicateHistory, id: 'unknown-balance', code: 'CR-UNKNOWN', recipient: 'Historial sin saldo', status: undefined, sessionsUsed: undefined, sessionsRemaining: undefined,
+    movements: duplicateHistory.movements!.map(movement => ({ ...movement, giftCardId: 'unknown-balance' })) },
+  { ...cycle, id: 'manual-cycle', code: 'CR-MANUAL', recipient: 'Consumo manual corregido', status: 'consumed', consumedAt: '2026-10-09',
+    movements: [cycle.movements![0],
+      { id: 'manual-consumption', giftCardId: 'manual-cycle', type: 'manual' as const, sessionsDelta: 1, createdAt: '2026-10-09T11:00:00Z' },
+      cycle.movements![1]].map(movement => ({ ...movement, giftCardId: 'manual-cycle' })) },
+  { ...base, id: 'legacy-consumed', code: 'CR-LEGACY-CONSUMED', recipient: 'Consumo antiguo fechado', status: undefined, sessionsUsed: undefined, consumedAt: '2026-10-09' },
+  { ...base, id: 'exhausted', code: 'CR-EXHAUSTED', recipient: 'Agotado antiguo', status: 'exhausted', sessionsUsed: undefined },
+  { ...cycle, id: 'cancelled-cycle', code: 'CR-CANCELLED', recipient: 'Ciclo anulado', status: 'cancelled',
+    movements: [...cycle.movements!, { id: 'cycle-cancel', giftCardId: 'cancelled-cycle', type: 'cancel' as const, sessionsDelta: 0, createdAt: '2026-10-11T12:00:00Z' }]
+      .map(movement => ({ ...movement, giftCardId: 'cancelled-cycle' })) },
+  { ...cycle, id: 'expired-cycle', code: 'CR-EXPIRED', recipient: 'Ciclo caducado', status: 'expired',
+    movements: cycle.movements!.map(movement => ({ ...movement, giftCardId: 'expired-cycle' })) }
 ];
 
 const Harness = () => {
@@ -48,6 +72,7 @@ const Harness = () => {
     </nav>
     <output data-testid="calls">{JSON.stringify(calls)}</output>
     <output data-testid="student-identities">{JSON.stringify(students.map(student => student.id))}</output>
+    <output data-testid="gift-card-snapshots" hidden>{JSON.stringify(cards)}</output>
     <GiftCardView giftCards={cards} students={students}
       onAddGiftCard={async data => { await record('create', undefined, data); setCards(current => [...current, { ...data, id: 'created', createdAt: '2026-10-11T12:00:00Z', status: data.paymentStatus === 'paid' ? 'active' : 'pending', sessionsUsed: 0, expiryDate: '2027-04-11' }]); }}
       onUpdateGiftCard={async (id, data) => { await record('update', id, data); setCards(current => current.map(card => card.id === id ? { ...card, ...data } : card)); }}

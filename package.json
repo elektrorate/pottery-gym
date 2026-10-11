@@ -8,11 +8,16 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",
-    "test:unit": "node --test tests/gift-card-ops.test.mjs tests/bonos-write.test.mjs",
+    "test:unit": "node --test tests/gift-card-ops.test.mjs tests/bonos-write.test.mjs tests/local-staging-runtime.test.mjs",
     "test:local": "node tests/run-local-regression.mjs",
     "test:sql:gift-cards": "node supabase/tests/run-gift-card-integrity.mjs",
     "test:sql:sessions": "node supabase/tests/run-atomic-session-operations.mjs",
-    "test:sql:domain-read": "node supabase/tests/run-domain-read.mjs"
+    "test:sql:domain-read": "node supabase/tests/run-domain-read.mjs",
+    "staging:setup": "node scripts/local-staging-setup.mjs",
+    "staging:dev": "node scripts/local-staging-frontend.mjs",
+    "staging:launch": "node scripts/local-staging-launch.mjs",
+    "staging:test": "node scripts/local-staging-test.mjs",
+    "staging:stop": "node scripts/local-staging-stop.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
