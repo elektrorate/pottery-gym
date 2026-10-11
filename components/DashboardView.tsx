@@ -1,9 +1,7 @@
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
-import { showError } from '../context/toast';
-import { getStudentLifecycle, getPendingMembershipPayments, isStudentArchived, isManagedMembership } from '../utils/studentLifecycle';
-import { AttendanceMembershipIntents, persistAttendanceAfterAdjustments } from '../context/data/membershipOps';
+import { getStudentLifecycle, getPendingMembershipPayments, isStudentArchived } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
@@ -14,13 +12,14 @@ interface DashboardViewProps {
   students: Student[];
   sessions: ClassSession[];
   giftCards: GiftCard[];
-  onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
-  onUpdateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
-  onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<void>;
-  onRedeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
-  onReverseGiftCardSession: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean | void>;
+  onAdjustClasses?: (intent: ClassAdjustmentIntent) => Promise<void>;
+  onUpdateStudent?: (id: string, updates: Partial<Student>) => Promise<void>;
+  onUpdateSession?: (id: string, updates: Partial<ClassSession>) => Promise<void>;
+  onRedeemGiftCardSession?: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
+  onReverseGiftCardSession?: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean | void>;
   onNavigate: (view: AppView) => void;
   onOpenStudentProfile: (studentId: string) => void;
+  onOpenSession?: (sessionId: string, date: string) => void;
   capacityDefaults?: WorkshopCapacityDefault[];
   workshopSchedule?: WorkshopScheduleDay[];
   workshopScheduleExceptions?: WorkshopScheduleException[];
@@ -59,22 +58,10 @@ const AlertGroup: React.FC<{
   );
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftCards, onUpdateStudent, onAdjustClasses, onUpdateSession, onRedeemGiftCardSession, onReverseGiftCardSession, onNavigate, onOpenStudentProfile, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
-  const membershipIntents = useRef(new AttendanceMembershipIntents());
-  const studentsRef = useRef(students);
-  studentsRef.current = students;
-  const savingSessions = useRef(new Set<string>());
-  const retryAttendance = useRef<Record<string, () => Promise<void>>>({});
-  const [failedSessions, setFailedSessions] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNavigate, onOpenStudentProfile, onOpenSession, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const alertAudioContextRef = useRef<AudioContext | null>(null);
   const previousAlertKeysRef = useRef<Set<string> | null>(null);
-
-  // BUG 1 FIX: Local attendance state + debounce to prevent race conditions
-  const [localAttendance, setLocalAttendance] = useState<Record<string, Record<string, 'present' | 'absent' | undefined>>>({});
-  const debounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const pendingUpdatesRef = useRef<Record<string, Record<string, 'present' | 'absent' | undefined>>>({});
 
   const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
 
@@ -98,16 +85,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
     [sessions, todayStr]);
 
   const uniqueStudentsToday = useMemo(() => {
-    const names = new Set<string>();
-    todaySessions.forEach(s => s.students.forEach(st => names.add(st.toUpperCase())));
-    return Array.from(names);
+    const ids = new Set<string>();
+    todaySessions.forEach(s => s.students.forEach((_name, index) => ids.add(s.studentIds?.[index] || `${s.id}:${index}`)));
+    return Array.from(ids);
   }, [todaySessions]);
 
   // ─── GLOBAL stats ───
   const globalStats = useMemo(() => {
     const totalStudents = students.length;
      const activeStudents = students.filter(s => getStudentLifecycle(s, todayStr) === 'active').length;
-     const pendingStudents = students.filter(s => getStudentLifecycle(s, todayStr) === 'pending').length;
+     const pendingStudents = students.filter(s => getPendingMembershipPayments(s).length > 0).length;
      const totalSessions = sessions.length;
 
     // Students by category
@@ -214,154 +201,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
   }, [alerts, soundEnabled, playAlertSound]);
 
   useEffect(() => () => {
-    Object.values(debounceTimerRef.current).forEach(clearTimeout);
     alertAudioContextRef.current?.close().catch(() => undefined);
   }, []);
-
-  // ─── All students searchable ───
-  const filteredStudents = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-      return students
-      .filter(s => {
-        if (isStudentArchived(s)) return false;
-        if (!q) return true;
-        const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
-        return fullName.includes(q);
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [students, searchQuery]);
-
-  // Today's student list for attendance - uses localAttendance for immediate UI feedback
-  const todayStudentList = useMemo(() => {
-    const list: { name: string; time: string; type: string; status?: string; sessionId: string }[] = [];
-    todaySessions.forEach(s => {
-      s.students.forEach(st => {
-        // BUG 1 FIX: Prefer local state for immediate feedback, fallback to session state
-        const currentAtt = localAttendance[s.id] ?? s.attendance;
-        list.push({ name: st, time: s.startTime, type: s.classType, status: currentAtt?.[st] || 'pending', sessionId: s.id });
-      });
-    });
-    return list;
-  }, [todaySessions, localAttendance]);
-
-  // BUG 1 FIX: Debounced attendance handler - accumulates clicks for 2 seconds before sending
-  const handleAttendance = useCallback((session: ClassSession, studentName: string, status: 'present' | 'absent') => {
-    const sessionId = session.id;
-    if (savingSessions.current.has(sessionId)) {
-      showError('La asistencia se está guardando. Espera antes de modificarla.');
-      return;
-    }
-
-    // Get current attendance (merge session data with local pending changes)
-    const baseAtt = session.attendance || {};
-    const pendingAtt = pendingUpdatesRef.current[sessionId] || {};
-    const currentAtt = { ...baseAtt, ...pendingAtt };
-
-    // Toggle logic
-    const newStatus = currentAtt[studentName] === status ? undefined : status;
-    const nextAtt = { ...currentAtt };
-    if (newStatus) nextAtt[studentName] = newStatus;
-    else delete nextAtt[studentName];
-
-    // Store pending update
-    pendingUpdatesRef.current[sessionId] = nextAtt;
-
-    // Update local state for immediate UI feedback
-    setLocalAttendance(prev => ({ ...prev, [sessionId]: nextAtt }));
-
-    // Clear existing timer for this session
-    if (debounceTimerRef.current[sessionId]) {
-      clearTimeout(debounceTimerRef.current[sessionId]);
-    }
-
-    // Set new debounce timer (2 seconds)
-    const finalAtt = { ...nextAtt };
-    const saveAttendance = async () => {
-      if (finalAtt) {
-        savingSessions.current.add(sessionId);
-        try {
-          membershipIntents.current.begin(sessionId, finalAtt);
-          await persistAttendanceAfterAdjustments(async () => {
-          const baseAttendance = session.attendance || {};
-          const changedNames = new Set([...Object.keys(baseAttendance), ...Object.keys(finalAtt)]);
-          for (const name of changedNames) {
-            const nextStatus = finalAtt[name];
-            const wasPresent = baseAttendance[name] === 'present';
-            const isPresent = nextStatus === 'present';
-            if (wasPresent === isPresent) continue;
-
-            const student = studentsRef.current.find(item => {
-              const fullName = `${item.name} ${item.surname || ''}`.trim().toUpperCase();
-              return fullName === name.toUpperCase() || item.name.toUpperCase() === name.toUpperCase();
-            });
-            if (!student) continue;
-
-            const linkedGiftCardId = session.giftCardIdByStudentId?.[student.id];
-            const giftCardId = linkedGiftCardId || giftCards.find(card =>
-              card.recipientStudentId === student.id
-              && card.status === 'active'
-              && (card.sessionsRemaining || 0) > 0
-            )?.id;
-
-            if (wasPresent && !isPresent) {
-              const reversed = await onReverseGiftCardSession(giftCardId, sessionId, student.id);
-              if (reversed) continue;
-            } else if (!wasPresent && isPresent && giftCardId) {
-              await onRedeemGiftCardSession(giftCardId, sessionId, student.id);
-              continue;
-            }
-
-            if (isManagedMembership(student)) {
-              const delta = isPresent ? -1 : 1;
-              const intent = membershipIntents.current.get(sessionId, student, delta, session.date);
-              try { await onAdjustClasses(intent); }
-              catch (error: any) {
-                if (error.code === '40001') membershipIntents.current.conflict(sessionId, student.id, delta);
-                throw error;
-              }
-              continue;
-            }
-            const maxBonuses = student.bonosAsignados ?? 4;
-            const nextClassesRemaining = isPresent
-              ? Math.max(0, student.classesRemaining - 1)
-              : Math.min(maxBonuses, student.classesRemaining + 1);
-            await onUpdateStudent(student.id, {
-              classesRemaining: nextClassesRemaining
-            });
-          }
-
-          }, () => onUpdateSession(sessionId, { attendance: finalAtt }), sessionId);
-          membershipIntents.current.complete(sessionId);
-          setLocalAttendance(previous => ({ ...previous, [sessionId]: finalAtt }));
-          delete pendingUpdatesRef.current[sessionId];
-          delete debounceTimerRef.current[sessionId];
-          delete retryAttendance.current[sessionId];
-          setFailedSessions(previous => previous.filter(id => id !== sessionId));
-        } catch (error: any) {
-          membershipIntents.current.releaseUnattempted(sessionId);
-          retryAttendance.current[sessionId] = saveAttendance;
-          setFailedSessions(previous => [...new Set([...previous, sessionId])]);
-          setLocalAttendance(previous => ({ ...previous, [sessionId]: session.attendance || {} }));
-          showError(`No se pudo guardar la asistencia. ${error?.message || 'Intenta de nuevo.'}`);
-        } finally { savingSessions.current.delete(sessionId); }
-      }
-    };
-    debounceTimerRef.current[sessionId] = setTimeout(saveAttendance, 2000);
-  }, [giftCards, onRedeemGiftCardSession, onReverseGiftCardSession, onUpdateSession, onUpdateStudent, onAdjustClasses, students]);
 
   const CATEGORY_LABELS: Record<string, string> = { membresia: 'Membresía', temporal: 'Temporal' };
   const CATEGORY_COLORS: Record<string, string> = { membresia: 'bg-brand', temporal: 'bg-caramelo' };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-base animate-fade-in">
-      {failedSessions.map(sessionId => <div key={sessionId} role="alert" className="p-3 text-sm">
-        Asistencia parcialmente guardada: revisa los períodos y saldos antes de reintentar. No cambies la asistencia original.
-        <button type="button" onClick={() => {
-          if (savingSessions.current.has(sessionId)) return;
-          membershipIntents.current.reviewConflicts(sessionId);
-          void retryAttendance.current[sessionId]?.();
-        }}>Revisé los datos: reintentar asistencia original</button>
-      </div>)}
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-24 pt-3 custom-scrollbar md:px-6 md:py-4">
 
         <section className="relative mb-5 overflow-hidden rounded-[22px] border border-brand/20 bg-brand-soft px-5 py-5 md:px-7 md:py-6">
@@ -412,8 +259,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
             {Object.entries(globalStats.byCategory).filter(([, count]) => (count as number) > 0).map(([cat, count]) => (
               <div key={cat} className="flex items-center gap-2 rounded-full border border-neutral-border bg-white px-2.5 py-1">
                 <div className={`w-2.5 h-2.5 rounded-full ${CATEGORY_COLORS[cat] || 'bg-neutral-border'}`}></div>
-                <span className="text-[11px] font-semibold text-neutral-textMain">{CATEGORY_LABELS[cat] || cat}</span>
-                <span className="text-[11px] font-semibold text-neutral-textHelper">{count}</span>
+                <span className="text-[14px] font-semibold text-neutral-textMain md:text-[11px]">{CATEGORY_LABELS[cat] || cat}</span>
+                <span className="text-[14px] font-semibold text-neutral-textHelper md:text-[11px]">{count}</span>
               </div>
             ))}
           </div>
@@ -426,7 +273,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
            <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-3">
                 <div className="w-1.5 h-6 bg-brand rounded-full"></div>
-                <h4 className="text-[16px] font-bold text-neutral-textMain">Agenda de Hoy</h4>
+                <h4 className="text-[20px] font-bold text-neutral-textMain md:text-[16px]">Agenda de Hoy</h4>
               </div>
                <button onClick={() => onNavigate(AppView.CALENDAR)} className="min-h-[36px] px-2 text-[12px] font-semibold text-brand hover:text-brand-hover transition-colors">
                 Ver Calendario Completo
@@ -447,7 +294,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
                    const conflict = getScheduleConflictReason(session, workshopSchedule, workshopScheduleExceptions);
                    const isFull = occupancy.availability === 'full' || occupancy.availability === 'over_capacity';
                    return (
-                     <div key={session.id} className="group flex items-center justify-between rounded-[18px] border border-neutral-border bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-soft md:p-4">
+                      <div key={session.id} className="group flex flex-col items-stretch justify-between gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-soft sm:flex-row sm:items-center md:p-4">
                       <div className="flex items-center gap-3 md:gap-5">
                         <div className="min-w-[50px] text-center">
                            <p className="ui-card-title text-neutral-textMain">{session.startTime}</p>
@@ -464,15 +311,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
                           </div>
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                       <div className="flex items-center justify-between gap-2 sm:justify-end">
+                         {session.classType !== 'feriado' && <button type="button" className="min-h-11 rounded-lg border border-neutral-border px-3 text-[12px] font-semibold text-brand" onClick={() => onOpenSession ? onOpenSession(session.id, session.date) : onNavigate(AppView.CALENDAR)}>Control de asistencia</button>}
                         <div className="flex -space-x-2">
                           {session.students.slice(0, 3).map((st, i) => (
-                              <div key={i} className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-neutral-sec text-[10px] font-semibold text-neutral-textSec">
+                              <div key={i} className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-neutral-sec text-[11px] font-semibold text-neutral-textSec">
                               {st.charAt(0)}
                             </div>
                           ))}
                           {session.students.length > 3 && (
-                              <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-brand-soft text-[10px] font-semibold text-brand">
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-brand-soft text-[11px] font-semibold text-brand">
                               +{session.students.length - 3}
                             </div>
                           )}

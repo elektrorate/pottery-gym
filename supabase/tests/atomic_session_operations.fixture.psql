@@ -1,0 +1,450 @@
+\set ON_ERROR_STOP on
+\o /dev/null
+create role anon nologin;
+create role authenticated nologin;
+create role service_role nologin bypassrls;
+create schema auth;
+create table auth.users(id uuid primary key, email text, raw_user_meta_data jsonb);
+create function auth.uid() returns uuid language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$;
+grant usage on schema auth to authenticated, service_role;
+\i /tmp/atomic-baseline.sql
+set row_security = on;
+set client_min_messages = notice;
+set timezone = 'UTC';
+insert into auth.users(id,email) values
+  ('00000000-0000-0000-0000-000000000001','atomic-owner@example.invalid'),
+  ('00000000-0000-0000-0000-000000000002','atomic-other@example.invalid');
+insert into public.profiles(id,email,role) values
+  ('00000000-0000-0000-0000-000000000001','atomic-owner@example.invalid','tallerista'),
+  ('00000000-0000-0000-0000-000000000002','atomic-other@example.invalid','tallerista');
+insert into public.sedes(id,name,slug,owner_id) values
+  ('30000000-0000-0000-0000-000000000001','atomic own','atomic-own','00000000-0000-0000-0000-000000000001'),
+  ('30000000-0000-0000-0000-000000000002','atomic foreign','atomic-foreign','00000000-0000-0000-0000-000000000002');
+-- Seed real legacy projections before PR1, including homonyms and zero credit.
+insert into public.students(id,sede_id,full_name,name,surname,student_category,classes_remaining,
+  bonos_asignados,price,payment_status,membership_tier,membership_activated_at,expiry_date)
+select ('10000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  case when n=8 then '30000000-0000-0000-0000-000000000002'::uuid else '30000000-0000-0000-0000-000000000001'::uuid end,
+  'Alex Perez','Alex','Perez',case when n in (3,9) then 'temporal' else 'membresia' end,
+  case when n=2 then 0 else 3 end,4,120,'paid','gold',
+  (now() at time zone 'Europe/Madrid')::date-5, (now() at time zone 'Europe/Madrid')::date+15
+from generate_series(1,9) n;
+insert into public.students(id,sede_id,full_name,name,surname,student_category,classes_remaining,
+  bonos_asignados,price,payment_status,membership_tier,membership_activated_at,expiry_date)
+select '10000000-0000-0000-0000-000000abcdef',sede_id,full_name,name,surname,student_category,classes_remaining,
+  bonos_asignados,price,payment_status,membership_tier,membership_activated_at,expiry_date
+from public.students where id='10000000-0000-0000-0000-000000000005';
+insert into public.sessions(id,sede_id,start_time,end_time,class_type,date,capacity)
+select ('20000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  case when n=6 then '30000000-0000-0000-0000-000000000002'::uuid else '30000000-0000-0000-0000-000000000001'::uuid end,
+  ((now() at time zone 'Europe/Madrid')::date::timestamp at time zone 'UTC')+make_interval(hours=>n*2),
+  ((now() at time zone 'Europe/Madrid')::date::timestamp at time zone 'UTC')+make_interval(hours=>n*2+1),
+  'mesa',(now() at time zone 'Europe/Madrid')::date::text,case when n=5 then 1 else 2 end
+from generate_series(1,7) n;
+insert into public.teachers(id,sede_id,name) values
+  ('70000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','Original teacher'),
+  ('70000000-0000-0000-0000-000000000002','30000000-0000-0000-0000-000000000001','Original substitute');
+insert into public.sessions(id,sede_id,start_time,end_time,class_type,date,capacity,teacher_id,teacher_substitute_id)
+select ('20000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,'30000000-0000-0000-0000-000000000001',
+  ((now() at time zone 'Europe/Madrid')::date::timestamp at time zone 'UTC')+make_interval(days=>case when n=11 then 90 else 0 end,hours=>18),
+  ((now() at time zone 'Europe/Madrid')::date::timestamp at time zone 'UTC')+make_interval(days=>case when n=11 then 90 else 0 end,hours=>19),
+  'mesa',(now() at time zone 'Europe/Madrid')::date::text,2,
+  case when n=12 then '70000000-0000-0000-0000-000000000001'::uuid end,
+  case when n=12 then '70000000-0000-0000-0000-000000000002'::uuid end
+from (values (11),(12)) extra(n);
+insert into public.session_students(session_id,student_id,sede_id,student_name,attendance)
+select ('20000000-0000-0000-0000-' || lpad(session::text,12,'0'))::uuid,
+  ('10000000-0000-0000-0000-' || lpad(student::text,12,'0'))::uuid,
+  case when session=6 then '30000000-0000-0000-0000-000000000002'::uuid else '30000000-0000-0000-0000-000000000001'::uuid end,
+  'ALEX PEREZ',case when session=4 then 'present' else 'pending' end
+from (values (1,1),(1,2),(2,1),(2,4),(3,3),(4,1),(6,8),(11,5),(12,9)) roster(session,student);
+\i /tmp/atomic-membership.sql
+\i /tmp/atomic-gift.sql
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.activate_student_membership(id) from public.students where student_category='membresia';
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+values ('40000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','Alex Perez',
+  '10000000-0000-0000-0000-000000000003',1,'modelado',(now() at time zone 'UTC')::date,3,'paid');
+reset role;
+update public.session_students set gift_card_id='40000000-0000-0000-0000-000000000001'
+  where session_id='20000000-0000-0000-0000-000000000003';
+create table public.atomic_before as select id,to_jsonb(s) raw from public.sessions s;
+\i /tmp/atomic-operations.sql
+create function public.atomic_assert(ok boolean,label text) returns void language plpgsql as $$
+begin
+  if ok is distinct from true then raise exception 'FAIL: %',label; end if;
+  raise notice 'PASS: %',label;
+end $$;
+create function public.atomic_reject(statement text, expected text, code text default 'P0001')
+returns void language plpgsql security invoker as $$
+declare rejected boolean := false;
+begin
+  begin execute statement;
+  exception when others then
+    if sqlstate <> code or sqlerrm not like expected then raise; end if;
+    rejected := true;
+  end;
+  perform public.atomic_assert(rejected, 'reject: ' || expected);
+end $$;
+select public.atomic_assert(not exists(select 1 from public.atomic_before b join public.sessions s using(id)
+  where b.raw is distinct from to_jsonb(s)-'revision'), 'migration preserves legacy session observations');
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$delete from public.teachers where id='70000000-0000-0000-0000-000000000001'$q$,
+  '%sessions_teacher_id_fkey%', '23503');
+select public.atomic_reject($q$delete from public.teachers where id='70000000-0000-0000-0000-000000000002'$q$,
+  '%sessions_teacher_substitute_id_fkey%', '23503');
+select public.atomic_reject($q$delete from public.students where id='10000000-0000-0000-0000-000000000009'$q$,
+  '%violates foreign key constraint%', '23503');
+select public.atomic_assert(revision=0 and teacher_id='70000000-0000-0000-0000-000000000001'
+  and teacher_substitute_id='70000000-0000-0000-0000-000000000002',
+  'teacher deletion cannot null session metadata behind revision guard') from public.sessions
+  where id='20000000-0000-0000-0000-000000000012';
+select public.atomic_assert(count(*)=1,'student deletion cannot cascade away pending enrollment') from public.session_students
+  where session_id='20000000-0000-0000-0000-000000000012' and student_id='10000000-0000-0000-0000-000000000009';
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000011',
+  gen_random_uuid(),0,'[{"student_id":"10000000-0000-0000-0000-000000000005","status":"present"}]',true,null)$q$,
+  'Session interval must be finite and stay within its declared UTC date');
+select public.atomic_assert(classes_remaining=3,'legacy date/interval mismatch cannot debit a falsely claimed membership period')
+  from public.students where id='10000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000001',
+  '60000000-0000-0000-0000-000000000001',0,
+  '[{"student_id":"10000000-0000-0000-0000-000000000001","status":"present"},{"student_id":"10000000-0000-0000-0000-000000000002","status":"present"}]',true,null)$q$,
+  'Class balance must remain between zero and period allocation');
+select public.atomic_assert(classes_remaining=3,'second-student insufficient credit rolls back first debit') from public.students
+  where id='10000000-0000-0000-0000-000000000001';
+select public.atomic_assert(revision=0 and completed_at is null,'failed whole-session save leaves revision/completion unchanged')
+  from public.sessions where id='20000000-0000-0000-0000-000000000001';
+select public.atomic_assert(count(*)=0,'failed batch leaves no funding movements') from public.session_credit_movements;
+select public.atomic_assert(count(*)=0,'failed batch leaves no PR1 adjustments') from public.student_membership_class_adjustments;
+select public.atomic_assert(count(*)=0,'failed batch leaves no operation receipts') from public.session_operation_receipts;
+select public.atomic_assert(bool_and(attendance='pending' and membership_period_id is null),'failed batch restores entire ID roster')
+  from public.session_students where session_id='20000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000002',
+  gen_random_uuid(),0,'[{"student_id":"10000000-0000-0000-0000-000000000001","status":"present"}]',true,null)$q$,
+  'Attendance must match the exact persisted ID roster');
+select public.save_session_attendance('20000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000002',0,
+  '[{"student_id":"10000000-0000-0000-0000-000000000004","status":"present"},{"student_id":"10000000-0000-0000-0000-000000000001","status":"present"}]',true,null);
+select public.atomic_assert(revision=1 and completed_at is not null,'full capacity homonym roster finalizes atomically')
+  from public.sessions where id='20000000-0000-0000-0000-000000000002';
+select public.atomic_assert(count(*)=2 and bool_and(classes_remaining=2),'exact IDs debit both homonyms once') from public.students
+  where id in ('10000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004');
+select public.atomic_assert(public.save_session_attendance('20000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000002',0,
+  '[{"student_id":"10000000-0000-0000-0000-000000000001","status":"present"},{"student_id":"10000000-0000-0000-0000-000000000004","status":"present"}]',true,null)->>'replayed'='true',
+  'lost response replays before stale revision check, independent of input order');
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000002',0,
+  '[{"student_id":"10000000-0000-0000-0000-000000000001","status":"absent"}]',false,null)$q$,
+  'Idempotency key conflicts%');
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000004',
+  gen_random_uuid(),0,'[{"student_id":"10000000-0000-0000-0000-000000000001","status":"absent"}]',true,null)$q$,
+  'Historical attendance funding is unknown%');
+-- Materialize a successor through PR1; retain the immutable outgoing snapshot.
+reset role;
+update public.student_membership_periods set ends_on=private.membership_today()-1
+  where id=(select current_membership_period_id from public.students where id='10000000-0000-0000-0000-000000000001');
+set role authenticated;
+select public.schedule_student_membership('10000000-0000-0000-0000-000000000001',gen_random_uuid(),'platinum',8);
+reset role;
+create table public.atomic_outgoing as select id,outgoing_snapshot from public.student_membership_periods
+  where student_id='10000000-0000-0000-0000-000000000001' and outgoing_snapshot is not null;
+set role authenticated;
+select public.save_session_attendance('20000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000003',1,
+  '[{"student_id":"10000000-0000-0000-0000-000000000001","status":"absent"},{"student_id":"10000000-0000-0000-0000-000000000004","status":"absent"}]',true,null);
+select public.atomic_assert(classes_remaining=8,'original-source correction never credits successor') from public.students
+  where id='10000000-0000-0000-0000-000000000001';
+select public.atomic_assert(classes_remaining=3,'same-period reversal restores known original balance') from public.students
+  where id='10000000-0000-0000-0000-000000000004';
+select public.atomic_assert(count(*)=1 and bool_and(period_id=(select membership_period_id from public.session_students
+  where session_id='20000000-0000-0000-0000-000000000002' and student_id='10000000-0000-0000-0000-000000000001')),
+  'historical correction appends explicit original-period credit receipt') from public.session_credit_movements where disposition='original_period_credit';
+select public.atomic_assert(public.save_session_attendance('20000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000002',0,
+  '[{"student_id":"10000000-0000-0000-0000-000000000001","status":"present"},{"student_id":"10000000-0000-0000-0000-000000000004","status":"present"}]',true,null)->>'revision'='1',
+  'delayed old request returns original durable revision');
+select public.atomic_assert(revision=2,'old receipt cannot resurrect attendance or advance revision') from public.sessions
+  where id='20000000-0000-0000-0000-000000000002';
+select public.atomic_assert(bool_and(attendance='absent'),'old receipt leaves corrected ID attendance intact') from public.session_students
+  where session_id='20000000-0000-0000-0000-000000000002';
+select public.save_session_attendance('20000000-0000-0000-0000-000000000003','60000000-0000-0000-0000-000000000004',0,
+  '[{"student_id":"10000000-0000-0000-0000-000000000003","status":"present"}]',true,null);
+select public.atomic_assert(sessions_used=1 and status='consumed','explicit gift funding uses shared helper including final credit') from public.gift_cards;
+select public.save_session_attendance('20000000-0000-0000-0000-000000000003','60000000-0000-0000-0000-000000000005',1,
+  '[{"student_id":"10000000-0000-0000-0000-000000000003","status":"absent"}]',true,null);
+select public.atomic_assert(sessions_used=0,'gift correction reverses the original card') from public.gift_cards;
+select public.atomic_assert(classes_remaining=3,'gift attendance never mutates person membership balance') from public.students
+  where id='10000000-0000-0000-0000-000000000003';
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000006',
+  gen_random_uuid(),0,'[]',true,null)$q$,'Session not accessible','42501');
+select public.atomic_reject($q$insert into public.session_students(session_id,student_id,sede_id,attendance)
+  values ('20000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000008',
+    '30000000-0000-0000-0000-000000000001','present')$q$,'permission denied%','42501');
+select public.atomic_reject($q$update public.session_students set attendance='present'$q$,'permission denied%','42501');
+select public.atomic_reject($q$update public.sessions set completed_at=now()$q$,'permission denied%','42501');
+select public.atomic_reject($q$delete from public.sessions$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000007',
+  gen_random_uuid(),0,'30000000-0000-0000-0000-000000000001','{}',
+  array['10000000-0000-0000-0000-000000000008'::uuid],'{}')$q$,'Roster students must belong%');
+-- Creation, retry and roster replacement are also a single atomic operation.
+select public.atomic_reject(format($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000008',
+  '60000000-0000-0000-0000-000000000008',0,'30000000-0000-0000-0000-000000000001',%L::jsonb,
+  array['10000000-0000-0000-0000-000000000008'::uuid],'{}')$q$,
+  jsonb_build_object('date',(private.membership_today()+2)::text,'start_time',(private.membership_today()+2)::timestamp at time zone 'UTC',
+    'end_time',((private.membership_today()+2)::timestamp at time zone 'UTC')+interval '1 hour','class_type','mesa','capacity',2)),
+  'Roster students must belong%');
+select public.atomic_assert(count(*)=0,'invalid roster creation leaves no orphan session') from public.sessions
+  where id='20000000-0000-0000-0000-000000000008';
+select public.save_session_reservation('20000000-0000-0000-0000-000000000008','60000000-0000-0000-0000-000000000008',0,
+  '30000000-0000-0000-0000-000000000001',jsonb_build_object('date',(private.membership_today()+2)::text,
+    'start_time',(private.membership_today()+2)::timestamp at time zone 'UTC',
+    'end_time',((private.membership_today()+2)::timestamp at time zone 'UTC')+interval '1 hour',
+    'class_type','mesa','capacity',2),
+  array['10000000-0000-0000-0000-000000000002'::uuid,'10000000-0000-0000-0000-000000000003'::uuid],
+  '{"10000000-0000-0000-0000-000000000003":"40000000-0000-0000-0000-000000000001"}');
+select public.atomic_assert(public.save_session_reservation('20000000-0000-0000-0000-000000000008',
+  '60000000-0000-0000-0000-000000000008',0,'30000000-0000-0000-0000-000000000001',
+  jsonb_build_object('date',(private.membership_today()+2)::text,'start_time',(private.membership_today()+2)::timestamp at time zone 'UTC',
+    'end_time',((private.membership_today()+2)::timestamp at time zone 'UTC')+interval '1 hour','class_type','mesa','capacity',2),
+  array['10000000-0000-0000-0000-000000000003'::uuid,'10000000-0000-0000-0000-000000000002'::uuid],
+  '{"10000000-0000-0000-0000-000000000003":"40000000-0000-0000-0000-000000000001"}')->>'replayed'='true',
+  'reservation creation lost response replays original session and revision');
+select public.atomic_assert(revision=1,'creation replay cannot add another session revision') from public.sessions
+  where id='20000000-0000-0000-0000-000000000008';
+select public.atomic_assert(sessions_used=0,'reservation with explicit gift link does not redeem') from public.gift_cards;
+-- Gift student sorts first here; membership failure must undo that helper too.
+reset role;
+update public.students set classes_remaining=0 where id='10000000-0000-0000-0000-000000000004';
+set role authenticated;
+select public.save_session_reservation('20000000-0000-0000-0000-000000000008','60000000-0000-0000-0000-000000000009',1,
+  '30000000-0000-0000-0000-000000000001','{}',
+  array['10000000-0000-0000-0000-000000000003'::uuid,'10000000-0000-0000-0000-000000000004'::uuid],
+  '{"10000000-0000-0000-0000-000000000003":"40000000-0000-0000-0000-000000000001"}');
+select public.atomic_reject($q$select public.save_session_attendance('20000000-0000-0000-0000-000000000008',
+  gen_random_uuid(),2,'[{"student_id":"10000000-0000-0000-0000-000000000003","status":"present"},
+  {"student_id":"10000000-0000-0000-0000-000000000004","status":"present"}]',true,null)$q$,
+  'Class balance must remain between zero and period allocation');
+select public.atomic_assert(sessions_used=0 and status='active','second-student failure rolls back first gift helper debit') from public.gift_cards;
+select public.atomic_assert(count(*)=0,'mixed batch rollback leaves no gift ledger movement') from public.gift_card_movements
+  where session_id='20000000-0000-0000-0000-000000000008';
+select public.atomic_assert(count(*)=0,'mixed batch rollback leaves no gift helper receipt') from public.gift_card_operation_receipts
+  where session_id='20000000-0000-0000-0000-000000000008';
+select public.atomic_assert(revision=2 and completed_at is null,'mixed batch rollback preserves reservation revision') from public.sessions
+  where id='20000000-0000-0000-0000-000000000008';
+reset role;
+select public.atomic_assert(not exists(select 1 from public.atomic_outgoing b join public.student_membership_periods p using(id)
+  where b.outgoing_snapshot is distinct from p.outgoing_snapshot),'historical correction preserves outgoing snapshot byte-for-byte');
+-- Simulate accidental future grants: INVOKER owner guards still reject bypass.
+grant insert,update,delete on public.sessions,public.session_students to authenticated,service_role;
+set role authenticated;
+select set_config('app.atomic_session','true',false);
+select public.atomic_reject($q$update public.session_students set attendance='present'$q$,'Protected session projection%','42501');
+select public.atomic_reject($q$delete from public.session_students where session_id='20000000-0000-0000-0000-000000000002'$q$,
+  'Protected session projection%','42501');
+select public.atomic_reject($q$insert into public.session_students(session_id,student_id,sede_id,attendance)
+  values ('20000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000008',
+    '30000000-0000-0000-0000-000000000001','present')$q$,'Protected session projection%','42501');
+reset role;
+set role service_role;
+select public.atomic_reject($q$update public.sessions set revision=100$q$,'Protected session projection%','42501');
+select public.atomic_reject($q$select public.save_session_attendance(null,null,0,'[]',true,null)$q$,'permission denied%','42501');
+reset role;
+revoke insert,update,delete on public.sessions,public.session_students from authenticated,service_role;
+select public.atomic_reject($q$delete from public.session_students where session_id='20000000-0000-0000-0000-000000000002'$q$,
+  'Session attendance history cannot be deleted%');
+select public.atomic_reject($q$delete from public.sessions where id='20000000-0000-0000-0000-000000000002'$q$,
+  'Session attendance history cannot be deleted%');
+select public.atomic_reject($q$update public.session_credit_movements set delta=1$q$,'Session history is append-only','42501');
+select public.atomic_assert(not has_function_privilege('anon','public.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid)','execute')
+  and not has_function_privilege('service_role','public.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb)','execute'),
+  'no anonymous or automatic integration write grants');
+
+-- Independent-review regressions, using the production capacity triggers.
+create function public.atomic_metadata(days integer, hour integer, capacity integer default 2) returns jsonb
+language sql security invoker set search_path = '' as $$
+  select jsonb_build_object('date',(private.membership_today()+days)::text,
+    'start_time',((private.membership_today()+days)::timestamp at time zone 'UTC')+make_interval(hours=>hour),
+    'end_time',((private.membership_today()+days)::timestamp at time zone 'UTC')+make_interval(hours=>hour+1),
+    'class_type','mesa','capacity',capacity);
+$$;
+select public.atomic_assert(bool_and(confdeltype='r' and not convalidated),
+  'original student and teacher FKs replaced by non-destructive NOT VALID RESTRICT') from pg_constraint
+  where conname in ('session_students_student_id_fkey','sessions_teacher_id_fkey','sessions_teacher_substitute_id_fkey');
+select public.atomic_reject($q$delete from public.students where id='10000000-0000-0000-0000-000000000009'$q$,
+  '%violates foreign key constraint%','23503');
+select public.atomic_reject($q$delete from public.teachers where id='70000000-0000-0000-0000-000000000001'$q$,
+  '%sessions_teacher_id_fkey%','23503');
+select public.atomic_reject($q$delete from public.teachers where id='70000000-0000-0000-0000-000000000002'$q$,
+  '%sessions_teacher_substitute_id_fkey%','23503');
+set role authenticated;
+select public.save_session_reservation('20000000-0000-0000-0000-000000000013',gen_random_uuid(),0,
+  '30000000-0000-0000-0000-000000000001',public.atomic_metadata(3,10),
+  array['10000000-0000-0000-0000-000000000005'::uuid,'10000000-0000-0000-0000-000000000006'::uuid],'{}');
+select public.save_session_reservation('20000000-0000-0000-0000-000000000013',gen_random_uuid(),1,
+  '30000000-0000-0000-0000-000000000001','{"workshop_name":"Full roster metadata edit"}',
+  array['10000000-0000-0000-0000-000000000006'::uuid,'10000000-0000-0000-0000-000000000005'::uuid],'{}');
+select public.atomic_assert(revision=2 and capacity=2 and workshop_name='Full roster metadata edit'
+  and (select count(*)=2 from public.session_students where session_id=s.id),
+  'full-capacity metadata edit updates retained rows without BEFORE INSERT capacity rejection') from public.sessions s
+  where id='20000000-0000-0000-0000-000000000013';
+select public.save_session_reservation('20000000-0000-0000-0000-000000000013',gen_random_uuid(),2,
+  '30000000-0000-0000-0000-000000000001','{"capacity":1}',array['10000000-0000-0000-0000-000000000006'::uuid],'{}');
+select public.atomic_assert(revision=3 and capacity=1 and (select count(*)=1 from public.session_students where session_id=s.id),
+  'atomic roster and capacity reduction deletes removed pending rows before lowering capacity') from public.sessions s
+  where id='20000000-0000-0000-0000-000000000013';
+select public.save_session_reservation('20000000-0000-0000-0000-000000000002',gen_random_uuid(),2,
+  '30000000-0000-0000-0000-000000000001','{"workshop_name":"Full historical roster"}',
+  array['10000000-0000-0000-0000-000000000001'::uuid,'10000000-0000-0000-0000-000000000004'::uuid],'{}');
+select public.atomic_reject($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000002',gen_random_uuid(),3,
+  '30000000-0000-0000-0000-000000000001','{"capacity":1}',array['10000000-0000-0000-0000-000000000004'::uuid],'{}')$q$,
+  'Session history locks roster%');
+select public.atomic_assert(revision=3 and capacity=2 and (select count(*)=2 from public.session_students where session_id=s.id),
+  'charged roster reduction rejection preserves history, capacity and revision') from public.sessions s
+  where id='20000000-0000-0000-0000-000000000002';
+do $$
+declare bad jsonb;
+begin
+  for bad in select value from jsonb_array_elements('[{"date":"2026-02-30"},{"date":"2026-02-29"},{"date":"infinity"}]') loop
+    perform public.atomic_reject(format($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000013',
+      gen_random_uuid(),3,'30000000-0000-0000-0000-000000000001',%L::jsonb,
+      array['10000000-0000-0000-0000-000000000006'::uuid],'{}')$q$,bad),
+      'Session date must be a real finite ISO date');
+  end loop;
+  for bad in select value from jsonb_array_elements(jsonb_build_array(
+    jsonb_build_object('start_time','infinity','end_time','infinity'),
+    jsonb_build_object('end_time','-infinity'),
+    jsonb_build_object('date',(private.membership_today()+4)::text),
+    jsonb_build_object('end_time',(private.membership_today()+4)::timestamp at time zone 'UTC'),
+    jsonb_build_object('start_time',((private.membership_today()+2)::timestamp at time zone 'UTC')+interval '23 hours'))) loop
+    perform public.atomic_reject(format($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000013',
+      gen_random_uuid(),3,'30000000-0000-0000-0000-000000000001',%L::jsonb,
+      array['10000000-0000-0000-0000-000000000006'::uuid],'{}')$q$,bad),
+      'Session interval must be finite and stay within its declared UTC date');
+  end loop;
+end $$;
+select public.atomic_assert(revision=3,'all invalid date/timestamp requests roll back without advancing revision') from public.sessions
+  where id='20000000-0000-0000-0000-000000000013';
+set timezone = 'America/Los_Angeles';
+select public.save_session_reservation('20000000-0000-0000-0000-000000000014',gen_random_uuid(),0,
+  '30000000-0000-0000-0000-000000000001',
+  '{"date":"2026-10-31","start_time":"2026-10-31T23:00:00","end_time":"2026-10-31T23:59:00","class_type":"mesa","capacity":1}',
+  '{}'::uuid[],'{}');
+select public.atomic_assert(start_time='2026-10-31T23:00:00Z'::timestamptz and end_time='2026-10-31T23:59:00Z'::timestamptz,
+  'UTC wall-clock encoding is independent of caller timezone; same-day 23:59 remains valid') from public.sessions
+  where id='20000000-0000-0000-0000-000000000014';
+select public.atomic_assert(current_setting('TimeZone')='America/Los_Angeles','RPC UTC parsing does not change caller timezone');
+set timezone = 'UTC';
+
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+select ('40000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,'30000000-0000-0000-0000-000000000001',
+  'Alex Perez','10000000-0000-0000-0000-000000abcdef',3,'modelado',(now() at time zone 'UTC')::date,3,'paid'
+from (values (2),(3)) cards(n);
+do $$
+declare bad jsonb; metadata jsonb := public.atomic_metadata(4,4);
+begin
+  for bad in select value from jsonb_array_elements('[
+    {"10000000-0000-0000-0000-000000ABCDEF":"40000000-0000-0000-0000-000000000002"},
+    {"10000000000000000000000000abcdef":"40000000-0000-0000-0000-000000000002"},
+    {"10000000-0000-0000-0000-000000abcdef":"40000000-0000-0000-0000-000000000002",
+     "10000000-0000-0000-0000-000000ABCDEF":"40000000-0000-0000-0000-000000000003"}]') loop
+    perform public.atomic_reject(format($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000020',
+      gen_random_uuid(),0,'30000000-0000-0000-0000-000000000001',%L::jsonb,
+      array['10000000-0000-0000-0000-000000abcdef'::uuid],%L::jsonb)$q$,metadata,bad),
+      'Gift card map keys must be canonical lowercase hyphenated UUIDs');
+  end loop;
+  perform public.atomic_reject(format($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000020',
+    gen_random_uuid(),0,'30000000-0000-0000-0000-000000000001',%L::jsonb,
+    array['10000000-0000-0000-0000-000000abcdef'::uuid],
+    '{"10000000-0000-0000-0000-000000000003":"40000000-0000-0000-0000-000000000002"}')$q$,metadata),
+    'Gift card links must identify roster students');
+  perform public.atomic_reject(format($q$select public.save_session_reservation('20000000-0000-0000-0000-000000000020',
+    gen_random_uuid(),0,'30000000-0000-0000-0000-000000000001',%L::jsonb,
+    array['10000000-0000-0000-0000-000000abcdef'::uuid],
+    '{"10000000-0000-0000-0000-000000abcdef":"40000000-0000-0000-0000-000000000001"}')$q$,metadata),
+    'Explicit gift card must belong to its roster student and session sede');
+end $$;
+select public.atomic_assert(count(*)=0,'noncanonical or mismatched gift maps leave no session or alternative funding') from public.sessions
+  where id='20000000-0000-0000-0000-000000000020';
+select public.atomic_assert(classes_remaining=3,'rejected explicit gift maps never fall back to membership') from public.students
+  where id='10000000-0000-0000-0000-000000abcdef';
+
+select public.save_session_reservation('20000000-0000-0000-0000-000000000021',gen_random_uuid(),0,
+  '30000000-0000-0000-0000-000000000001',public.atomic_metadata(4,6),array['10000000-0000-0000-0000-000000abcdef'::uuid],'{}');
+select public.save_session_attendance('20000000-0000-0000-0000-000000000021',gen_random_uuid(),1,
+  '[{"student_id":"10000000-0000-0000-0000-000000abcdef","status":"present"}]',true,null);
+select public.atomic_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000002',
+  '20000000-0000-0000-0000-000000000021','10000000-0000-0000-0000-000000abcdef')$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000002',
+  '20000000-0000-0000-0000-000000000021','10000000-0000-0000-0000-000000abcdef',gen_random_uuid())$q$,'permission denied%','42501');
+select public.atomic_assert(attendance='present' and gift_card_id is null and membership_period_id is not null,
+  'standalone gift redemption cannot overwrite attended membership funding') from public.session_students
+  where session_id='20000000-0000-0000-0000-000000000021';
+select public.save_session_reservation('20000000-0000-0000-0000-000000000020',gen_random_uuid(),0,
+  '30000000-0000-0000-0000-000000000001',public.atomic_metadata(4,4),array['10000000-0000-0000-0000-000000abcdef'::uuid],
+  '{"10000000-0000-0000-0000-000000abcdef":"40000000-0000-0000-0000-000000000002"}');
+select public.save_session_attendance('20000000-0000-0000-0000-000000000020',gen_random_uuid(),1,
+  '[{"student_id":"10000000-0000-0000-0000-000000abcdef","status":"present"}]',true,null);
+select public.atomic_reject($q$select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000002',
+  '20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000abcdef')$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.reverse_gift_card_session_once('40000000-0000-0000-0000-000000000002',
+  '20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000abcdef',gen_random_uuid())$q$,'permission denied%','42501');
+select public.atomic_assert(sessions_used=1,'standalone refund cannot restore a card while attendance remains present') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000002';
+select public.atomic_assert(classes_remaining=2,'canonical explicit gift funding never spends the existing membership balance') from public.students
+  where id='10000000-0000-0000-0000-000000abcdef';
+select public.save_session_reservation('20000000-0000-0000-0000-000000000022',gen_random_uuid(),0,
+  '30000000-0000-0000-0000-000000000001',public.atomic_metadata(4,8),array['10000000-0000-0000-0000-000000abcdef'::uuid],
+  '{"10000000-0000-0000-0000-000000abcdef":"40000000-0000-0000-0000-000000000003"}');
+select public.save_session_attendance('20000000-0000-0000-0000-000000000022',gen_random_uuid(),1,
+  '[{"student_id":"10000000-0000-0000-0000-000000abcdef","status":"present"}]',true,null);
+reset role;
+create view public.atomic_attended_history as
+  select 'session' kind,to_jsonb(s) raw from public.sessions s where id in ('20000000-0000-0000-0000-000000000020','20000000-0000-0000-0000-000000000022')
+  union all select 'roster',to_jsonb(e) from public.session_students e where session_id in ('20000000-0000-0000-0000-000000000020','20000000-0000-0000-0000-000000000022')
+  union all select 'credit',to_jsonb(m) from public.session_credit_movements m where session_id in ('20000000-0000-0000-0000-000000000020','20000000-0000-0000-0000-000000000022')
+  union all select 'gift',to_jsonb(m) from public.gift_card_movements m where session_id in ('20000000-0000-0000-0000-000000000020','20000000-0000-0000-0000-000000000022')
+  union all select 'receipt',to_jsonb(r) from public.session_operation_receipts r where session_id in ('20000000-0000-0000-0000-000000000020','20000000-0000-0000-0000-000000000022')
+  union all select 'gift_receipt',to_jsonb(r) from public.gift_card_operation_receipts r where session_id in ('20000000-0000-0000-0000-000000000020','20000000-0000-0000-0000-000000000022');
+create table public.atomic_attended_history_before as select * from public.atomic_attended_history;
+set role authenticated;
+select public.cancel_gift_card('40000000-0000-0000-0000-000000000002');
+select public.consume_gift_card('40000000-0000-0000-0000-000000000003');
+select public.atomic_assert(sessions_used=1 and status='cancelled','card cancellation preserves attended debit balance') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000002';
+select public.atomic_assert(sessions_used=3 and status='consumed','manual consumption closes only remaining card allocation') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000003';
+reset role;
+set role service_role;
+select public.atomic_reject($q$select public.external_redeem_gift_card_session('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000021','10000000-0000-0000-0000-000000abcdef')$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.external_redeem_gift_card_session_once('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000021','10000000-0000-0000-0000-000000abcdef',gen_random_uuid())$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.external_reverse_gift_card_session('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000abcdef')$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.external_reverse_gift_card_session_once('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000abcdef',gen_random_uuid())$q$,'permission denied%','42501');
+select public.external_cancel_gift_card('30000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002');
+select public.external_consume_gift_card('30000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000003');
+reset role;
+select public.atomic_assert(not exists(
+  (select * from public.atomic_attended_history_before except select * from public.atomic_attended_history)
+  union all (select * from public.atomic_attended_history except select * from public.atomic_attended_history_before)),
+  'manual consume/cancel and external lifecycle replay preserve every attended session, funding movement and receipt');
+select public.atomic_assert(bool_and(not has_function_privilege(role,signature,'execute')),
+  'all eight standalone gift session RPCs revoked from anon/authenticated/service_role') from
+  (values ('anon'),('authenticated'),('service_role')) roles(role) cross join
+  (values ('public.redeem_gift_card_session(uuid,uuid,uuid)'),('public.reverse_gift_card_session(uuid,uuid,uuid)'),
+    ('public.redeem_gift_card_session_once(uuid,uuid,uuid,uuid)'),('public.reverse_gift_card_session_once(uuid,uuid,uuid,uuid)'),
+    ('public.external_redeem_gift_card_session(uuid,uuid,uuid,uuid)'),('public.external_reverse_gift_card_session(uuid,uuid,uuid,uuid)'),
+    ('public.external_redeem_gift_card_session_once(uuid,uuid,uuid,uuid,uuid)'),('public.external_reverse_gift_card_session_once(uuid,uuid,uuid,uuid,uuid)')) functions(signature);
+select public.atomic_assert(not exists(select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) acl
+  where p.pronamespace='public'::regnamespace and p.proname in ('redeem_gift_card_session','reverse_gift_card_session',
+    'redeem_gift_card_session_once','reverse_gift_card_session_once','external_redeem_gift_card_session','external_reverse_gift_card_session',
+    'external_redeem_gift_card_session_once','external_reverse_gift_card_session_once') and acl.grantee=0 and acl.privilege_type='EXECUTE'),
+  'standalone gift session RPCs also have no PUBLIC execute privilege');
+select public.atomic_assert(not has_function_privilege('authenticated','private.apply_gift_card_session(uuid,uuid,uuid,boolean,uuid,uuid)','execute')
+  and not has_function_privilege('service_role','private.apply_gift_card_session(uuid,uuid,uuid,boolean,uuid,uuid)','execute'),
+  'private gift helper remains callable only inside atomic definer boundary');

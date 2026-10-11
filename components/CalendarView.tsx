@@ -1,10 +1,8 @@
-import { showError, showWarning } from '../context/toast';
+import { showError } from '../context/toast';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, Teacher, WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, getDefaultSessionCapacity } from '../types';
-import { ConfirmModal } from './shared/ConfirmModal';
-import { getStudentLifecycle, isStudentArchived, isManagedMembership } from '../utils/studentLifecycle';
-import { AttendanceMembershipIntents, persistAttendanceAfterAdjustments } from '../context/data/membershipOps';
+import { getStudentLifecycle, isStudentArchived } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
 import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
@@ -12,11 +10,11 @@ interface CalendarViewProps {
   sessions: ClassSession[];
   onAddSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
   onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<boolean | void>;
-  onDeleteSession: (id: string) => Promise<void>;
-  onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
-  onUpdateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
-  onRedeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
-  onReverseGiftCardSession: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean | void>;
+  onDeleteSession?: (id: string) => Promise<void>;
+  onAdjustClasses?: (intent: ClassAdjustmentIntent) => Promise<void>;
+  onUpdateStudent?: (id: string, updates: Partial<Student>) => Promise<void>;
+  onRedeemGiftCardSession?: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
+  onReverseGiftCardSession?: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean | void>;
   giftCards: GiftCard[];
   students: Student[];
   teachers: Teacher[];
@@ -28,27 +26,24 @@ interface CalendarViewProps {
 type CalendarMode = 'day' | 'month';
 type AttendanceStatus = 'present' | 'absent' | 'pending';
 
-const getAttendanceStatus = (attendance: ClassSession['attendance'] | undefined, studentName: string): AttendanceStatus => {
-  const directStatus = attendance?.[studentName];
-  if (directStatus) return directStatus;
-  const matchingEntry = Object.entries(attendance || {}).find(([name]) => name.toUpperCase() === studentName.toUpperCase());
-  return matchingEntry?.[1] || 'pending';
-};
+type SaveAttempt =
+  | { kind: 'attendance'; id: string; updates: Partial<ClassSession> }
+  | { kind: 'reservation'; id: string | null; updates: Omit<ClassSession, 'id'> };
 
-const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onAdjustClasses, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
+const hasPersistedRoster = (session: ClassSession) => Array.isArray(session.studentIds)
+  && session.studentIds.length === session.students.length
+  && session.studentIds.every(id => !!id)
+  && new Set(session.studentIds).size === session.studentIds.length;
+const getAttendanceStatus = (session: ClassSession, studentId?: string): AttendanceStatus =>
+  studentId ? session.attendanceByStudentId?.[studentId] || 'pending' : 'pending';
+const shortId = (id: string) => id.slice(-8);
+
+const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
   const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
   const getSessionCapacity = (classType: ClassSession['classType']) => getDefaultSessionCapacity(classType, capacityMap);
   const location = useLocation();
   const deepLinkHandledRef = useRef('');
-  const membershipIntents = useRef(new AttendanceMembershipIntents());
-  const adjustAttendance = async (session: ClassSession, student: Student, delta: number) => {
-    const intent = membershipIntents.current.get(session.id, student, delta, session.date);
-    try { await onAdjustClasses(intent); }
-    catch (error: any) {
-      if (error.code === '40001') membershipIntents.current.conflict(session.id, student.id, delta);
-      throw error;
-    }
-  };
+  const submittingRef = useRef(false);
   const [viewMode, setViewMode] = useState<CalendarMode>('day');
   const today = useWorkshopDate();
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -58,13 +53,15 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
 
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [attendanceSession, setAttendanceSession] = useState<ClassSession | null>(null);
   const [isEditingAttendance, setIsEditingAttendance] = useState(false);
-  const [attendanceEditBaseline, setAttendanceEditBaseline] = useState<{ attendance: ClassSession['attendance']; substituteId: string } | null>(null);
+  const [attendanceEditBaseline, setAttendanceEditBaseline] = useState<{ attendance: ClassSession['attendanceByStudentId']; substituteId: string } | null>(null);
   const [substituteId, setSubstituteId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [noBonosNames, setNoBonosNames] = useState<string[]>([]);
+  const [pendingSave, setPendingSave] = useState<SaveAttempt | null>(null);
+  const [saveError, setSaveError] = useState('');
+  const [refreshConflict, setRefreshConflict] = useState<{ kind: SaveAttempt['kind']; id: string; revision?: number } | null>(null);
+  const formLocked = isSubmitting || !!pendingSave || !!refreshConflict;
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
 
   const HOUR_HEIGHT = 140;
@@ -76,26 +73,34 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     classType: 'mesa' as ClassSession['classType'],
     capacity: getSessionCapacity('mesa'),
     selectedStudents: [] as string[],
+    giftCardIdByStudentId: {} as Record<string, string>,
+    revision: undefined as number | undefined,
     teacherId: '',
     workshopName: '',
     privateReason: '',
     sessionAudience: 'membresia' as 'membresia' | 'temporal' | 'ambos'
   });
 
-  const getGiftCardIdForStudent = (session: ClassSession, student?: Student, forReverse = false) => {
-    if (!student) return undefined;
-    const today = madridDateKey();
-    const isUsable = (card: GiftCard) => card.status === 'active'
-      && !card.consumedAt
-      && (card.sessionsRemaining || 0) > 0
-      && (!card.expiryDate || card.expiryDate.slice(0, 10) >= today);
-    const linkedId = session.giftCardIdByStudentId?.[student.id];
-    const linkedCard = linkedId ? giftCards.find(card => card.id === linkedId) : undefined;
-    if (linkedId && forReverse && linkedCard?.status !== 'cancelled') return linkedId;
-    if (linkedId && linkedCard && isUsable(linkedCard)) return linkedId;
-    return giftCards.find(card => card.recipientStudentId === student.id
-      && (forReverse ? (card.status !== 'cancelled' && (card.sessionsUsed || 0) > 0) : isUsable(card)))?.id;
+  const getStudentName = (studentId: string, session?: ClassSession) => {
+    const student = students.find(item => item.id === studentId);
+    if (student) return `${student.name} ${student.surname || ''}`.trim();
+    const index = session && hasPersistedRoster(session) ? session.studentIds!.indexOf(studentId) : -1;
+    return index >= 0 ? session!.students[index] : `Alumno (${shortId(studentId)})`;
   };
+  const getSessionRoster = (session: ClassSession) => hasPersistedRoster(session)
+    ? session.studentIds!.map(id => ({ id, name: getStudentName(id, session) }))
+    : session.students.map(name => ({ id: undefined, name }));
+  const getFundingCards = (studentId: string) => giftCards.filter(card => card.recipientStudentId === studentId
+    && card.status === 'active' && !card.consumedAt && (card.sessionsRemaining || 0) > 0
+    && (!card.expiryDate || card.expiryDate.slice(0, 10) >= madridDateKey()));
+
+  const sessionToForm = (session: ClassSession) => ({
+    date: session.date, startTime: session.startTime, endTime: session.endTime, classType: session.classType,
+    capacity: session.capacity ?? getSessionCapacity(session.classType),
+    selectedStudents: [...session.studentIds!], giftCardIdByStudentId: { ...(session.giftCardIdByStudentId || {}) }, revision: session.revision,
+    teacherId: session.teacherId || '', workshopName: session.workshopName || '', privateReason: session.privateReason || '',
+    sessionAudience: session.sessionAudience || 'membresia'
+  });
 
   const formatDateKey = (date: Date) => {
     const year = date.getFullYear();
@@ -168,21 +173,16 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
   // Abrir modal de Edición/Creación de Sesión
   const handleOpenSessionModal = (session?: ClassSession) => {
+    if (formLocked) return;
+    if (session && !hasPersistedRoster(session)) {
+      showError('La reserva requiere IDs persistidos y alineados. Recarga la sesión; no se identificarán alumnos por nombre.');
+      return;
+    }
+    setSaveError('');
     setStudentSearchQuery(''); // Limpiar búsqueda al abrir modal
     if (session) {
       setEditingSessionId(session.id);
-      setSessionForm({
-        date: session.date,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        classType: session.classType,
-        capacity: session.capacity ?? getSessionCapacity(session.classType),
-        selectedStudents: [...session.students],
-        teacherId: session.teacherId || '',
-        workshopName: session.workshopName || '',
-        privateReason: session.privateReason || '',
-        sessionAudience: session.sessionAudience || 'membresia'
-      });
+      setSessionForm(sessionToForm(session));
     } else {
       setEditingSessionId(null);
       setSessionForm({
@@ -192,6 +192,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         classType: 'mesa',
         capacity: getSessionCapacity('mesa'),
         selectedStudents: [],
+        giftCardIdByStudentId: {},
+        revision: undefined,
         teacherId: '',
         workshopName: '',
         privateReason: '',
@@ -206,19 +208,27 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     const requestedDate = params.get('date');
     const requestedSessionId = params.get('sessionId');
     if (!requestedDate && !requestedSessionId) return;
-    const deepLinkKey = `${requestedDate || ''}:${requestedSessionId || ''}`;
+    const openAttendance = params.get('attendance') === '1';
+    const deepLinkKey = `${requestedDate || ''}:${requestedSessionId || ''}:${openAttendance}`;
     if (deepLinkHandledRef.current === deepLinkKey) return;
     if (requestedDate) setSelectedDate(new Date(`${requestedDate}T12:00:00`));
     if (requestedSessionId) {
       const requestedSession = sessions.find(session => session.id === requestedSessionId);
       if (!requestedSession) return;
-      handleOpenSessionModal(requestedSession);
+      if (openAttendance) handleOpenAttendanceModal(requestedSession);
+      else handleOpenSessionModal(requestedSession);
     }
     deepLinkHandledRef.current = deepLinkKey;
   }, [location.search, sessions]);
 
   // Abrir modal de Control de Asistencia (Nueva funcionalidad separada)
   const handleOpenAttendanceModal = (session: ClassSession) => {
+    if (formLocked) return;
+    if (!hasPersistedRoster(session)) {
+      showError('La asistencia requiere IDs persistidos y alineados. Recarga la sesión; no se identificarán alumnos por nombre.');
+      return;
+    }
+    setSaveError('');
     setAttendanceSession(session);
     setIsEditingAttendance(false);
     setAttendanceEditBaseline(null);
@@ -227,19 +237,20 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   };
 
   const beginAttendanceEdit = () => {
-    if (!attendanceSession) return;
+    if (!attendanceSession || formLocked) return;
     setAttendanceEditBaseline({
-      attendance: { ...(attendanceSession.attendance || {}) },
+      attendance: { ...(attendanceSession.attendanceByStudentId || {}) },
       substituteId: substituteId
     });
     setIsEditingAttendance(true);
   };
 
   const cancelAttendanceEdit = () => {
+    if (formLocked) return;
     if (attendanceEditBaseline) {
       setAttendanceSession(prev => prev ? {
         ...prev,
-        attendance: attendanceEditBaseline.attendance,
+        attendanceByStudentId: attendanceEditBaseline.attendance,
         teacherSubstituteId: attendanceEditBaseline.substituteId || undefined
       } : prev);
       setSubstituteId(attendanceEditBaseline.substituteId);
@@ -248,183 +259,94 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     setAttendanceEditBaseline(null);
   };
 
-  const saveEditedAttendance = async () => {
-    if (!attendanceSession || !attendanceEditBaseline || isSubmitting) return;
-    const previousAttendance = attendanceEditBaseline.attendance || {};
-    const nextAttendance = attendanceSession.attendance || {};
-
+  const persistSave = async (attempt: SaveAttempt) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setIsSubmitting(true);
+    setSaveError('');
+    setPendingSave(attempt);
     try {
-      membershipIntents.current.begin(attendanceSession.id, nextAttendance);
-      await persistAttendanceAfterAdjustments(async () => {
-      for (const studentName of attendanceSession.students) {
-        const previousStatus = getAttendanceStatus(previousAttendance, studentName);
-        const nextStatus = getAttendanceStatus(nextAttendance, studentName);
-        if (previousStatus === nextStatus) continue;
-
-        const student = students.find(item => {
-          const fullName = `${item.name} ${item.surname || ''}`.trim().toUpperCase();
-          return fullName === studentName.toUpperCase() || item.name.toUpperCase() === studentName.toUpperCase();
-        });
-        const category = student?.studentCategory || 'membresia';
-        if (!student || (category !== 'membresia' && category !== 'temporal')) continue;
-
-        const wasPresent = previousStatus === 'present';
-        const isPresent = nextStatus === 'present';
-        if (wasPresent === isPresent) continue;
-
-        const giftCardId = getGiftCardIdForStudent(attendanceSession, student, wasPresent && !isPresent);
-        if (wasPresent && !isPresent) {
-          const reversed = await onReverseGiftCardSession(giftCardId, attendanceSession.id, student.id);
-          if (reversed) continue;
-        } else if (!wasPresent && isPresent && giftCardId) {
-          await onRedeemGiftCardSession(giftCardId, attendanceSession.id, student.id);
-          continue;
-        }
-
-        if (isManagedMembership(student)) {
-          await adjustAttendance(attendanceSession, student, isPresent ? -1 : 1);
-          continue;
-        }
-        const maxBonuses = student.bonosAsignados ?? (category === 'temporal' ? 3 : 4);
-        const nextClassesRemaining = isPresent
-          ? Math.max(0, student.classesRemaining - 1)
-          : Math.min(maxBonuses, student.classesRemaining + 1);
-        const updates: Partial<Student> = { classesRemaining: nextClassesRemaining };
-
-        await onUpdateStudent(student.id, updates);
+      const result = attempt.kind === 'reservation' && attempt.id === null
+        ? await onAddSession(attempt.updates)
+        : await onUpdateSession(attempt.id!, attempt.updates);
+      if (result === false) throw new Error('No se confirmó el guardado. Reintenta los mismos datos.');
+      setPendingSave(null);
+      if (attempt.kind === 'attendance') {
+        setShowAttendanceModal(false);
+        setIsEditingAttendance(false);
+        setAttendanceEditBaseline(null);
+      } else {
+        setShowSessionModal(false);
       }
-
-      }, () => onUpdateSession(attendanceSession.id, {
-        attendance: nextAttendance,
-        teacherSubstituteId: substituteId
-      }), attendanceSession.id);
-      membershipIntents.current.complete(attendanceSession.id);
-      setAttendanceSession(prev => prev ? {
-        ...prev,
-        attendance: nextAttendance,
-        teacherSubstituteId: substituteId || undefined
-      } : prev);
-      setIsEditingAttendance(false);
-      setAttendanceEditBaseline(null);
-      setShowAttendanceModal(false);
-    } catch (err: any) {
-      membershipIntents.current.releaseUnattempted(attendanceSession.id);
-      console.error('Error editando control de asistencia:', err);
-      showError(`No se pudo guardar la corrección. ${err?.message || 'Error de conexión. Intenta de nuevo.'}`);
+    } catch (error: any) {
+      // Only a SQL rejection proves rollback. Otherwise retry the same object,
+      // including its timestamp/revision, to resolve the stored atomic receipt.
+      const rolledBack = /^[0-9A-Z]{5}$/.test(error?.code || '')
+        && !['08000', '08003', '08006', '57014'].includes(error.code);
+      if (rolledBack) setPendingSave(null);
+      if (error?.code === '40001' && attempt.id) {
+        setRefreshConflict({ kind: attempt.kind, id: attempt.id, revision: attempt.updates.revision });
+      }
+      setSaveError(`${error?.message || 'No se pudo guardar la sesión.'}${rolledBack
+        ? error.code === '40001' ? ' La sesión cambió. Revisa los datos recargados antes de guardar.' : ''
+        : ' Resultado sin confirmar. Reintenta los mismos datos antes de editar o cerrar.'}`);
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
 
-  const finalizeAttendance = async (allowNoBonos = false) => {
-    if (!attendanceSession) return;
-    if (attendanceSession.completedAt) {
-      showError('Esta sesión ya fue finalizada.');
+  useEffect(() => {
+    if (!refreshConflict) return;
+    const latest = sessions.find(session => session.id === refreshConflict.id);
+    if (!latest || latest.revision === refreshConflict.revision || !hasPersistedRoster(latest)) return;
+    if (refreshConflict.kind === 'attendance') {
+      setAttendanceSession(latest);
+      setSubstituteId(latest.teacherSubstituteId || '');
+      setIsEditingAttendance(false);
+      setAttendanceEditBaseline(null);
+    } else {
+      setSessionForm(sessionToForm(latest));
+    }
+    setRefreshConflict(null);
+  }, [sessions, refreshConflict]);
+
+  const saveAttendance = async (finalize: boolean) => {
+    if (submittingRef.current || refreshConflict || !attendanceSession) return;
+    if (pendingSave) {
+      if (pendingSave.kind === 'attendance') await persistSave(pendingSave);
       return;
     }
-
-    const finalAttendance = attendanceSession.attendance || {};
-
-    // Check for membership students with 0 bonos
-    const presentStudentNames = Object.entries(finalAttendance)
-      .filter(([, status]) => status === 'present')
-      .map(([name]) => name);
-
-    const studentsWithNoBonos = presentStudentNames.filter(studentName => {
-      const student = students.find(s => {
-        const fullName = `${s.name} ${s.surname || ''}`.trim().toUpperCase();
-        return fullName === studentName.toUpperCase() || fullName === studentName;
-      });
-      if (getGiftCardIdForStudent(attendanceSession, student)) return false;
-      const category = student?.studentCategory || 'membresia';
-      return student && (category === 'membresia' || category === 'temporal') && student.classesRemaining <= 0;
-    });
-
-    if (studentsWithNoBonos.length > 0) {
-      if (!allowNoBonos) {
-        setNoBonosNames(studentsWithNoBonos);
-        return;
-      }
+    if (!hasPersistedRoster(attendanceSession) || !Number.isSafeInteger(attendanceSession.revision) || attendanceSession.revision! < 0) {
+      setSaveError('Recarga la sesión para obtener su roster por ID y revisión antes de guardar.');
+      return;
     }
-
-    setIsSubmitting(true);
-    const completedAt = new Date().toISOString();
-
-    try {
-      membershipIntents.current.begin(attendanceSession.id, finalAttendance);
-      await persistAttendanceAfterAdjustments(async () => {
-      // Student updates share an operation lock, so they must be persisted in sequence.
-      // Present membership and temporary students consume one bonus.
-      for (const studentName of presentStudentNames) {
-        const student = students.find(s => {
-          const fullName = `${s.name} ${s.surname || ''}`.trim().toUpperCase();
-          return fullName === studentName.toUpperCase();
-        });
-
-        const category = student?.studentCategory || 'membresia';
-        const giftCardId = getGiftCardIdForStudent(attendanceSession, student);
-        if (giftCardId) {
-          await onRedeemGiftCardSession(giftCardId, attendanceSession.id, student?.id);
-          continue;
-        }
-        if (student && isManagedMembership(student)) {
-          const persistedSession = sessions.find(item => item.id === attendanceSession.id);
-          if (getAttendanceStatus(persistedSession?.attendance, studentName) !== 'present') {
-            await adjustAttendance(attendanceSession, student, -1);
-          }
-          continue;
-        }
-        if (student && !isStudentArchived(student) && category === 'temporal' && student.classesRemaining > 0) {
-          const nextClassesRemaining = student.classesRemaining - 1;
-          const updates: Partial<Student> = {
-            classesRemaining: nextClassesRemaining
-          };
-          await onUpdateStudent(student.id, {
-            ...updates
-          });
-        }
-      }
-
-      }, () => onUpdateSession(attendanceSession.id, {
-        completedAt,
-        attendance: finalAttendance,
-        teacherSubstituteId: substituteId
-      }), attendanceSession.id);
-
-      membershipIntents.current.complete(attendanceSession.id);
-      setAttendanceSession(prev => prev ? { ...prev, completedAt, attendance: finalAttendance, teacherSubstituteId: substituteId || undefined } : prev);
-      setIsEditingAttendance(false);
-      setAttendanceEditBaseline(null);
-      setShowAttendanceModal(false);
-    } catch (err: any) {
-      membershipIntents.current.releaseUnattempted(attendanceSession.id);
-      console.error('Error finalizando control de asistencia:', err);
-      showError(`No se pudo finalizar el control de asistencia. ${err?.message || 'Error de conexión. Intenta de nuevo.'}`);
-    } finally {
-      setIsSubmitting(false);
+    const attendanceByStudentId = Object.fromEntries(attendanceSession.studentIds!.map(id => [id, getAttendanceStatus(attendanceSession, id)]));
+    if (Object.values(attendanceByStudentId).includes('pending')) {
+      setSaveError('Completa la asistencia de todos los alumnos antes de guardar.');
+      return;
     }
+    await persistSave({ kind: 'attendance', id: attendanceSession.id, updates: {
+      attendanceByStudentId,
+      revision: attendanceSession.revision,
+      ...(finalize ? { completedAt: new Date().toISOString() } : {}),
+      teacherSubstituteId: substituteId
+    } });
   };
 
-  // ★ handleMarkAttendance: ONLY updates local state, does NOT call API
-  // The actual save happens in finalizeAttendance to prevent race conditions
-  const handleMarkAttendance = (studentName: string, status: 'present' | 'absent' | 'pending') => {
-    if (!attendanceSession) return;
-
-    const currentAttendance = { ...(attendanceSession.attendance || {}) };
-
-    if (status === 'pending') {
-      delete currentAttendance[studentName];
-    } else {
-      currentAttendance[studentName] = status;
-    }
-
-    const updatedSession = { ...attendanceSession, attendance: currentAttendance };
-    setAttendanceSession(updatedSession); // Local state only — saved on finalize
+  const handleMarkAttendance = (studentId: string, status: AttendanceStatus) => {
+    if (!attendanceSession || formLocked || !attendanceSession.studentIds?.includes(studentId)) return;
+    setAttendanceSession({ ...attendanceSession, attendanceByStudentId: {
+      ...(attendanceSession.attendanceByStudentId || {}), [studentId]: status
+    } });
   };
 
   const handleSessionSubmit = async () => {
-    if (isSubmitting) return;
+    if (submittingRef.current || refreshConflict) return;
+    if (pendingSave) {
+      if (pendingSave.kind === 'reservation') await persistSave(pendingSave);
+      return;
+    }
     if (!sessionForm.date) {
       showError("Selecciona un día en el calendario antes de guardar.");
       return;
@@ -476,27 +398,31 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       showError("Ya existe una sesión con el mismo horario y tipo.");
       return;
     }
-    setIsSubmitting(true);
+    const current = editingSessionId ? sessions.find(session => session.id === editingSessionId) : undefined;
+    if (editingSessionId && (!current || !hasPersistedRoster(current) || !Number.isSafeInteger(sessionForm.revision) || sessionForm.revision! < 0)) {
+      setSaveError('Recarga la sesión para obtener su roster por ID y revisión antes de guardar.');
+      return;
+    }
+    const studentIds: string[] = sessionForm.classType === 'feriado' ? [] : [...sessionForm.selectedStudents];
+    const giftCardIdByStudentId = Object.fromEntries(studentIds
+      .filter(id => !!sessionForm.giftCardIdByStudentId[id])
+      .map(id => [id, sessionForm.giftCardIdByStudentId[id] as string]));
     const payload = {
       date: sessionForm.date,
       startTime: sessionForm.startTime,
       endTime: sessionForm.endTime,
       classType: sessionForm.classType,
       capacity,
-      students: sessionForm.classType === 'feriado' ? [] : sessionForm.selectedStudents,
+      studentIds,
+      students: studentIds.map(id => getStudentName(id, current)),
+      giftCardIdByStudentId,
+      ...(current ? { revision: sessionForm.revision } : {}),
       teacherId: sessionForm.teacherId || undefined,
       workshopName: sessionForm.workshopName.trim() || undefined,
       privateReason: sessionForm.privateReason.trim() || undefined,
       sessionAudience: sessionForm.sessionAudience
     };
-    // Close modal immediately — Supabase operations run in background
-    setShowSessionModal(false);
-    setIsSubmitting(false);
-    if (editingSessionId) {
-      onUpdateSession(editingSessionId, payload);
-    } else {
-      onAddSession(payload);
-    }
+    await persistSave({ kind: 'reservation', id: editingSessionId, updates: payload });
   };
 
   const weekDays = useMemo(() => {
@@ -538,7 +464,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     if (daySessions.some(session => session.classType === 'feriado')) return 'full' as const;
 
     const capacity = daySessions.reduce((total, session) => total + getSessionCapacity(session.classType), 0);
-    const occupied = daySessions.reduce((total, session) => total + new Set(session.students.map((student, index) => session.studentIds?.[index] || student.toUpperCase())).size, 0);
+    const occupied = daySessions.reduce((total, session) => total + (hasPersistedRoster(session) ? session.studentIds!.length : session.students.length), 0);
     const occupancy = capacity > 0 ? occupied / capacity : 0;
 
     if (occupancy >= 0.9 || daySessions.length >= 4) return 'full' as const;
@@ -641,6 +567,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   return (
                     <div
                       key={session.id}
+                      data-session-id={session.id}
                       className="group absolute z-10 flex cursor-pointer flex-col items-start overflow-hidden rounded-[16px] border border-neutral-border bg-white p-4 shadow-soft transition-all hover:-translate-y-0.5 hover:border-brand/40 md:p-5"
                       style={{ top: `${topOffset}px`, left: `calc(${leftOffset}% + 80px)`, width: `calc(${widthPercent}% - 92px)`, minHeight: '152px' }}
                       onClick={() => handleOpenSessionModal(session)}
@@ -675,13 +602,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                         )}
                       </div>
                       <div className="w-full flex-1 space-y-2 overflow-hidden">
-                        {session.students.map((studentName, idx) => {
-                          const att = session.attendance?.[studentName];
-                          // Buscar el alumno para obtener su categoría
-                          const studentObj = students.find(st => {
-                            const fullName = `${st.name} ${st.surname || ''}`.trim().toUpperCase();
-                            return fullName === studentName.toUpperCase() || st.name.toUpperCase() === studentName.toUpperCase();
-                          });
+                        {getSessionRoster(session).map(({ id: studentId, name: studentName }, idx) => {
+                          const att = getAttendanceStatus(session, studentId);
+                          const studentObj = students.find(st => st.id === studentId);
                           const cat = studentObj?.studentCategory || 'membresia';
                           const isTemporary = cat === 'temporal';
                           // Color de bolita: presente=verde, ausente=rojo, pendiente=según categoría
@@ -693,9 +616,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                                 ? 'bg-amber-500'
                                 : 'bg-[#C88B6A]';
                           return (
-                            <div key={idx} className="flex items-center gap-2.5">
+                            <div key={studentId || idx} data-student-id={studentId} data-attendance-status={att} className="flex items-center gap-2.5">
                               <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`}></div>
-                               <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{studentName.toLowerCase()}</span>
+                              <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{studentName.toLowerCase()}</span>
+                              {studentId && <span className="shrink-0 text-[11px] text-neutral-textHelper">ID {shortId(studentId)}</span>}
                             </div>
                           );
                         })}
@@ -806,7 +730,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
           className="fixed inset-0 z-[110] flex items-end bg-[#2F1E17]/45 font-['Inter'] backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-5"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !isSubmitting) setShowAttendanceModal(false);
+            if (e.target === e.currentTarget && !formLocked) setShowAttendanceModal(false);
           }}
         >
           <section
@@ -823,7 +747,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
               <button
                 type="button"
                 onClick={() => setShowAttendanceModal(false)}
-                disabled={isSubmitting}
+                disabled={formLocked}
                 aria-label="Cerrar modal"
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#8B6B5E] transition-colors hover:bg-[#F3E7DC] hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50"
               >
@@ -831,7 +755,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
               </button>
             </header>
 
-            <div className="custom-scrollbar flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-5">
+            {saveError && <p role="alert" className="mx-5 mt-3 rounded-[10px] bg-[#F7E3DF] px-4 py-3 text-[12px] text-[#9C4235] sm:mx-8">{saveError}</p>}
+            <fieldset disabled={formLocked} className="custom-scrollbar m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-5 py-4 sm:px-8 sm:py-5">
               <div className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="text-[13px] font-semibold text-[#7B3F22]">{attendanceSession.startTime}–{attendanceSession.endTime}</span>
@@ -885,18 +810,15 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   <p className="text-[12px] text-[#8B6B5E]">No hay alumnos asignados</p>
                 </div>
               ) : (
-                attendanceSession.students.map((studentName, idx) => {
-                  const status = getAttendanceStatus(attendanceSession.attendance, studentName);
-                  // Find student object to show bonos info
-                  const studentObj = students.find(s => {
-                    const fullName = `${s.name} ${s.surname || ''}`.trim().toUpperCase();
-                    return fullName === studentName.toUpperCase() || fullName === studentName;
-                  });
+                attendanceSession.studentIds!.map(studentId => {
+                  const studentName = getStudentName(studentId, attendanceSession);
+                  const status = getAttendanceStatus(attendanceSession, studentId);
+                  const studentObj = students.find(s => s.id === studentId);
                   const isBonusStudent = studentObj?.studentCategory === 'membresia' || studentObj?.studentCategory === 'temporal';
                   const bonos = studentObj?.classesRemaining ?? 0;
                   const bonosTotal = studentObj?.bonosAsignados ?? 4;
                   return (
-                    <div key={idx} className="flex min-h-[62px] items-center justify-between gap-3 border-b border-[#EFE3D8] px-3 py-2.5 last:border-b-0 sm:px-4">
+                    <div key={studentId} data-student-id={studentId} data-attendance-status={status} className="flex min-h-[62px] items-center justify-between gap-3 border-b border-[#EFE3D8] px-3 py-2.5 last:border-b-0 sm:px-4">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="truncate text-[14px] font-medium capitalize text-[#3F2E27]">{studentName.toLowerCase()}</p>
@@ -909,6 +831,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                             </span>
                           )}
                         </div>
+                        <span className="ui-meta mt-1 block">ID {shortId(studentId)}</span>
+                        {attendanceSession.giftCardIdByStudentId?.[studentId] && <span className="ui-meta mt-1 block">Bono vinculado ({shortId(attendanceSession.giftCardIdByStudentId[studentId])})</span>}
                         <span className={`ui-meta mt-1 block font-medium ${status === 'present' ? 'text-[#47704D]' : status === 'absent' ? 'text-[#9C4235]' : 'text-[#9B8175]'}`}>
                           {status === 'present' ? 'Asiste' : status === 'absent' ? 'No asiste' : 'Pendiente'}
                         </span>
@@ -916,31 +840,31 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                       <div className="flex shrink-0 gap-1.5">
                         <button
                           type="button"
-                          onClick={() => handleMarkAttendance(studentName, 'present')}
+                          onClick={() => handleMarkAttendance(studentId, 'present')}
                            disabled={!!attendanceSession.completedAt && !isEditingAttendance}
                            className={`flex h-10 w-10 items-center justify-center rounded-[9px] border transition focus:outline-none focus:ring-2 focus:ring-[#6B876F] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'present' ? 'border-[#5F8065] bg-[#5F8065] text-white' : 'border-[#D8E4D9] bg-[#F4F8F4] text-[#5F8065] hover:bg-[#E7F0E8]'}`}
                            title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Marcar Asistencia"}
-                          aria-label={`Marcar asistencia de ${studentName}`}
+                          aria-label={`Marcar asistencia de ${studentName} (${shortId(studentId)})`}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="m5 13 4 4L19 7" /></svg>
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleMarkAttendance(studentName, 'absent')}
+                          onClick={() => handleMarkAttendance(studentId, 'absent')}
                            disabled={!!attendanceSession.completedAt && !isEditingAttendance}
                            className={`flex h-10 w-10 items-center justify-center rounded-[9px] border transition focus:outline-none focus:ring-2 focus:ring-[#9C4235] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'absent' ? 'border-[#9C4235] bg-[#9C4235] text-white' : 'border-[#EBCFC9] bg-[#FCF4F2] text-[#9C4235] hover:bg-[#F7E3DF]'}`}
                            title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Marcar Falta"}
-                          aria-label={`Marcar falta de ${studentName}`}
+                          aria-label={`Marcar falta de ${studentName} (${shortId(studentId)})`}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18 18 6M6 6l12 12" /></svg>
                         </button>
                         {status !== 'pending' && (!attendanceSession.completedAt || isEditingAttendance) && (
                           <button
                             type="button"
-                            onClick={() => handleMarkAttendance(studentName, 'pending')}
+                            onClick={() => handleMarkAttendance(studentId, 'pending')}
                             className="flex h-10 w-10 items-center justify-center rounded-[9px] border border-[#E8D9CC] bg-white text-[#8B6B5E] transition hover:bg-[#F8EEE5] hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2"
                             title="Resetear Estado"
-                            aria-label={`Dejar pendiente a ${studentName}`}
+                            aria-label={`Dejar pendiente a ${studentName} (${shortId(studentId)})`}
                           >
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 0 0 4.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 0 1-15.357-2m15.357 2H15" /></svg>
                           </button>
@@ -951,34 +875,33 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                 })
               )}
               </div>
-            </div>
+            </fieldset>
 
             <footer className="flex shrink-0 items-center justify-end gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
-              <button type="button" disabled={isSubmitting} onClick={() => { membershipIntents.current.reviewConflicts(attendanceSession.id); showWarning('Período y saldo revisados: vuelve a guardar la misma asistencia. Los ajustes exitosos conservan su recibo.'); }}>Revisé los períodos y saldos: habilitar nuevos intentos obsoletos</button>
               {attendanceSession.completedAt ? (
                 isEditingAttendance ? (
                   <>
-                    <button type="button" onClick={cancelAttendanceEdit} disabled={isSubmitting} className="min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50">Cancelar edición</button>
-                    <button type="button" onClick={saveEditedAttendance} disabled={isSubmitting} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">
-                      {isSubmitting ? 'Guardando…' : 'Guardar cambios'}
+                    <button type="button" onClick={cancelAttendanceEdit} disabled={formLocked} className="min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50">Cancelar edición</button>
+                    <button type="button" onClick={() => saveAttendance(false)} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">
+                      {isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar cambios'}
                     </button>
                   </>
                 ) : (
                   <>
-                    <button type="button" onClick={beginAttendanceEdit} className="h-11 rounded-[10px] border border-[#DDBFA4] bg-white px-5 text-[12px] font-semibold text-[#7B3F22] transition hover:bg-[#F8EEE5] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2">Editar asistencia</button>
-                    <button type="button" onClick={() => setShowAttendanceModal(false)} className="h-11 rounded-[10px] bg-[#C68952] px-6 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2">Cerrar</button>
+                    <button type="button" onClick={beginAttendanceEdit} disabled={formLocked} className="h-11 rounded-[10px] border border-[#DDBFA4] bg-white px-5 text-[12px] font-semibold text-[#7B3F22] transition hover:bg-[#F8EEE5] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2">Editar asistencia</button>
+                    <button type="button" onClick={() => setShowAttendanceModal(false)} disabled={formLocked} className="h-11 rounded-[10px] bg-[#C68952] px-6 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2">Cerrar</button>
                   </>
                 )
               ) : (
                 <>
-                  <button type="button" onClick={() => setShowAttendanceModal(false)} disabled={isSubmitting} className="min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50">Cancelar</button>
+                  <button type="button" onClick={() => setShowAttendanceModal(false)} disabled={formLocked} className="min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50">Cancelar</button>
                   <button
                     type="button"
-                    onClick={finalizeAttendance}
-                    disabled={isSubmitting}
+                    onClick={() => saveAttendance(true)}
+                    disabled={isSubmitting || !!refreshConflict}
                     className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6"
                   >
-                    {isSubmitting ? 'Guardando…' : 'Finalizar control'}
+                    {isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Finalizar control'}
                   </button>
                 </>
               )}
@@ -993,7 +916,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
           className="fixed inset-0 z-[100] flex items-end bg-[#2F1E17]/45 font-['Inter'] backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-5"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !isSubmitting) setShowSessionModal(false);
+            if (e.target === e.currentTarget && !formLocked) setShowSessionModal(false);
           }}
         >
           <section
@@ -1014,7 +937,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
               <button
                 type="button"
                 onClick={() => setShowSessionModal(false)}
-                disabled={isSubmitting}
+                disabled={formLocked}
                 aria-label="Cerrar modal"
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#8B6B5E] transition-colors hover:bg-[#F3E7DC] hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50"
               >
@@ -1024,7 +947,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
               </button>
             </header>
 
-            <div className="custom-scrollbar flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-5">
+            {saveError && <p role="alert" className="mx-5 mt-3 rounded-[10px] bg-[#F7E3DF] px-4 py-3 text-[12px] text-[#9C4235] sm:mx-8">{saveError}</p>}
+            <fieldset disabled={formLocked} className="custom-scrollbar m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-5 py-4 sm:px-8 sm:py-5">
               <div className="grid gap-6 md:grid-cols-[0.9fr_1.1fr] md:gap-8">
                 <div className="space-y-5">
                   <fieldset>
@@ -1060,6 +984,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                             workshopName: classType === 'workshop' ? sessionForm.workshopName : '',
                             privateReason: classType === 'privada' ? sessionForm.privateReason : '',
                             selectedStudents: classType === 'feriado' ? [] : sessionForm.selectedStudents,
+                            giftCardIdByStudentId: classType === 'feriado' ? {} : sessionForm.giftCardIdByStudentId,
                             startTime: classType === 'feriado' ? '00:00' : sessionForm.startTime,
                             endTime: classType === 'feriado' ? '24:00' : sessionForm.endTime
                           });
@@ -1204,23 +1129,25 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
                         return filtered.map(s => {
                           const fullName = `${s.name} ${s.surname || ''}`.trim();
-                          const studentKey = fullName.toUpperCase();
+                          const studentKey = s.id;
                            const isSelected = sessionForm.selectedStudents.includes(studentKey);
                            const cat = s.studentCategory || 'membresia';
                            const isTemporary = cat === 'temporal';
                            const capacityReached = !isSelected && sessionForm.selectedStudents.length >= sessionForm.capacity;
                            return (
-                             <button type="button" key={s.id} disabled={capacityReached} onClick={() => {
+                             <button type="button" key={s.id} data-student-id={s.id} aria-pressed={isSelected} disabled={capacityReached} onClick={() => {
                                const newList = isSelected
                                  ? sessionForm.selectedStudents.filter(n => n !== studentKey)
                                  : [...sessionForm.selectedStudents, studentKey];
-                               setSessionForm({ ...sessionForm, selectedStudents: newList });
+                               setSessionForm({ ...sessionForm, selectedStudents: newList,
+                                 giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => newList.includes(id))) });
                              }} className={`mb-0.5 flex min-h-11 w-full items-center justify-between gap-3 rounded-[8px] px-3 py-2 text-left transition last:mb-0 focus:outline-none focus:ring-2 focus:ring-[#C68952] ${isSelected ? 'bg-[#C68952] text-white' : capacityReached ? 'cursor-not-allowed opacity-45' : 'text-[#4E3A31] hover:bg-[#F8EEE5]'}`}>
-                              <span className="min-w-0 truncate text-[13px] font-medium">
+                              <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                                 {fullName}
-                                {s.groupName && <span className="ml-1.5 text-[10px] font-normal opacity-65">{s.groupName}</span>}
+                                {s.groupName && <span className="ml-1.5 text-[11px] font-normal opacity-65">{s.groupName}</span>}
                               </span>
-                              <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[9px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
+                              <span className="shrink-0 text-[11px] font-normal opacity-65">ID {shortId(s.id)}</span>
+                              <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
                                 {isTemporary ? 'Temporal' : getStudentLifecycle(s, today) === 'active' ? 'Activa' : getStudentLifecycle(s, today) === 'expired' ? 'Vencida' : 'Pendiente'}
                               </span>
                             </button>
@@ -1232,28 +1159,57 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                       <div className="mt-3 border-t border-[#E8D9CC] pt-3">
                         <p className="mb-2 text-[12px] font-semibold text-[#6E5145]">Alumnos seleccionados</p>
                         <div className="custom-scrollbar max-h-40 space-y-1.5 overflow-y-auto">
-                          {sessionForm.selectedStudents.map(name => {
-                            const studentObj = students.find(st => {
-                              const fullName = `${st.name} ${st.surname || ''}`.trim().toUpperCase();
-                              return fullName === name.toUpperCase() || st.name.toUpperCase() === name.toUpperCase();
-                            });
+                          {sessionForm.selectedStudents.map(studentId => {
+                            const studentObj = students.find(st => st.id === studentId);
                             const cat = studentObj?.studentCategory || 'membresia';
                             const isTemporary = cat === 'temporal';
-                            const displayName = studentObj ? `${studentObj.name} ${studentObj.surname || ''}`.trim() : name;
+                            const persistedSession = sessions.find(session => session.id === editingSessionId);
+                            const displayName = getStudentName(studentId, persistedSession);
+                            const selectedCardId = sessionForm.giftCardIdByStudentId[studentId] || '';
+                            const fundingCards = getFundingCards(studentId);
+                            const linkedCard = giftCards.find(card => card.id === selectedCardId && card.recipientStudentId === studentId);
+                            const fundingLocked = !!persistedSession && (!!persistedSession.completedAt
+                              || Object.values(persistedSession.attendanceByStudentId || {}).includes('present'));
                             return (
-                              <div key={name} className="flex min-h-10 items-center gap-2 rounded-[9px] border border-[#E8D9CC] bg-white px-3 py-2">
+                              <div key={studentId} data-student-id={studentId} className="rounded-[9px] border border-[#E8D9CC] bg-white px-3 py-2">
+                                <div className="flex min-h-10 items-center gap-2">
                                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#3F2E27]">{displayName}</span>
+                                <span className="shrink-0 text-[11px] text-[#8B6B5E]">ID {shortId(studentId)}</span>
                                 <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
                                   {isTemporary ? 'Temporal' : 'Membresía'}
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={() => setSessionForm({ ...sessionForm, selectedStudents: sessionForm.selectedStudents.filter(selectedName => selectedName !== name) })}
+                                  onClick={() => setSessionForm({ ...sessionForm,
+                                    selectedStudents: sessionForm.selectedStudents.filter(id => id !== studentId),
+                                    giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => id !== studentId)) })}
                                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8B6B5E] transition hover:bg-[#F8EEE5] hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952]"
-                                  aria-label={`Quitar ${displayName}`}
+                                  aria-label={`Quitar ${displayName} (${shortId(studentId)})`}
                                 >
                                   <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 6l12 12M18 6 6 18" /></svg>
                                 </button>
+                                </div>
+                                <label className="mt-2 block text-[11px] text-[#8B6B5E]">
+                                  Financiación de {displayName} ({shortId(studentId)})
+                                  <select
+                                    aria-label={`Financiación de ${displayName} (${shortId(studentId)})`}
+                                    value={selectedCardId}
+                                    disabled={fundingLocked || (!!selectedCardId && !linkedCard)}
+                                    onChange={event => {
+                                      const mapping = { ...sessionForm.giftCardIdByStudentId };
+                                      if (event.target.value) mapping[studentId] = event.target.value;
+                                      else delete mapping[studentId];
+                                      setSessionForm({ ...sessionForm, giftCardIdByStudentId: mapping });
+                                    }}
+                                    className="mt-1 h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-2 text-[12px] text-[#2F211B] disabled:opacity-55"
+                                  >
+                                    <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin bono regalo seleccionado'}</option>
+                                    {selectedCardId && !fundingCards.some(card => card.id === selectedCardId) && (
+                                      <option value={selectedCardId} disabled>{linkedCard ? `Bono de ${displayName} (${shortId(selectedCardId)})` : `Vínculo persistido (${shortId(selectedCardId)}): recarga para verificar`}</option>
+                                    )}
+                                    {fundingCards.map(card => <option key={card.id} value={card.id}>Bono de {displayName} ({shortId(card.id)})</option>)}
+                                  </select>
+                                </label>
                               </div>
                             );
                           })}
@@ -1264,52 +1220,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   </div>
                 )}
               </div>
-            </div>
+            </fieldset>
 
-            <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
+            <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
               {editingSessionId && (
-                <button
-                  type="button"
-                  onClick={() => setSessionToDelete(editingSessionId)}
-                  className="mr-auto min-h-10 px-2 text-[11px] font-semibold text-[#9C4235] transition hover:text-[#742F26] focus:outline-none focus:ring-2 focus:ring-[#9C4235] focus:ring-offset-2"
-                >
-                  Eliminar
-                </button>
+                <p className="w-full text-[11px] text-[#8B6B5E]">El historial se conserva. Las sesiones no se pueden eliminar.</p>
               )}
-              <button type="button" onClick={() => setShowSessionModal(false)} disabled={isSubmitting} className={`${editingSessionId ? '' : 'ml-auto'} min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50`}>Cancelar</button>
-              <button type="button" onClick={handleSessionSubmit} disabled={isSubmitting} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">{isSubmitting ? 'Guardando…' : editingSessionId ? 'Guardar cambios' : 'Crear sesión'}</button>
+              <button type="button" onClick={() => setShowSessionModal(false)} disabled={formLocked} className={`${editingSessionId ? '' : 'ml-auto'} min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50`}>Cancelar</button>
+              <button type="button" onClick={handleSessionSubmit} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">{isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : editingSessionId ? 'Guardar cambios' : 'Crear sesión'}</button>
             </footer>
           </section>
         </div>
       )}
-
-      <ConfirmModal
-        isOpen={!!sessionToDelete}
-        title="¿Eliminar sesión?"
-        message="¿Estás seguro de que deseas eliminar esta sesión de la agenda? Esta acción no se puede deshacer."
-        isDestructive={true}
-        onConfirm={() => {
-          if (sessionToDelete) {
-            const id = sessionToDelete;
-            setSessionToDelete(null);
-            setShowSessionModal(false);
-            onDeleteSession(id);
-          }
-        }}
-        onCancel={() => setSessionToDelete(null)}
-      />
-
-      <ConfirmModal
-        isOpen={noBonosNames.length > 0}
-        title="Alumnos sin bonos disponibles"
-        message={`${noBonosNames.join(', ')} no tiene bonos disponibles. ¿Deseas finalizar la sesión igualmente?`}
-        isDestructive={false}
-        onConfirm={() => {
-          setNoBonosNames([]);
-          void finalizeAttendance(true);
-        }}
-        onCancel={() => setNoBonosNames([])}
-      />
     </div>
   );
 };

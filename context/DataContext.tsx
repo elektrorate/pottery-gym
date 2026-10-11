@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import {
-    Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement, AssignedClass,
+    Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement,
     InventoryItem, InventoryMovement, Teacher, MembershipTier, RenewalIntent, ClassAdjustmentIntent,
     WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, CapacityActivity,
     DEFAULT_CAPACITY_BY_ACTIVITY, getDefaultSessionCapacity
@@ -10,7 +10,7 @@ import {
 import { showError } from './toast';
 
 // Import modular operations
-import { extractTime, normalizeForMatch, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, joinStudentMemberships } from './data/shared';
+import { extractTime, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, joinStudentMemberships } from './data/shared';
 import { createMembershipOperations } from './data/membershipOps';
 import * as studentOps from './data/studentOps';
 import * as sessionOps from './data/sessionOps';
@@ -18,6 +18,7 @@ import * as teacherOps from './data/teacherOps';
 import * as pieceOps from './data/pieceOps';
 import * as giftCardOps from './data/giftCardOps';
 import * as inventoryOps from './data/inventoryOps';
+import { attachAttendanceHistory } from '../utils/attendanceHistory';
 
 const normalizeAttendanceStatus = (value: unknown): 'present' | 'absent' | undefined => {
     const status = String(value || '').trim().toLowerCase();
@@ -71,6 +72,7 @@ interface DataContextType {
     deleteGiftCard: (id: string) => Promise<void>;
     consumeGiftCard: (giftCardId: string, consumedAt?: string) => Promise<void>;
     cancelGiftCard: (giftCardId: string) => Promise<void>;
+    confirmGiftCardPayment: (giftCardId: string) => Promise<void>;
     redeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
     reverseGiftCardSession: (giftCardId: string | undefined, sessionId: string, studentId?: string) => Promise<boolean>;
 
@@ -132,9 +134,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         setLoadError(null);
 
         try {
-            const buildQuery = (table: string) => {
+            const buildQuery = (table: string, limit?: number) => {
                 let query = supabase.from(table).select('*');
                 if (!isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
+                if (limit !== undefined) query = query.limit(limit);
                 return withTimeout(`${table}.select`, query, RELOAD_TIMEOUT_MS);
             };
 
@@ -143,7 +146,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 return error?.code === '42P01' || error?.code === 'PGRST205' || message.includes('does not exist') || message.includes('could not find the table');
             };
 
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes] = await Promise.all([
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
                 buildQuery('session_students'),
                 buildQuery('pieces'), Promise.resolve(buildQuery('gift_cards')).catch(error => ({ data: [], error })),
@@ -151,13 +154,18 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 buildQuery('inventory_items'), buildQuery('inventory_movements'), buildQuery('workshop_schedules'),
                 Promise.resolve(buildQuery('workshop_capacity_defaults')).catch(error => ({ data: [], error })),
                 Promise.resolve(buildQuery('workshop_schedule_exceptions')).catch(error => ({ data: [], error })),
-                buildQuery('students_effective_membership'), buildQuery('student_membership_periods')
+                buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
+                buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0)
             ]);
 
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
             if (studentsRes.error) throw studentsRes.error;
             if (effectiveRes.error) throw effectiveRes.error;
             if (periodsRes.error) throw periodsRes.error;
+            // Never mix new identity/atomic consumers with older writable projections.
+            if (sessionContractRes.error || giftContractRes.error) {
+                throw new Error('El backend no tiene los contratos de bonos y asistencia atómica. Requiere una actualización coordinada autorizada.');
+            }
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
@@ -200,16 +208,17 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 });
                 return {
                     id: row.id, date: String(row.date).split('T')[0],
+                    revision: Number.isSafeInteger(Number(row.revision)) && row.revision != null ? Number(row.revision) : undefined,
                     startTime: extractTime(row.start_time), endTime: extractTime(row.end_time),
                     classType: row.class_type,
                     capacity: row.capacity ?? getDefaultSessionCapacity(row.class_type, configuredCapacityDefaults),
                     students: linked.map((item: any) => item.student_name),
                     studentIds: linked.map((item: any) => item.student_id || ''),
                     attendance: Object.keys(attendance).length ? attendance : undefined,
-                    attendanceByStudentId: linked.reduce((result: Record<string, 'present' | 'absent'>, item: any) => {
+                    attendanceByStudentId: linked.reduce((result: NonNullable<ClassSession['attendanceByStudentId']>, item: any) => {
                         const status = normalizeAttendanceStatus(item.attendance);
-                        if (item.student_id && status) {
-                            result[item.student_id] = status;
+                        if (item.student_id) {
+                            result[item.student_id] = status || 'pending';
                         }
                         return result;
                     }, {}),
@@ -226,30 +235,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 };
             });
 
-            const studentIdsByName = new Map(
-                normalizedStudents.map(student => [normalizeForMatch(`${student.name} ${student.surname || ''}`), student.id])
-            );
-            const attendanceHistory: Record<string, AssignedClass[]> = {};
-            normalizedSessions.forEach(session => {
-                session.students.forEach((studentName, index) => {
-                    const studentId = session.studentIds?.[index] || studentIdsByName.get(normalizeForMatch(studentName));
-                    const normalizedNameStatus = Object.entries(session.attendance || {}).find(([name]) => normalizeForMatch(name) === normalizeForMatch(studentName))?.[1];
-                    const status = (studentId && session.attendanceByStudentId?.[studentId]) || normalizedNameStatus;
-                    if (!studentId || (status !== 'present' && status !== 'absent')) return;
-                    if (!attendanceHistory[studentId]) attendanceHistory[studentId] = [];
-                    attendanceHistory[studentId].push({
-                        date: session.date,
-                        startTime: session.startTime,
-                        endTime: session.endTime,
-                        status
-                    });
-                });
-            });
-
-            const studentsWithAttendance = normalizedStudents.map(student => ({
-                ...student,
-                assignedClasses: attendanceHistory[student.id] || []
-            }));
+            const studentsWithAttendance = attachAttendanceHistory(normalizedStudents, normalizedSessions);
 
             const normalizedPieces: CeramicPiece[] = (piecesRes.data || []).map((row: any) => ({
                 id: row.id, owner: row.owner_name, description: row.description,
@@ -307,7 +293,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (generation !== loadGenerationRef.current) throw error;
             setStudents([]);
             console.error('Supabase load error', error);
-            setLoadError('No se pudieron cargar las membresías. Comprueba la conexión y la versión del backend.');
+            setLoadError('No se pudieron cargar los datos. Comprueba la conexión, los permisos y las migraciones de esta versión del backend.');
             throw error;
         } finally {
             if (generation === loadGenerationRef.current) {
@@ -398,6 +384,11 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const deleteGiftCard = async (id: string) => giftCardOps.deleteGiftCard(getOpsContext(), id);
     const consumeGiftCard = async (giftCardId: string, consumedAt?: string) => giftCardOps.consumeGiftCard(getOpsContext(), giftCardId, consumedAt);
     const cancelGiftCard = async (giftCardId: string) => giftCardOps.cancelGiftCard(getOpsContext(), giftCardId);
+    const confirmGiftCardPayment = async (giftCardId: string) => {
+        const { error } = await withTimeout('gift_cards.confirm_payment', supabase.rpc('confirm_gift_card_payment', { p_gift_card_id: giftCardId }));
+        if (error) throw error;
+        await safeReload();
+    };
     const redeemGiftCardSession = async (giftCardId: string, sessionId: string, studentId?: string) => giftCardOps.redeemGiftCardSession(getOpsContext(), giftCardId, sessionId, studentId);
     const reverseGiftCardSession = async (giftCardId: string | undefined, sessionId: string, studentId?: string) => giftCardOps.reverseGiftCardSession(getOpsContext(), giftCardId || '', sessionId, studentId);
 
@@ -514,7 +505,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         addSession, updateSession, deleteSession,
         addTeacher, updateTeacher, deleteTeacher,
         addPiece, updatePiece, deletePiece,
-        addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard,
+        addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard, confirmGiftCardPayment,
         redeemGiftCardSession, reverseGiftCardSession,
         addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement, updateWorkshopSchedule, updateWorkshopScheduleException, updateCapacityDefault,
         loadAllData

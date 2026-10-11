@@ -1,0 +1,370 @@
+\set ON_ERROR_STOP on
+\o /dev/null
+-- Only the runner's fresh, networkless container may load this fixture.
+create role anon nologin;
+create role authenticated nologin;
+create role service_role nologin bypassrls;
+create schema auth;
+create table auth.users(id uuid primary key, email text, raw_user_meta_data jsonb);
+create function auth.uid() returns uuid language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$;
+grant usage on schema auth to authenticated, service_role;
+\i /tmp/gift-baseline.sql
+set row_security = on;
+set client_min_messages = notice;
+set timezone = 'America/Los_Angeles';
+insert into auth.users(id,email) values
+  ('00000000-0000-0000-0000-000000000001','fixture-owner@example.invalid'),
+  ('00000000-0000-0000-0000-000000000002','fixture-other@example.invalid');
+insert into public.profiles(id,email,role) values
+  ('00000000-0000-0000-0000-000000000001','fixture-owner@example.invalid','tallerista'),
+  ('00000000-0000-0000-0000-000000000002','fixture-other@example.invalid','tallerista');
+insert into public.sedes(id,name,slug,owner_id) values
+  ('30000000-0000-0000-0000-000000000001','fixture own','gift-own','00000000-0000-0000-0000-000000000001'),
+  ('30000000-0000-0000-0000-000000000002','fixture foreign','gift-foreign','00000000-0000-0000-0000-000000000002');
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining,price,payment_status)
+select ('10000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  case when n=4 then '30000000-0000-0000-0000-000000000002'::uuid
+    else '30000000-0000-0000-0000-000000000001'::uuid end,
+  'Alex Perez', 'Alex', case n when 1 then 'membresia' when 3 then 'iniciacion'
+    when 6 then 'grupal' when 7 then 'grupo_temporal' else 'temporal' end, 7, 123, null
+from generate_series(1,7) n;
+insert into public.sessions(id,sede_id,start_time,end_time,class_type,date,capacity)
+select ('20000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  case when n=10 then '30000000-0000-0000-0000-000000000002'::uuid
+    else '30000000-0000-0000-0000-000000000001'::uuid end,
+  now(), now()+interval '1 hour', case when n=9 then 'torno' else 'mesa' end,
+  (now() at time zone 'UTC')::date::text, 8
+from generate_series(1,20) n;
+insert into public.session_students(session_id,student_id,sede_id)
+select id, case when n=10 then '10000000-0000-0000-0000-000000000004'::uuid
+  else '10000000-0000-0000-0000-000000000002'::uuid end, sede_id
+from public.sessions cross join lateral (select right(id::text,2)::integer n) numbered where n<>11;
+insert into public.session_students(session_id,student_id,sede_id) values
+  ('20000000-0000-0000-0000-000000000008','10000000-0000-0000-0000-000000000005','30000000-0000-0000-0000-000000000001'),
+  ('20000000-0000-0000-0000-000000000007','10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001');
+-- Genuine raw legacy observations, including unknown payment and odd balances.
+alter table public.gift_cards disable trigger trg_ensure_gift_card_recipient_student_link;
+insert into public.gift_cards(id,sede_id,buyer,recipient,recipient_student_id,num_classes,type,
+  expiry_date,activated_at,validity_months,payment_status,status,sessions_used,consumed_at)
+select ('40000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  case when n=7 then '30000000-0000-0000-0000-000000000002'::uuid
+    else '30000000-0000-0000-0000-000000000001'::uuid end,
+  'fixture buyer', 'Alex Perez', case when n=9 then null when n=7 then '10000000-0000-0000-0000-000000000004'::uuid
+    else '10000000-0000-0000-0000-000000000002'::uuid end,
+  case when n in (1,13,14,22,23) then 1 when n=12 then 4 when n=9 then 9 else 2 end,
+  'modelado', case when n in (4,16) then (now() at time zone 'UTC')::date-1 else '2099-01-01'::date end,
+  '2020-01-01', 3, case when n in (3,11) then 'pending' when n=8 then null else 'paid' end,
+  case when n in (3,11) then 'pending' when n=12 then 'consumed' when n=15 then 'cancelled'
+    when n=16 then 'expired' else 'active' end,
+  case when n=9 then 5 when n in (12,15,16) then 1 when n=18 then 2 else 0 end,
+  case when n=12 then '2020-02-01'::date else null end
+from generate_series(1,23) n;
+alter table public.gift_cards enable trigger trg_ensure_gift_card_recipient_student_link;
+insert into public.gift_card_movements(gift_card_id,session_id,student_id,sede_id,movement_type,sessions_delta,note)
+values
+  ('40000000-0000-0000-0000-000000000006','20000000-0000-0000-0000-000000000006','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','redeem',1,'legacy redeem'),
+  ('40000000-0000-0000-0000-000000000006','20000000-0000-0000-0000-000000000006','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','reverse',-1,'legacy reverse'),
+  ('40000000-0000-0000-0000-000000000012','20000000-0000-0000-0000-000000000012','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','redeem',1,'legacy manually archived'),
+  ('40000000-0000-0000-0000-000000000015','20000000-0000-0000-0000-000000000016','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','redeem',1,'legacy cancelled after use'),
+  ('40000000-0000-0000-0000-000000000016','20000000-0000-0000-0000-000000000016','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','redeem',1,'legacy expired after use'),
+  ('40000000-0000-0000-0000-000000000017','20000000-0000-0000-0000-000000000017','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','redeem',1,'legacy mismatched balance'),
+  ('40000000-0000-0000-0000-000000000018','20000000-0000-0000-0000-000000000018','10000000-0000-0000-0000-000000000002',
+    '30000000-0000-0000-0000-000000000001','redeem',2,'legacy invalid session delta');
+create table public.gift_fixture_observations as
+  select 'card'::text kind, id, to_jsonb(g) raw from public.gift_cards g
+  union all select 'movement', id, to_jsonb(m) from public.gift_card_movements m;
+\i /tmp/gift-membership.sql
+\i /tmp/gift-integrity.sql
+create function public.gift_test_assert(ok boolean,label text) returns void language plpgsql as $$
+begin
+  if ok is distinct from true then raise exception 'FAIL: %',label; end if;
+  raise notice 'PASS: %',label;
+end $$;
+create function public.gift_test_reject(statement text, expected text, code text default 'P0001')
+returns void language plpgsql security invoker as $$
+declare rejected boolean := false;
+begin
+  begin execute statement;
+  exception when others then
+    if sqlstate <> code or sqlerrm not like expected then raise; end if;
+    rejected := true;
+  end;
+  perform public.gift_test_assert(rejected, 'reject: ' || expected);
+end $$;
+grant select on public.gift_fixture_observations to authenticated;
+select public.gift_test_assert(not exists (
+  select 1 from public.gift_fixture_observations o left join (
+    select 'card'::text kind,id,to_jsonb(g) raw from public.gift_cards g
+    union all select 'movement',id,to_jsonb(m)-'ledger_order'-'reverses_movement_id' from public.gift_card_movements m
+  ) current using(kind,id) where o.raw is distinct from current.raw),
+  'migration preserves every legacy card/movement observation');
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+-- Explicit same-sede people are valid in EVERY category, even with duplicate names.
+insert into public.gift_cards(id,sede_id,buyer,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+select ('50000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  '30000000-0000-0000-0000-000000000001','explicit buyer','display only',
+  ('10000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,2,'modelado','2028-01-31',3,'paid'
+from (values (1),(2),(3),(5),(6),(7)) categories(n);
+select public.gift_test_assert(count(*)=6 and bool_and(recipient_student_id::text=replace(id::text,'50000000','10000000')),
+  'explicit recipients preserved independent of category or name') from public.gift_cards where id::text like '50000000%';
+select public.gift_test_assert(count(*)=6,'no automatically-created people in authorized sede') from public.students;
+select public.gift_test_assert(bool_and(expiry_date='2028-04-30'), 'server month-clamping independent of caller timezone')
+  from public.gift_cards where id::text like '50000000%';
+select public.gift_test_reject($q$insert into public.gift_cards(sede_id,recipient,num_classes,type)
+  values ('30000000-0000-0000-0000-000000000001','Alex Perez',2,'modelado')$q$,
+  'Explicit recipient_student_id required%');
+select public.gift_test_reject($q$insert into public.gift_cards(sede_id,recipient,recipient_student_id,num_classes,type)
+  values ('30000000-0000-0000-0000-000000000001','new name','10000000-0000-0000-0000-000000000004',2,'modelado')$q$,
+  'Recipient must belong%');
+select public.gift_test_reject($q$insert into public.gift_cards(sede_id,recipient,recipient_student_id,num_classes,type,sessions_used)
+  values ('30000000-0000-0000-0000-000000000001','Alex','10000000-0000-0000-0000-000000000002',2,'modelado',1)$q$,
+  'New gift cards cannot%');
+select public.gift_test_reject($q$insert into public.gift_cards(sede_id,recipient_student_id,num_classes,type,expiry_date)
+  values ('30000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002',2,'modelado','2099-01-01')$q$,
+  'Expiry is server-calculated%');
+update public.gift_cards set recipient='renamed display' where id='50000000-0000-0000-0000-000000000001';
+select public.gift_test_assert(recipient_student_id='10000000-0000-0000-0000-000000000001',
+  'display edit preserves explicit member') from public.gift_cards where id='50000000-0000-0000-0000-000000000001';
+update public.gift_cards set internal_notes='legacy metadata only' where id='40000000-0000-0000-0000-000000000009';
+select public.gift_test_assert(recipient_student_id is null and sessions_used=5 and expiry_date='2099-01-01',
+  'unlinked legacy metadata stays unlinked; no balance or expiry invention')
+  from public.gift_cards where id='40000000-0000-0000-0000-000000000009';
+select public.gift_test_reject($q$update public.gift_cards set recipient='Alex' where id='40000000-0000-0000-0000-000000000009'$q$,
+  'Explicit recipient_student_id required%');
+select public.gift_test_reject($q$update public.gift_cards set expiry_date='2099-02-01' where id='40000000-0000-0000-0000-000000000009'$q$,
+  'Expiry is server-calculated%');
+select public.gift_test_reject($q$select public.consume_gift_card('40000000-0000-0000-0000-000000000009')$q$,
+  'Explicit same-sede recipient required before gift card consumption');
+select public.gift_test_reject($q$update public.gift_cards set sessions_used=0 where id='40000000-0000-0000-0000-000000000009'$q$,
+  'Protected gift card projection%', '42501');
+select public.gift_test_reject($q$update public.gift_cards set payment_status='paid' where id='40000000-0000-0000-0000-000000000003'$q$,
+  'Protected gift card projection%', '42501');
+select set_config('app.gift_card_rpc','true',false);
+select public.gift_test_reject($q$update public.gift_cards set status='consumed' where id='40000000-0000-0000-0000-000000000001'$q$,
+  'Protected gift card projection%', '42501');
+select public.gift_test_reject($q$delete from public.gift_card_movements$q$,'permission denied%', '42501');
+select public.gift_test_reject($q$update public.gift_card_movements set note='tampered'$q$,'permission denied%', '42501');
+select public.gift_test_reject($q$insert into public.gift_card_movements(gift_card_id,sede_id,movement_type,sessions_delta)
+  values ('40000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','manual',1)$q$,
+  'permission denied%', '42501');
+select public.gift_test_reject($q$delete from public.gift_cards where id='40000000-0000-0000-0000-000000000001'$q$,
+  'permission denied%', '42501');
+select public.gift_test_reject($q$select private.apply_gift_card_session(null,null,null,false)$q$,'permission denied%', '42501');
+select public.gift_test_reject($q$select public.external_redeem_gift_card_session(null,null,null,null)$q$,'permission denied%', '42501');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000007',
+  '20000000-0000-0000-0000-000000000010','10000000-0000-0000-0000-000000000004')$q$,'No autorizado%', '42501');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000008','10000000-0000-0000-0000-000000000005')$q$,'Student must be%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000010','10000000-0000-0000-0000-000000000002')$q$,'Session must belong%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000011','10000000-0000-0000-0000-000000000002')$q$,'Session is not linked%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000009','10000000-0000-0000-0000-000000000002')$q$,'Session class type%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000001',null)$q$,'Explicit session%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000003',
+  '20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000002')$q$,'El bono no esta pagado');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000008',
+  '20000000-0000-0000-0000-000000000008','10000000-0000-0000-0000-000000000002')$q$,'El bono no esta pagado');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000004',
+  '20000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000002')$q$,'El bono no tiene%');
+-- Three cycles in ONE transaction also exercise deterministic reversal links.
+begin;
+select public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000001');
+select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(sessions_used=1 and status='consumed' and consumed_at is not null,
+  'final-session retry succeeds without a second debit') from public.gift_cards where id='40000000-0000-0000-0000-000000000001';
+select public.reverse_gift_card_session_once('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000002');
+select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert((public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000001')).sessions_used=1, 'old key returns original receipt after reversal');
+select public.gift_test_assert(sessions_used=0 and status='active' and consumed_at is null,
+  'old debit receipt cannot resurrect reversed consumption') from public.gift_cards where id='40000000-0000-0000-0000-000000000001';
+select public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000003');
+select public.reverse_gift_card_session_once('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000004');
+select public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000005');
+commit;
+select public.gift_test_assert(count(*)=5 and sum(sessions_delta)=1 and count(distinct reverses_movement_id)=2,
+  'consume reverse consume repeat preserves all five distinct movements') from public.gift_card_movements
+  where gift_card_id='40000000-0000-0000-0000-000000000001';
+select public.gift_test_reject($q$select public.reverse_gift_card_session_once('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000001')$q$,'Idempotency key conflicts%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002',null)$q$,'Request key required');
+select public.gift_test_reject($q$update public.gift_cards set recipient_student_id='10000000-0000-0000-0000-000000000005'
+  where id='40000000-0000-0000-0000-000000000001'$q$,'Gift card terms and recipient%');
+select public.gift_test_reject($q$update public.gift_cards set num_classes=2 where id='40000000-0000-0000-0000-000000000001'$q$,
+  'Gift card terms and recipient%');
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000010',
+  '20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002')$q$,'Session is not linked%');
+-- Legacy reverse does not prevent a fresh cycle, and old rows remain intact.
+select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000006','20000000-0000-0000-0000-000000000006',
+  '10000000-0000-0000-0000-000000000002');
+select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000006','20000000-0000-0000-0000-000000000006',
+  '10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(count(*)=4 and sum(sessions_delta)=0,'legacy pair supports a new cycle without rewriting history')
+  from public.gift_card_movements where gift_card_id='40000000-0000-0000-0000-000000000006';
+select public.redeem_gift_card_session('50000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000007',
+  '10000000-0000-0000-0000-000000000001');
+select public.gift_test_assert(classes_remaining=7 and price=123 and student_category='membresia'
+  and current_membership_period_id is null and payment_status is null,
+  'explicit member gift use never adjusts or reconstructs membership') from public.students
+  where id='10000000-0000-0000-0000-000000000001';
+select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000012','20000000-0000-0000-0000-000000000012',
+  '10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(status='consumed' and sessions_used=0 and consumed_at='2020-02-01',
+  'legacy manual archive remains archived after attendance correction') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000012';
+select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000015','20000000-0000-0000-0000-000000000016',
+  '10000000-0000-0000-0000-000000000002');
+select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000016','20000000-0000-0000-0000-000000000016',
+  '10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(sessions_used=0 and status=case right(id::text,2) when '15' then 'cancelled' else 'expired' end,
+  'correction preserves cancelled/expired lifecycle') from public.gift_cards where id in
+  ('40000000-0000-0000-0000-000000000015','40000000-0000-0000-0000-000000000016');
+select public.gift_test_reject($q$select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000017',
+  '20000000-0000-0000-0000-000000000017','10000000-0000-0000-0000-000000000002')$q$,
+  'Gift card balance cannot reverse its ledger%');
+select public.gift_test_reject($q$select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000018',
+  '20000000-0000-0000-0000-000000000018','10000000-0000-0000-0000-000000000002')$q$,
+  'Legacy gift card ledger requires explicit reconciliation');
+select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000019','20000000-0000-0000-0000-000000000019',
+  '10000000-0000-0000-0000-000000000002');
+select public.consume_gift_card('40000000-0000-0000-0000-000000000019');
+select public.reverse_gift_card_session('40000000-0000-0000-0000-000000000019','20000000-0000-0000-0000-000000000019',
+  '10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(status='consumed' and sessions_used=1 and consumed_at is not null,
+  'manual consumption remains closed after attendance correction') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000019';
+select public.gift_test_reject($q$do $rollback$ begin
+  perform public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000020',
+    '20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000002',
+    '60000000-0000-0000-0000-000000000020');
+  raise exception 'Forced attendance transaction rollback';
+end $rollback$$q$, 'Forced attendance transaction rollback');
+select public.gift_test_assert(sessions_used=0 and not exists(select 1 from public.gift_card_movements where gift_card_id=g.id)
+  and not exists(select 1 from public.gift_card_operation_receipts where gift_card_id=g.id),
+  'outer transaction failure rolls back ledger, balance and receipt') from public.gift_cards g
+  where id='40000000-0000-0000-0000-000000000020';
+select public.gift_test_assert(gift_card_id is null,'outer rollback restores enrollment card link') from public.session_students
+  where session_id='20000000-0000-0000-0000-000000000003' and student_id='10000000-0000-0000-0000-000000000002';
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000020',
+  '20000000-0000-0000-0000-000000000018','10000000-0000-0000-0000-000000000002')$q$,
+  'Session already has another gift card consumption%');
+select public.reverse_gift_card_session_once('40000000-0000-0000-0000-000000000021','20000000-0000-0000-0000-000000000004',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000021');
+select public.redeem_gift_card_session_once('40000000-0000-0000-0000-000000000021','20000000-0000-0000-0000-000000000004',
+  '10000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000022');
+select public.gift_test_assert((public.reverse_gift_card_session_once('40000000-0000-0000-0000-000000000021',
+  '20000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000021')).sessions_used=0, 'no-op reversal also has a stable original receipt');
+select public.gift_test_assert(sessions_used=1,'delayed no-op reverse cannot undo a later consume') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000021';
+select public.consume_gift_card('40000000-0000-0000-0000-000000000002');
+select public.consume_gift_card('40000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(sessions_used=num_classes and consumed_at=(now() at time zone 'UTC')::date,
+  'manual consumption records real remaining allocation and server date') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000002';
+select public.gift_test_assert(count(*)=1 and sum(sessions_delta)=2,'manual retry cannot append a second movement')
+  from public.gift_card_movements where gift_card_id='40000000-0000-0000-0000-000000000002';
+select public.gift_test_reject($q$select public.consume_gift_card('40000000-0000-0000-0000-000000000010','2099-01-01')$q$,
+  'Manual consumption date%');
+select public.cancel_gift_card('40000000-0000-0000-0000-000000000005');
+select public.cancel_gift_card('40000000-0000-0000-0000-000000000005');
+select public.gift_test_assert(status='cancelled' and sessions_used=0,'cancel retry preserves balance') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000005';
+select public.gift_test_assert(count(*)=1 and sum(sessions_delta)=0,'cancellation history is durable, not a fictitious refund')
+  from public.gift_card_movements where gift_card_id='40000000-0000-0000-0000-000000000005';
+select public.confirm_gift_card_payment('40000000-0000-0000-0000-000000000011');
+select public.confirm_gift_card_payment('40000000-0000-0000-0000-000000000011');
+select public.gift_test_assert(payment_status='paid' and status='active' and sessions_used=0,
+  'payment confirmation does not refill or change expiry') from public.gift_cards where id='40000000-0000-0000-0000-000000000011';
+select public.gift_test_assert(classes_remaining=7 and price=123 and student_category='temporal' and current_membership_period_id is null,
+  'gift ledger never changes person category/classes/payment or membership') from public.students
+  where id='10000000-0000-0000-0000-000000000002';
+select public.gift_test_reject($q$delete from public.sessions where id='20000000-0000-0000-0000-000000000001'$q$,
+  '%violates foreign key constraint%', '23503');
+select public.gift_test_reject($q$delete from public.students where id='10000000-0000-0000-0000-000000000002'$q$,
+  '%violates foreign key constraint%', '23503');
+set request.jwt.claim.sub = '';
+select public.gift_test_reject($q$select public.redeem_gift_card_session('40000000-0000-0000-0000-000000000001',
+  '20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002')$q$,'No autorizado%', '42501');
+select public.gift_test_assert(count(*)=0,'null-auth cannot read receipts') from public.gift_card_operation_receipts;
+reset role;
+-- Even accidental future grants cannot turn a caller into a ledger writer.
+grant insert,update,delete on public.gift_card_movements to authenticated,service_role;
+grant insert,update,delete on public.gift_card_operation_receipts to authenticated,service_role;
+create policy fixture_accidental_movement_grant on public.gift_card_movements to authenticated
+  using (private.can_access_sede(sede_id)) with check (private.can_access_sede(sede_id));
+create policy fixture_accidental_receipt_grant on public.gift_card_operation_receipts to authenticated
+  using (private.can_access_sede(sede_id)) with check (private.can_access_sede(sede_id));
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.gift_test_reject($q$update public.gift_card_movements set note='spoofed'$q$,
+  'Gift card history is server-managed', '42501');
+select public.gift_test_reject($q$delete from public.gift_card_operation_receipts$q$,
+  'Gift card history is server-managed', '42501');
+reset role;
+set role service_role;
+select public.gift_test_reject($q$update public.gift_card_movements set sessions_delta=999$q$,
+  'Gift card history is server-managed', '42501');
+select public.gift_test_reject($q$select setval('public.gift_card_movements_ledger_order_seq',1)$q$,
+  'permission denied%', '42501');
+select public.gift_test_reject($q$update public.gift_cards set sessions_used=0 where id='40000000-0000-0000-0000-000000000001'$q$,
+  'Protected gift card projection%', '42501');
+select public.gift_test_reject($q$update public.students set sede_id='30000000-0000-0000-0000-000000000002'
+  where id='10000000-0000-0000-0000-000000000002'$q$, '%violates foreign key constraint%', '23503');
+select public.gift_test_reject($q$update public.sessions set sede_id='30000000-0000-0000-0000-000000000002'
+  where id='20000000-0000-0000-0000-000000000001'$q$, '%violates foreign key constraint%', '23503');
+select public.gift_test_reject($q$select public.external_redeem_gift_card_session('30000000-0000-0000-0000-000000000002',
+  '40000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002')$q$,
+  'No autorizado%', '42501');
+select public.external_redeem_gift_card_session('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000010','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000000002');
+select public.external_reverse_gift_card_session('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000010','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000000002');
+select public.external_redeem_gift_card_session('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000010','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000000002');
+select public.gift_test_assert(sessions_used=1,'external wrappers share the atomic cycle implementation') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000010';
+select public.external_reverse_gift_card_session_once('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000010','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000030');
+select public.external_redeem_gift_card_session_once('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000010','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000031');
+select public.external_reverse_gift_card_session_once('30000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-000000000010','20000000-0000-0000-0000-000000000020','10000000-0000-0000-0000-000000000002',
+  '60000000-0000-0000-0000-000000000030');
+select public.gift_test_assert(sessions_used=1,'external old receipt cannot reverse a newer cycle') from public.gift_cards
+  where id='40000000-0000-0000-0000-000000000010';
+reset role;
+revoke insert,update,delete on public.gift_card_movements, public.gift_card_operation_receipts from authenticated,service_role;
+update public.sedes set is_active=false where id='30000000-0000-0000-0000-000000000002';
+set role service_role;
+select public.gift_test_reject($q$select public.external_cancel_gift_card('30000000-0000-0000-0000-000000000002',
+  '40000000-0000-0000-0000-000000000007')$q$,'No autorizado para una sede inactiva', '42501');
+reset role;
+select public.gift_test_assert(not has_function_privilege('anon','public.redeem_gift_card_session(uuid,uuid,uuid)','execute')
+  and not has_function_privilege('authenticated','private.apply_gift_card_session(uuid,uuid,uuid,boolean,uuid,uuid)','execute')
+  and not has_function_privilege('authenticated','public.external_redeem_gift_card_session(uuid,uuid,uuid,uuid)','execute'),
+  'helper and wrapper grants are restricted');
