@@ -1,14 +1,16 @@
 import { showError, showWarning } from '../context/toast';
-import React, { useState, useMemo } from 'react';
-import { ClassSession, GiftCard, Student, Teacher, WorkshopScheduleDay, getDefaultSessionCapacity } from '../types';
+import React, { useState, useMemo, useRef } from 'react';
+import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, Teacher, WorkshopScheduleDay, getDefaultSessionCapacity } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
-import { getStudentLifecycle, isStudentArchived } from '../utils/studentLifecycle';
+import { getStudentLifecycle, isStudentArchived, isManagedMembership } from '../utils/studentLifecycle';
+import { AttendanceMembershipIntents, persistAttendanceAfterAdjustments } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 interface CalendarViewProps {
   sessions: ClassSession[];
   onAddSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
   onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<void>;
   onDeleteSession: (id: string) => Promise<void>;
+  onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
   onUpdateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
   onRedeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
   onReverseGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
@@ -28,7 +30,16 @@ const getAttendanceStatus = (attendance: ClassSession['attendance'] | undefined,
   return matchingEntry?.[1] || 'pending';
 };
 
-const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers, workshopSchedule }) => {
+const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onDeleteSession, onUpdateStudent, onAdjustClasses, onRedeemGiftCardSession, onReverseGiftCardSession, giftCards, students, teachers, workshopSchedule }) => {
+  const membershipIntents = useRef(new AttendanceMembershipIntents());
+  const adjustAttendance = async (session: ClassSession, student: Student, delta: number) => {
+    const intent = membershipIntents.current.get(session.id, student, delta, session.date);
+    try { await onAdjustClasses(intent); }
+    catch (error: any) {
+      if (error.code === '40001') membershipIntents.current.conflict(session.id, student.id, delta);
+      throw error;
+    }
+  };
   const [viewMode, setViewMode] = useState<CalendarMode>('day');
   const today = useWorkshopDate();
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -218,6 +229,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
     setIsSubmitting(true);
     try {
+      membershipIntents.current.begin(attendanceSession.id, nextAttendance);
+      await persistAttendanceAfterAdjustments(async () => {
       for (const studentName of attendanceSession.students) {
         const previousStatus = getAttendanceStatus(previousAttendance, studentName);
         const nextStatus = getAttendanceStatus(nextAttendance, studentName);
@@ -241,6 +254,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
           continue;
         }
 
+        if (isManagedMembership(student)) {
+          await adjustAttendance(attendanceSession, student, isPresent ? -1 : 1);
+          continue;
+        }
         const maxBonuses = student.bonosAsignados ?? (category === 'temporal' ? 3 : 4);
         const nextClassesRemaining = isPresent
           ? Math.max(0, student.classesRemaining - 1)
@@ -250,10 +267,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         await onUpdateStudent(student.id, updates);
       }
 
-      await onUpdateSession(attendanceSession.id, {
+      }, () => onUpdateSession(attendanceSession.id, {
         attendance: nextAttendance,
         teacherSubstituteId: substituteId
-      });
+      }), attendanceSession.id);
+      membershipIntents.current.complete(attendanceSession.id);
       setAttendanceSession(prev => prev ? {
         ...prev,
         attendance: nextAttendance,
@@ -263,6 +281,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       setAttendanceEditBaseline(null);
       setShowAttendanceModal(false);
     } catch (err: any) {
+      membershipIntents.current.releaseUnattempted(attendanceSession.id);
       console.error('Error editando control de asistencia:', err);
       showError(`No se pudo guardar la corrección. ${err?.message || 'Error de conexión. Intenta de nuevo.'}`);
     } finally {
@@ -305,6 +324,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     const completedAt = new Date().toISOString();
 
     try {
+      membershipIntents.current.begin(attendanceSession.id, finalAttendance);
+      await persistAttendanceAfterAdjustments(async () => {
       // Student updates share an operation lock, so they must be persisted in sequence.
       // Present membership and temporary students consume one bonus.
       for (const studentName of presentStudentNames) {
@@ -319,7 +340,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
           await onRedeemGiftCardSession(giftCardId, attendanceSession.id, student?.id);
           continue;
         }
-        if (student && !isStudentArchived(student) && (category === 'membresia' || category === 'temporal') && student.classesRemaining > 0) {
+        if (student && isManagedMembership(student)) {
+          const persistedSession = sessions.find(item => item.id === attendanceSession.id);
+          if (getAttendanceStatus(persistedSession?.attendance, studentName) !== 'present') {
+            await adjustAttendance(attendanceSession, student, -1);
+          }
+          continue;
+        }
+        if (student && !isStudentArchived(student) && category === 'temporal' && student.classesRemaining > 0) {
           const nextClassesRemaining = student.classesRemaining - 1;
           const updates: Partial<Student> = {
             classesRemaining: nextClassesRemaining
@@ -330,17 +358,19 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         }
       }
 
-      await onUpdateSession(attendanceSession.id, {
+      }, () => onUpdateSession(attendanceSession.id, {
         completedAt,
         attendance: finalAttendance,
         teacherSubstituteId: substituteId
-      });
+      }), attendanceSession.id);
 
+      membershipIntents.current.complete(attendanceSession.id);
       setAttendanceSession(prev => prev ? { ...prev, completedAt, attendance: finalAttendance, teacherSubstituteId: substituteId || undefined } : prev);
       setIsEditingAttendance(false);
       setAttendanceEditBaseline(null);
       setShowAttendanceModal(false);
     } catch (err: any) {
+      membershipIntents.current.releaseUnattempted(attendanceSession.id);
       console.error('Error finalizando control de asistencia:', err);
       showError(`No se pudo finalizar el control de asistencia. ${err?.message || 'Error de conexión. Intenta de nuevo.'}`);
     } finally {
@@ -901,6 +931,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
             </div>
 
             <footer className="flex shrink-0 items-center justify-end gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
+              <button type="button" disabled={isSubmitting} onClick={() => { membershipIntents.current.reviewConflicts(attendanceSession.id); showWarning('Período y saldo revisados: vuelve a guardar la misma asistencia. Los ajustes exitosos conservan su recibo.'); }}>Revisé los períodos y saldos: habilitar nuevos intentos obsoletos</button>
               {attendanceSession.completedAt ? (
                 isEditingAttendance ? (
                   <>
@@ -1167,7 +1198,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                                 {s.groupName && <span className="ml-1.5 text-[10px] font-normal opacity-65">{s.groupName}</span>}
                               </span>
                               <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[9px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
-                                {isTemporary ? 'Temporal' : getStudentLifecycle(s, today) === 'active' ? 'Activa' : 'Pendiente'}
+                                {isTemporary ? 'Temporal' : getStudentLifecycle(s, today) === 'active' ? 'Activa' : getStudentLifecycle(s, today) === 'expired' ? 'Vencida' : 'Pendiente'}
                               </span>
                             </button>
                           );

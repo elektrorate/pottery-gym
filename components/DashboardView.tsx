@@ -1,8 +1,9 @@
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { Student, ClassSession, AppView, GiftCard } from '../types';
+import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent } from '../types';
 import { showError } from '../context/toast';
-import { getStudentLifecycle, getStudentPaymentStatus, isStudentArchived } from '../utils/studentLifecycle';
+import { getStudentLifecycle, getPendingMembershipPayments, isStudentArchived, isManagedMembership } from '../utils/studentLifecycle';
+import { AttendanceMembershipIntents, persistAttendanceAfterAdjustments } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 
@@ -11,6 +12,7 @@ interface DashboardViewProps {
   students: Student[];
   sessions: ClassSession[];
   giftCards: GiftCard[];
+  onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
   onUpdateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
   onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<void>;
   onRedeemGiftCardSession: (giftCardId: string, sessionId: string, studentId?: string) => Promise<void>;
@@ -19,7 +21,7 @@ interface DashboardViewProps {
   onOpenStudentProfile: (studentId: string) => void;
 }
 
-type DashboardAlert = { id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' };
+type DashboardAlert = { key?: string; id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' };
 
 const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studentId: string) => void }> = ({ alert, onOpenStudentProfile }) => {
   const palette = alert.type === 'critical'
@@ -47,12 +49,18 @@ const AlertGroup: React.FC<{
   return (
     <div className={`rounded-xl border p-3 ${colors.border} ${colors.background}`}>
       <div className="mb-2 flex items-center justify-between gap-2"><p className={`text-[11px] font-bold uppercase tracking-[0.14em] ${colors.text}`}>{title}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${colors.badge} ${colors.text}`}>{alerts.length}</span></div>
-      {alerts.length > 0 ? <div className="space-y-2">{alerts.map((alert, idx) => <AlertItem key={`${alert.id}-${idx}`} alert={alert} onOpenStudentProfile={onOpenStudentProfile} />)}</div> : <p className="rounded-lg bg-white/70 px-3 py-3 text-[12px] text-neutral-textHelper">{emptyLabel}</p>}
+      {alerts.length > 0 ? <div className="space-y-2">{alerts.map((alert, idx) => <AlertItem key={alert.key || `${alert.id}-${alert.category}`} alert={alert} onOpenStudentProfile={onOpenStudentProfile} />)}</div> : <p className="rounded-lg bg-white/70 px-3 py-3 text-[12px] text-neutral-textHelper">{emptyLabel}</p>}
     </div>
   );
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftCards, onUpdateStudent, onUpdateSession, onRedeemGiftCardSession, onReverseGiftCardSession, onNavigate, onOpenStudentProfile }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftCards, onUpdateStudent, onAdjustClasses, onUpdateSession, onRedeemGiftCardSession, onReverseGiftCardSession, onNavigate, onOpenStudentProfile }) => {
+  const membershipIntents = useRef(new AttendanceMembershipIntents());
+  const studentsRef = useRef(students);
+  studentsRef.current = students;
+  const savingSessions = useRef(new Set<string>());
+  const retryAttendance = useRef<Record<string, () => Promise<void>>>({});
+  const [failedSessions, setFailedSessions] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(false);
   const alertAudioContextRef = useRef<AudioContext | null>(null);
@@ -139,23 +147,23 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
     const list: DashboardAlert[] = [];
     // Keep expiration and payment as separate causes so the dashboard is actionable.
     students.forEach(student => {
-      if (isStudentArchived(student, todayStr)) return;
       const fullName = `${student.name} ${student.surname || ''}`.trim();
       const isMembership = (student.studentCategory || 'membresia') === 'membresia';
       const isExpired = Boolean(student.expiryDate && student.expiryDate < todayStr);
-      const isPaymentPending = isMembership
-        && getStudentPaymentStatus(student) === 'pending'
-        && !isExpired;
+      getPendingMembershipPayments(student).forEach(period => list.push({
+        id: student.id, key: `${student.id}:${period.id}:payment`, name: fullName,
+        reason: `Pago pendiente · ${period.startsOn || 'Sin inicio'} — ${period.endsOn || 'Sin vencimiento'}`,
+        type: 'warning', category: 'payment'
+      }));
+      if (isStudentArchived(student, todayStr)) return;
 
       if (student.classesRemaining <= 1 && student.classesRemaining >= 0) {
-        list.push({ id: student.id, name: fullName, reason: `Bono agotándose (${student.classesRemaining} rest.)`, type: 'critical', category: 'bonuses' });
+        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `Bono agotándose (${student.classesRemaining} rest.)`, type: 'critical', category: 'bonuses' });
       }
       if (isExpired && isMembership) {
-        list.push({ id: student.id, name: fullName, reason: 'Membresía vencida', type: 'critical', category: 'expiry' });
+        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:expiry`, name: fullName, reason: `Membresía vencida · ${student.expiryDate}`,  type: 'critical', category: 'expiry' });
       }
-      if (isPaymentPending) {
-        list.push({ id: student.id, name: fullName, reason: 'Pago pendiente de membresía', type: 'warning', category: 'payment' });
-      }
+
     });
     return list;
   }, [students, todayStr]);
@@ -190,7 +198,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
   }, []);
 
   useEffect(() => {
-    const currentKeys = new Set(alerts.map(alert => `${alert.type}:${alert.id}`));
+    const currentKeys = new Set(alerts.map(alert => alert.key || `${alert.id}:${alert.category}`));
     const previousKeys = previousAlertKeysRef.current;
     const hasNewAlert = previousKeys
       ? Array.from(currentKeys).some(key => !previousKeys.has(key))
@@ -201,6 +209,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
   }, [alerts, soundEnabled, playAlertSound]);
 
   useEffect(() => () => {
+    Object.values(debounceTimerRef.current).forEach(clearTimeout);
     alertAudioContextRef.current?.close().catch(() => undefined);
   }, []);
 
@@ -233,6 +242,10 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
   // BUG 1 FIX: Debounced attendance handler - accumulates clicks for 2 seconds before sending
   const handleAttendance = useCallback((session: ClassSession, studentName: string, status: 'present' | 'absent') => {
     const sessionId = session.id;
+    if (savingSessions.current.has(sessionId)) {
+      showError('La asistencia se está guardando. Espera antes de modificarla.');
+      return;
+    }
 
     // Get current attendance (merge session data with local pending changes)
     const baseAtt = session.attendance || {};
@@ -257,10 +270,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
     }
 
     // Set new debounce timer (2 seconds)
-    debounceTimerRef.current[sessionId] = setTimeout(async () => {
-      const finalAtt = pendingUpdatesRef.current[sessionId];
+    const finalAtt = { ...nextAtt };
+    const saveAttendance = async () => {
       if (finalAtt) {
+        savingSessions.current.add(sessionId);
         try {
+          membershipIntents.current.begin(sessionId, finalAtt);
+          await persistAttendanceAfterAdjustments(async () => {
           const baseAttendance = session.attendance || {};
           const changedNames = new Set([...Object.keys(baseAttendance), ...Object.keys(finalAtt)]);
           for (const name of changedNames) {
@@ -269,7 +285,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
             const isPresent = nextStatus === 'present';
             if (wasPresent === isPresent) continue;
 
-            const student = students.find(item => {
+            const student = studentsRef.current.find(item => {
               const fullName = `${item.name} ${item.surname || ''}`.trim().toUpperCase();
               return fullName === name.toUpperCase() || item.name.toUpperCase() === name.toUpperCase();
             });
@@ -288,6 +304,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
               continue;
             }
 
+            if (isManagedMembership(student)) {
+              const delta = isPresent ? -1 : 1;
+              const intent = membershipIntents.current.get(sessionId, student, delta, session.date);
+              try { await onAdjustClasses(intent); }
+              catch (error: any) {
+                if (error.code === '40001') membershipIntents.current.conflict(sessionId, student.id, delta);
+                throw error;
+              }
+              continue;
+            }
             const maxBonuses = student.bonosAsignados ?? 4;
             const nextClassesRemaining = isPresent
               ? Math.max(0, student.classesRemaining - 1)
@@ -297,21 +323,38 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, giftC
             });
           }
 
-          await onUpdateSession(sessionId, { attendance: finalAtt });
+          }, () => onUpdateSession(sessionId, { attendance: finalAtt }), sessionId);
+          membershipIntents.current.complete(sessionId);
+          setLocalAttendance(previous => ({ ...previous, [sessionId]: finalAtt }));
           delete pendingUpdatesRef.current[sessionId];
           delete debounceTimerRef.current[sessionId];
+          delete retryAttendance.current[sessionId];
+          setFailedSessions(previous => previous.filter(id => id !== sessionId));
         } catch (error: any) {
+          membershipIntents.current.releaseUnattempted(sessionId);
+          retryAttendance.current[sessionId] = saveAttendance;
+          setFailedSessions(previous => [...new Set([...previous, sessionId])]);
+          setLocalAttendance(previous => ({ ...previous, [sessionId]: session.attendance || {} }));
           showError(`No se pudo guardar la asistencia. ${error?.message || 'Intenta de nuevo.'}`);
-        }
+        } finally { savingSessions.current.delete(sessionId); }
       }
-    }, 2000);
-  }, [giftCards, onRedeemGiftCardSession, onReverseGiftCardSession, onUpdateSession, onUpdateStudent, students]);
+    };
+    debounceTimerRef.current[sessionId] = setTimeout(saveAttendance, 2000);
+  }, [giftCards, onRedeemGiftCardSession, onReverseGiftCardSession, onUpdateSession, onUpdateStudent, onAdjustClasses, students]);
 
   const CATEGORY_LABELS: Record<string, string> = { membresia: 'Membresía', temporal: 'Temporal' };
   const CATEGORY_COLORS: Record<string, string> = { membresia: 'bg-brand', temporal: 'bg-caramelo' };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-base animate-fade-in">
+      {failedSessions.map(sessionId => <div key={sessionId} role="alert" className="p-3 text-sm">
+        Asistencia parcialmente guardada: revisa los períodos y saldos antes de reintentar. No cambies la asistencia original.
+        <button type="button" onClick={() => {
+          if (savingSessions.current.has(sessionId)) return;
+          membershipIntents.current.reviewConflicts(sessionId);
+          void retryAttendance.current[sessionId]?.();
+        }}>Revisé los datos: reintentar asistencia original</button>
+      </div>)}
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-24 pt-3 custom-scrollbar md:px-6 md:py-4">
 
         <section className="relative mb-5 overflow-hidden rounded-[22px] border border-brand/20 bg-brand-soft px-5 py-5 md:px-7 md:py-6">

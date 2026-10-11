@@ -34,6 +34,33 @@ export const inferMembershipTier = (tier?: string, price?: number): MembershipTi
   return 'gold';
 };
 
+export interface MembershipPeriod {
+  id: string;
+  studentId: string;
+  predecessorId?: string;
+  membershipTier?: MembershipTier;
+  price?: number;
+  allocatedClasses?: number;
+  startsOn?: string;
+  endsOn?: string;
+  paymentStatus: 'paid' | 'pending' | null;
+}
+
+export interface RenewalIntent {
+  readonly studentId: string;
+  readonly requestKey: string;
+  readonly membershipTier: MembershipTier;
+  readonly allocatedClasses: number;
+}
+
+export interface ClassAdjustmentIntent {
+  readonly studentId: string;
+  readonly periodId: string;
+  readonly requestKey: string;
+  readonly expectedBalance: number;
+  readonly delta: number;
+}
+
 export interface Student {
   id: string;
   name: string;
@@ -46,7 +73,10 @@ export interface Student {
   birthYear?: string;
   classesRemaining: number;
   status: 'membresia' | 'needs_renewal' | 'new' | 'active';
-  paymentStatus?: 'paid' | 'pending';
+  paymentStatus?: 'paid' | 'pending' | null;
+  effectivePeriodId?: string;
+  materializedPeriodId?: string;
+  membershipPeriods?: MembershipPeriod[];
   paymentMethod?: string;
   notes?: string;
   observations?: string;
@@ -54,7 +84,7 @@ export interface Student {
   assignedClasses?: AssignedClass[];
   classType?: string;
   expiryDate?: string;
-  studentCategory?: 'membresia' | 'temporal';
+  studentCategory?: 'membresia' | 'temporal' | 'grupal' | 'grupo_temporal';
   membershipTier?: MembershipTier;
   membershipActivatedAt?: string;
   archivedAt?: string;

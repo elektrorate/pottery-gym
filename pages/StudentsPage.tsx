@@ -9,11 +9,11 @@ const StudentsPage: React.FC = () => {
 
     const {
         students,
-        giftCards,
         addStudent,
         updateStudent,
         deleteStudent,
-        renewStudent,
+        renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
+        loadError,
         isLoadingData
     } = useData();
 
@@ -39,12 +39,16 @@ const StudentsPage: React.FC = () => {
         );
     }
 
+    if (loadError) return <p role="alert">{loadError}</p>;
+
     return (
         <StudentList
             students={students}
-            giftCards={giftCards}
             onAddStudent={addStudent}
             onRenew={renewStudent}
+            onConfirmPayment={confirmMembershipPayment}
+            onActivateMembership={activateMembership}
+            onAdjustClasses={adjustMembershipClasses}
             onUpdate={updateStudent}
             onDeleteStudent={deleteStudent}
             selectedStudentId={selectedStudentId}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { supabase } from '../../supabaseClient';
-import { inferMembershipTier, Student, ClassSession, GiftCard } from '../../types';
+import { Student, ClassSession, GiftCard } from '../../types';
+export { mapStudentRowToModel, mapMembershipPeriod, joinStudentMemberships } from '../../utils/studentLifecycle';
 
 export { supabase };
 
@@ -123,35 +124,6 @@ export const buildSessionPayload = (data: Partial<ClassSession>) => {
     if (data.sessionAudience !== undefined) payload.session_audience = data.sessionAudience || null;
     return payload;
 };
-
-export const mapStudentRowToModel = (row: any): Student => ({
-    id: row.id,
-    name: row.name || row.full_name || '',
-    surname: row.surname || undefined,
-    email: row.email || undefined,
-    phone: row.phone || '',
-    phoneCountry: row.phone_country || undefined,
-    birthDay: row.birth_day ? String(row.birth_day) : undefined,
-    birthMonth: row.birth_month ? String(row.birth_month) : undefined,
-    birthYear: row.birth_year ? String(row.birth_year) : undefined,
-    classesRemaining: row.classes_remaining ?? 0,
-    status: row.status || 'new',
-    paymentStatus: row.payment_status || undefined,
-    paymentMethod: row.payment_method || undefined,
-    notes: row.notes || undefined,
-    observations: row.observations || undefined,
-    price: row.price ?? undefined,
-    classType: row.class_type || undefined,
-    expiryDate: row.expiry_date ? new Date(row.expiry_date).toISOString().split('T')[0] : undefined,
-    studentCategory: row.student_category || 'membresia',
-    membershipTier: row.student_category === 'temporal' ? undefined : (row.membership_tier || inferMembershipTier(undefined, row.price)),
-    membershipActivatedAt: row.membership_activated_at || undefined,
-    archivedAt: row.archived_at || undefined,
-    groupName: row.group_name || undefined,
-    bonosAsignados: row.bonos_asignados ?? (row.student_category === 'temporal' ? 1 : 4),
-    repetirMensualmente: row.student_category === 'temporal' ? false : (row.repetir_mensualmente ?? false),
-    createdAt: row.created_at || undefined
-});
 
 export const mapGiftCardRowToModel = (row: any): GiftCard => {
     const sessionsUsed = Math.max(0, Number(row.sessions_used ?? 0));
