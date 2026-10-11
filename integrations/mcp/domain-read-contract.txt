@@ -1,0 +1,91 @@
+Read-only authorized domain pilot (issues #2, #5, #6; partial)
+
+Scope
+- POST /functions/v1/domain-read executes one stable SELECT-only RPC.
+- Version 1 accepts exactly version, operation, sedeId, studentId.
+- Operations: student.summary.get and membership.status.get. No search,
+  arbitrary SQL, table names, field selection, generic CRUD or gift-card tools.
+- sedeId and studentId are selectors, never authority: the backend must match
+  one provisioned principal and one exact operation/tenant/student grant.
+- Summary: studentId, sedeId, category, archived. No names or contact data.
+- Membership: studentId, sedeId, effectivePeriodId, tier, allocatedClasses,
+  classesRemaining, startsOn, endsOn, paymentStatus. No price, payment method,
+  staff IDs, notes, observations, raw snapshots or metadata.
+- Nonmembership returns data:null; unknown legacy payment stays null.
+- Uses the existing effective membership projection without initializing,
+  renewing, reconciling, changing balances, archive status or payment.
+
+Backend-owner provisioning (not a public API)
+- This new migration is unapplied. It adds only two private tables and one RPC;
+  it does not seed identities/grants or change any existing application policy.
+- The trusted database owner provisions an existing Supabase Auth user in
+  private.domain_read_principals with kind staff or integration, enabled=true,
+  a finite required expires_at, and revoked_at=null.
+- Provision each exact private.domain_read_grants tuple (user_id, sede_id,
+  student_id, operation), explicitly enabled with finite expires_at. There are
+  no wildcards, role-wide defaults, self-grants or provisioning tools.
+- Disabled, missing, expired, revoked, inactive-tenant and wrong-resource grants
+  deny. Both principal and grant must be valid on every SQL invocation.
+- Staff additionally require a current recognized backend profile and existing
+  tenant access. Even super_admin needs an explicit grant for this API.
+- Integration users must be dedicated: no super_admin profile, sede ownership
+  or sede_members membership, anywhere. Do not reuse an app staff account as an
+  integration identity. The sign-up-created unlinked profile grants no access.
+- Revoke with enabled=false or revoked_at set on the principal or grant.
+  Existing in-flight statements can finish under their original snapshot.
+- No client, tool or LLM receives service_role. The Edge Function uses the anon
+  project key plus the caller's verified Auth JWT, not an administrative client.
+- Integration Auth credentials/token refresh remain server-owned. Provisioning,
+  identity lifecycle and secure token storage require owner decisions before use.
+
+Audit and HTTP
+- Edge logs only event, generated requestId, allowlisted operation (or null),
+  and HTTP status. No identity/resource IDs, JWT, URL, arguments, results, PII
+  or underlying errors. X-Request-Id allows operational correlation.
+- No database audit writes. Direct authenticated RPC calls still enforce all
+  grants but bypass Edge logs; audit-complete access would require a future
+  transport/DB gateway decision. Do not claim these logs cover direct RPC use.
+- All responses are no-store. Input is bounded at 4096 bytes, RPC/adapter
+  output at 8192 bytes; strict response schemas reject extra fields or wrong
+  tenant/student/operation. No browser CORS exposure is configured for this pilot.
+- Default Supabase JWT gateway verification is retained (config.toml unchanged).
+  The handler independently verifies Auth and the DB independently checks auth.
+  Gateway-level denials occur before handler audit; deploy validation is pending.
+
+MCP boundary
+- domain-read-adapter.ts is only an in-process listTools/callTool contract.
+  It exposes get_student_summary and get_membership_status, both read-only.
+- The hosting backend supplies a fixed trusted HTTPS supabaseOrigin and a
+  server-owned getAccessToken provider. Neither is a model/tool argument.
+- HTTP redirects are refused. Cookies and referrers are omitted. Inputs cannot
+  choose a URL, endpoint, bearer, operation, SQL or fields. Responses are checked
+  against the same allowlist before becoming tool content.
+- No live MCP server, SDK, transport, external client, OAuth registration,
+  autonomous write, student self-service, deployment or remote operation.
+
+Pending gates / safe issue status
+- #2/#5: bounded authorized read slice implemented locally, not full domain
+  API completion. Business capability matrix (#8), final resources/fields,
+  retention/audit attribution and provisioning/rotation ownership are pending.
+- #6: safe adapter contract only, not a shipped/live MCP integration. Choose
+  transport, approved clients, host authentication, token lifecycle and
+  consent/exposure rules before implementing a listener or registering clients.
+- Validate the reconciled deployed schema, JWT gateway, Auth and PostgREST in
+  an approved environment before migration/deployment. No issue is closed here.
+
+Isolated verification
+- npm run test:e2e -- tests/e2e/domain-read.spec.ts --reporter=list
+  Uses only in-memory mocks; no browser, remote API or production credentials.
+- SQL fixture: disposable postgres:17, --pull=never --network none, no ports.
+  Mount repository read-only at /workspace; psql runs
+  /workspace/supabase/tests/domain_read.fixture.psql. Never run the fixture on
+  an existing database: it deliberately constructs a disposable schema.
+- Local results: 16/16 contract/handler/HTTP-backend/adapter tests passed;
+  the SQL fixture passed including read-only transactions, scope/revocation
+  denials, unknown payment and exact before/after student/period snapshots.
+- Full-project tsc --noEmit and strict focused TypeScript checks passed.
+  npm run build passed with existing circular-chunk and bundle-size warnings.
+- Edge Runtime v1.74.3 bundled the actual entrypoint offline with a read-only
+  mount of supabase/functions. A first attempt mounting the entire repository
+  timed out building its VFS; narrowing the mount succeeded. This is import/
+  syntax packaging validation, not a deployed Auth/JWT/PostgREST smoke test.

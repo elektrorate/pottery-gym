@@ -1,0 +1,87 @@
+\set ON_ERROR_STOP on
+-- Run ONLY in a new, networkless disposable postgres:17 container.
+do $$ begin
+  if current_database() <> 'domain_read_fixture' then
+    raise exception 'Disposable domain_read_fixture database required';
+  end if;
+end $$;
+create role anon nologin;
+create role authenticated nologin;
+create role service_role nologin bypassrls;
+create schema auth;
+create schema private;
+grant usage on schema public, auth, private to authenticated;
+create function auth.uid() returns uuid language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+$$;
+create function auth.role() returns text language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.role', true), '');
+$$;
+create table auth.users (id uuid primary key);
+create type public.user_role as enum ('super_admin', 'tallerista', 'staff');
+create table public.profiles (id uuid primary key, role public.user_role);
+create table public.sedes (id uuid primary key, owner_id uuid, is_active boolean default true);
+create table public.sede_members (sede_id uuid, user_id uuid);
+create table public.students (
+  id uuid primary key, sede_id uuid not null, name text, email text, notes text,
+  student_category text default 'membresia', status text default 'membresia',
+  membership_tier text, bonos_asignados integer, classes_remaining integer,
+  membership_activated_at date, expiry_date timestamptz, price numeric,
+  payment_status text check (payment_status in ('paid', 'pending')), archived_at date
+);
+-- Match the hardened helpers' current backend semantics, not JWT metadata.
+create function private.can_access_sede(target_sede_id uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select auth.uid() is not null and (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'super_admin')
+    or exists (select 1 from public.sedes s where s.id = target_sede_id and s.is_active
+      and (s.owner_id = auth.uid() or exists (
+        select 1 from public.sede_members m where m.sede_id = s.id and m.user_id = auth.uid())))
+  );
+$$;
+revoke all on function private.can_access_sede(uuid) from public;
+grant execute on function private.can_access_sede(uuid) to authenticated;
+alter table public.students enable row level security;
+create policy fixture_students on public.students for select to authenticated
+  using (private.can_access_sede(sede_id));
+grant select on public.students to authenticated;
+
+insert into auth.users select ('00000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid
+  from generate_series(1,4) n;
+insert into public.profiles values
+  ('00000000-0000-0000-0000-000000000001','staff'),
+  ('00000000-0000-0000-0000-000000000002','tallerista'),
+  ('00000000-0000-0000-0000-000000000003','super_admin');
+insert into public.sedes(id) values
+  ('30000000-0000-0000-0000-000000000001'), ('30000000-0000-0000-0000-000000000002');
+insert into public.sede_members values
+  ('30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001');
+insert into public.students(id,sede_id,name,email,notes,membership_tier,bonos_asignados,
+  classes_remaining,membership_activated_at,expiry_date,payment_status,price)
+select ('10000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid,
+  case when n=3 then '30000000-0000-0000-0000-000000000002'::uuid
+    else '30000000-0000-0000-0000-000000000001'::uuid end,
+  'PRIVATE NAME', 'PRIVATE EMAIL', 'PRIVATE NOTES', 'gold', 4, 2,
+  '2026-10-01', '2026-10-31 00:00:00+00', null, 120 from generate_series(1,4) n;
+update public.students set student_category='temporal', archived_at='2026-10-01'
+  where id='10000000-0000-0000-0000-000000000004';
+
+-- Exercise the real period-aware SELECT view. This fixture does not reconstruct
+-- Supabase Auth/PostgREST or prove compatibility with a deployed schema.
+\i /tmp/domain-membership.sql
+insert into public.student_membership_periods(id,student_id,sede_id,membership_tier,allocated_classes,
+  starts_on,ends_on,payment_status) values
+  ('20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001',
+    '30000000-0000-0000-0000-000000000001','gold',4,'2026-10-01','2026-10-31',null);
+update public.students set current_membership_period_id='20000000-0000-0000-0000-000000000001'
+  where id='10000000-0000-0000-0000-000000000001';
+insert into public.student_membership_periods(id,student_id,sede_id,predecessor_id,membership_tier,
+  allocated_classes,starts_on,ends_on,payment_status) values
+  ('20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001',
+    '30000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',
+    'platinum',8,private.membership_today()-1,private.membership_today()+28,'pending');
+create table public.domain_test_snapshot as select
+  (select jsonb_agg(to_jsonb(s) order by s.id) from public.students s) as students,
+  (select jsonb_agg(to_jsonb(p) order by p.id) from public.student_membership_periods p) as periods;
+\i /tmp/domain-migration.sql
+\i /tmp/domain-assertions.psql
