@@ -6,6 +6,7 @@ import { supabase } from '../supabaseClient';
 import { getDefaultSessionCapacity, type WorkshopScheduleDay } from '../types';
 import * as XLSX from 'xlsx';
 import WorkshopAvailabilityPanel from './WorkshopAvailabilityPanel';
+import GoogleDriveRepository from './GoogleDriveRepository';
 
 /* ─── Collapsible Section ─── */
 const Section: React.FC<{
@@ -406,6 +407,12 @@ const SettingsView: React.FC = () => {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
     </svg>
   );
+  const IconDrive = (
+    <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.5 7.5h6l2 2h9v8.75A2.75 2.75 0 0117.75 21H6.25a2.75 2.75 0 01-2.75-2.75V7.5Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6.5 7.5V5.75A2.75 2.75 0 019.25 3h5.5a2.75 2.75 0 012.75 2.75V9.5" />
+    </svg>
+  );
 
   return (
     <div className="bg-white rounded-2xl border border-neutral-border p-4 md:p-6 h-full flex flex-col overflow-y-auto custom-scrollbar">
@@ -503,6 +510,15 @@ const SettingsView: React.FC = () => {
         </Section>
 
         <WorkshopAvailabilityPanel />
+
+        <Section
+          icon={IconDrive}
+          title="Repositorio de documentos"
+          subtitle="Conecta la carpeta compartida del taller en Google Drive"
+          defaultOpen={false}
+        >
+          <GoogleDriveRepository storageScope={sedeId || profile?.id || 'default'} />
+        </Section>
 
         {/* Legacy editor kept hidden while the availability panel is rolled out. */}
         <div className="hidden">

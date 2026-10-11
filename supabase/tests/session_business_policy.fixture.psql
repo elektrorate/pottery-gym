@@ -1,0 +1,381 @@
+\set ON_ERROR_STOP on
+-- First execute the shipped v1 regression fixture, unchanged.
+\i /tmp/atomic-fixture.psql
+reset role;
+create function auth.role() returns text language sql stable as $$
+  select case when current_setting('role', true) = 'service_role' then 'service_role' else 'authenticated' end;
+$$;
+\i /tmp/business-read.sql
+set check_function_bodies = on;
+set client_min_messages = notice;
+create function public.business_id(prefix integer, n integer) returns uuid language sql immutable as $$
+  select (prefix::text || '1000000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid;
+$$;
+create function public.business_metadata(days integer, hour integer, capacity integer default 2) returns jsonb
+language sql as $$
+  select jsonb_build_object('date',(private.membership_today()+days)::text,
+    'start_time',((private.membership_today()+days)::timestamp at time zone 'UTC')+make_interval(hours=>hour),
+    'end_time',((private.membership_today()+days)::timestamp at time zone 'UTC')+make_interval(hours=>hour+1),
+    'class_type','mesa','capacity',capacity);
+$$;
+create function public.business_attendance(n integer, status text) returns jsonb language sql as $$
+  select jsonb_build_array(jsonb_build_object('student_id',public.business_id(1,n),'status',status));
+$$;
+create function public.business_reserve(session integer, student integer, days integer default 0, hour integer default 18,
+  gift integer default null) returns jsonb language sql security invoker as $$
+  select public.save_session_reservation(public.business_id(2,session),gen_random_uuid(),0,public.business_id(3,1),
+    public.business_metadata(days,hour),array[public.business_id(1,student)],
+    case when gift is null then '{}'::jsonb else jsonb_build_object(public.business_id(1,student)::text,public.business_id(4,gift)) end);
+$$;
+insert into auth.users(id,email) select public.business_id(0,n),'business-'||n||'@example.invalid' from generate_series(1,5) n;
+insert into public.profiles(id,email,role) select public.business_id(0,n),'business-'||n||'@example.invalid',
+  case when n=3 then 'super_admin'::public.user_role else 'staff'::public.user_role end from generate_series(1,5) n;
+insert into public.sedes(id,name,slug,owner_id) values
+  (public.business_id(3,1),'Business policy workshop','business-policy', '00000000-0000-0000-0000-000000000001'),
+  (public.business_id(3,2),'Other business workshop','business-other', public.business_id(0,2));
+insert into public.sede_members(sede_id,user_id,role) values (public.business_id(3,1),public.business_id(0,1),'staff'),
+  (public.business_id(3,1),public.business_id(0,3),'super_admin'), (public.business_id(3,1),public.business_id(0,5),'staff');
+insert into private.domain_read_principals(user_id,kind,enabled,expires_at) values
+  (public.business_id(0,5),'integration',true,now()+interval '1 day');
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+insert into public.students(id,sede_id,full_name,name,surname,student_category,membership_tier)
+  select public.business_id(1,n),public.business_id(3,1),'Business Student '||n,'Business',n::text,'membresia','gold'
+  from generate_series(1,30) n;
+select public.confirm_student_membership_payment(current_membership_period_id) from public.students
+  where id in (select public.business_id(1,n) from generate_series(1,30) n);
+select public.business_reserve(1,1);
+select public.save_session_attendance(public.business_id(2,1),public.business_id(6,1),1,public.business_attendance(1,'present'),true,null);
+reset role;
+create table public.business_legacy_before as select to_jsonb(s) raw from public.sessions s;
+create table public.business_receipts_before as select to_jsonb(r) raw from public.session_operation_receipts r;
+\i /tmp/business-policy.sql
+select public.atomic_assert(not exists(select 1 from public.business_legacy_before b where not exists
+  (select 1 from public.sessions s where to_jsonb(s)-'attendance_policy_version'=b.raw and s.attendance_policy_version=1)),
+  'policy migration leaves every old session v1 and untouched');
+select public.atomic_assert(not exists(select 1 from public.business_receipts_before b where not exists
+  (select 1 from public.session_operation_receipts r where to_jsonb(r)=b.raw)), 'all earlier receipts preserved byte-for-byte');
+set role authenticated;
+select public.atomic_assert(public.save_session_attendance(public.business_id(2,1),public.business_id(6,1),1,
+  public.business_attendance(1,'present'),true,null)->>'revision'='2','v1 finalization receipt replays unchanged');
+select public.atomic_reject($q$select public.cancel_session_reservation(public.business_id(2,1),public.business_id(1,1),gen_random_uuid(),2,'legacy')$q$,
+  'Business actions require a policy2 session');
+select public.save_session_attendance(public.business_id(2,1),gen_random_uuid(),2,public.business_attendance(1,'absent'),true,null);
+select public.atomic_assert(classes_remaining=4,'v1 correction still refunds through unchanged private PR1 helper') from public.students where id=public.business_id(1,1);
+
+select public.business_reserve(2,2);
+select public.atomic_assert(attendance_policy_version=2,'new reservation defaults to immutable policy2') from public.sessions where id=public.business_id(2,2);
+select public.save_session_attendance(public.business_id(2,2),public.business_id(6,2),1,public.business_attendance(2,'present'),false,null);
+select public.atomic_assert(classes_remaining=4,'provisional presence has zero financial effect') from public.students where id=public.business_id(1,2);
+select public.save_session_attendance(public.business_id(2,2),public.business_id(6,3),2,public.business_attendance(2,'present'),true,null);
+select public.atomic_assert(classes_remaining=3,'paid presence is charged only at finalization') from public.students where id=public.business_id(1,2);
+select public.atomic_assert(billing_state='charged' and billing_kind='attendance' and penalty_id is null,'presence projection attributes charge')
+  from public.session_business_state where session_id=public.business_id(2,2);
+select public.atomic_assert(public.save_session_attendance(public.business_id(2,2),public.business_id(6,3),2,public.business_attendance(2,'present'),true,null)->>'replayed'='true',
+  'policy2 finalized receipt replays before stale revision');
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,2),gen_random_uuid(),3,public.business_attendance(2,'present'),false,null)$q$,
+  'Finalized policy2 sessions cannot reopen');
+select public.save_session_attendance(public.business_id(2,2),public.business_id(6,4),3,public.business_attendance(2,'absent'),true,null);
+select public.atomic_assert(classes_remaining=3,'post-finalization absent correction does not refund presence') from public.students where id=public.business_id(1,2);
+select public.atomic_assert(penalty_state='charged' and billing_kind='no_show','absence correction attaches penalty to original debit')
+  from public.session_business_state where session_id=public.business_id(2,2);
+select public.save_session_attendance(public.business_id(2,2),gen_random_uuid(),4,public.business_attendance(2,'present'),true,null);
+select public.atomic_assert(penalty_state='charged' and billing_kind='no_show','staff correction cannot erase sticky no-show penalty')
+  from public.session_business_state where session_id=public.business_id(2,2);
+
+-- Staff can approve but cannot waive; linked superadmin is not the owner.
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.waive_session_penalty(public.business_id(2,2),public.business_id(1,2),gen_random_uuid(),5,'staff waiver')$q$,
+  'Only this workshop owner may waive penalties','42501');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000003';
+select public.atomic_reject($q$select public.waive_session_penalty(public.business_id(2,2),public.business_id(1,2),gen_random_uuid(),5,'superadmin waiver')$q$,
+  'Only this workshop owner may waive penalties','42501');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000002';
+select public.atomic_reject($q$select public.waive_session_penalty(public.business_id(2,2),public.business_id(1,2),gen_random_uuid(),5,'foreign owner')$q$,
+  'Session not accessible','42501');
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.waive_session_penalty(public.business_id(2,2),public.business_id(1,2),public.business_id(6,5),5,'Owner confirms justified absence');
+select public.atomic_assert(classes_remaining=4,'owner waiver restores only original current balance') from public.students where id=public.business_id(1,2);
+select public.save_session_attendance(public.business_id(2,2),gen_random_uuid(),6,public.business_attendance(2,'absent'),true,null);
+select public.atomic_assert(billing_state='waived' and penalty_state='waived','attendance cannot silently rebill waived penalty')
+  from public.session_business_state where session_id=public.business_id(2,2);
+select public.atomic_assert(public.waive_session_penalty(public.business_id(2,2),public.business_id(1,2),public.business_id(6,5),5,
+  'Owner confirms justified absence')->>'replayed'='true','waiver replay does not restore twice');
+
+-- Explicit pending/unknown/expired overrides never alter membership terms.
+reset role;
+update public.student_membership_periods set payment_status=case when student_id=public.business_id(1,4) then null else 'pending' end
+  where student_id in (public.business_id(1,3),public.business_id(1,4));
+update public.students set payment_status=case when id=public.business_id(1,4) then null else 'pending' end
+  where id in (public.business_id(1,3),public.business_id(1,4));
+update public.student_membership_periods set starts_on=private.membership_today()-40,ends_on=private.membership_today()-10
+  where student_id=public.business_id(1,5);
+update public.students set classes_remaining=0 where id in (public.business_id(1,6),public.business_id(1,7));
+create table public.business_terms_before as select id, to_jsonb(p) raw from public.student_membership_periods p;
+set role authenticated;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.business_reserve(3,3);
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,3),gen_random_uuid(),1,public.business_attendance(3,'present'),true,null)$q$,
+  'Presence requires valid original credit%');
+select public.approve_session_exception(public.business_id(2,3),public.business_id(1,3),public.business_id(6,6),1,'membership_override','Employee knows pending payment');
+select public.atomic_assert(classes_remaining=4 and payment_status='pending','approval never manufactures payment or credit') from public.students where id=public.business_id(1,3);
+select public.save_session_attendance(public.business_id(2,3),gen_random_uuid(),2,public.business_attendance(3,'present'),true,null);
+select public.atomic_assert(classes_remaining=3 and payment_status='pending','approved pending membership debits without marking paid') from public.students where id=public.business_id(1,3);
+select public.business_reserve(4,4);
+select public.approve_session_exception(public.business_id(2,4),public.business_id(1,4),gen_random_uuid(),1,'membership_override','Unknown payment individually approved');
+select public.save_session_attendance(public.business_id(2,4),gen_random_uuid(),2,public.business_attendance(4,'present'),true,null);
+select public.atomic_assert(classes_remaining=3 and payment_status is null,'unknown payment remains unknown after approved presence') from public.students where id=public.business_id(1,4);
+select public.business_reserve(5,5);
+select public.approve_session_exception(public.business_id(2,5),public.business_id(1,5),gen_random_uuid(),1,'membership_override','Expired original period individually approved');
+select public.save_session_attendance(public.business_id(2,5),gen_random_uuid(),2,public.business_attendance(5,'present'),true,null);
+select public.atomic_assert(classes_remaining=3,'expired original current known balance can fund explicit override') from public.students where id=public.business_id(1,5);
+select public.business_reserve(6,6);
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,6),gen_random_uuid(),1,public.business_attendance(6,'present'),true,null)$q$,
+  'Presence requires valid original credit%');
+select public.approve_session_exception(public.business_id(2,6),public.business_id(1,6),gen_random_uuid(),1,'no_credit','One individual courtesy');
+select public.save_session_attendance(public.business_id(2,6),gen_random_uuid(),2,public.business_attendance(6,'present'),true,null);
+select public.atomic_assert(classes_remaining=0,'no-credit courtesy cannot create negative or artificial balance') from public.students where id=public.business_id(1,6);
+select public.atomic_assert(billing_state='no_charge' and billing_kind='courtesy' and exception_kind='no_credit','courtesy approval visible and auditable')
+  from public.session_business_state where session_id=public.business_id(2,6);
+select public.save_session_attendance(public.business_id(2,6),gen_random_uuid(),3,public.business_attendance(6,'absent'),true,null);
+select public.atomic_assert(penalty_state='pending' and billing_state='incident','courtesy approval cannot waive later no-show')
+  from public.session_business_state where session_id=public.business_id(2,6);
+select public.business_reserve(7,7);
+select public.save_session_attendance(public.business_id(2,7),gen_random_uuid(),1,public.business_attendance(7,'absent'),true,null);
+select public.atomic_assert(penalty_state='pending' and funding_period_id is not null,'zero credit no-show is durable original-source incident')
+  from public.session_business_state where session_id=public.business_id(2,7);
+reset role;
+update public.students set classes_remaining=4 where id=public.business_id(1,7);
+set role authenticated;
+select public.save_session_attendance(public.business_id(2,7),gen_random_uuid(),2,public.business_attendance(7,'present'),true,null);
+select public.atomic_assert(classes_remaining=4,'pending incident never auto-settles when credit becomes available') from public.students where id=public.business_id(1,7);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,7),public.business_id(1,7),gen_random_uuid(),3,'no_credit','ignore penalty')$q$,
+  'Exceptions cannot change finalized billing or penalties');
+select public.atomic_assert(not exists(select 1 from public.business_terms_before b join public.student_membership_periods p using(id) where b.raw<>to_jsonb(p)),
+  'exception approvals and billing leave all period payment/expiry/snapshot observations unchanged');
+
+select public.business_reserve(8,8);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,8),public.business_id(1,8),gen_random_uuid(),1,'no_credit','dodge paid credit')$q$,
+  'No-credit exception cannot bypass available credit');
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,8),public.business_id(1,8),gen_random_uuid(),1,'membership_override',' ')$q$,
+  'Student, request key, revision and auditable reason required');
+reset role;
+update public.student_membership_periods set payment_status='pending' where student_id=public.business_id(1,8);
+set role authenticated;
+select public.approve_session_exception(public.business_id(2,8),public.business_id(1,8),gen_random_uuid(),1,'membership_override','Approval pinned to source terms');
+reset role;
+update public.students set classes_remaining=3 where id=public.business_id(1,8);
+set role authenticated;
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,8),gen_random_uuid(),2,public.business_attendance(8,'present'),true,null)$q$,
+  'Session exception is stale%');
+select public.atomic_assert(revision=2 and completed_at is null,'stale approval fails closed without receipt or charge') from public.sessions where id=public.business_id(2,8);
+select public.approve_session_exception(public.business_id(2,8),public.business_id(1,8),public.business_id(6,8),2,'membership_override','Reapproved changed source balance');
+select public.atomic_assert(public.approve_session_exception(public.business_id(2,8),public.business_id(1,8),public.business_id(6,8),2,
+  'membership_override','Reapproved changed source balance')->>'replayed'='true','approval receipt replays before stale revision');
+set timezone = 'America/Los_Angeles';
+select public.save_session_attendance(public.business_id(2,8),gen_random_uuid(),3,public.business_attendance(8,'present'),true,null);
+set timezone = 'UTC';
+select public.atomic_assert(classes_remaining=2,'source-bound approval is independent of caller timezone') from public.students where id=public.business_id(1,8);
+select public.business_reserve(18,8,1,12);
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,18),gen_random_uuid(),1,public.business_attendance(8,'present'),true,null)$q$,
+  'Presence requires valid original credit%');
+select public.atomic_assert(count(*)=0,'another session cannot reuse an earlier student approval') from public.session_business_exceptions where session_id=public.business_id(2,18);
+
+-- Timely/late classification uses server clock and Madrid wall-clock conversion.
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.business_reserve(9,9,2);
+select public.cancel_session_reservation(public.business_id(2,9),public.business_id(1,9),public.business_id(6,9),1,'Timely cancellation');
+select public.atomic_assert(public.cancel_session_reservation(public.business_id(2,9),public.business_id(1,9),public.business_id(6,9),1,
+  'Timely cancellation')->>'replayed'='true','cancellation retry preserves original server timestamp');
+select public.save_session_attendance(public.business_id(2,9),gen_random_uuid(),2,public.business_attendance(9,'pending'),true,null);
+select public.atomic_assert(billing_kind='timely_cancellation' and billing_state='no_charge' and reservation_state='cancelled',
+  'cancelled pending tombstone finalizes free and is retained') from public.session_business_state where session_id=public.business_id(2,9);
+select public.atomic_assert(classes_remaining=4,'timely cancellation has no class effect') from public.students where id=public.business_id(1,9);
+select public.business_reserve(10,10,-1);
+select public.cancel_session_reservation(public.business_id(2,10),public.business_id(1,10),public.business_id(6,10),1,'Late cancellation');
+select public.atomic_assert(classes_remaining=4,'late cancellation is not charged before finalization') from public.students where id=public.business_id(1,10);
+select public.save_session_attendance(public.business_id(2,10),gen_random_uuid(),2,public.business_attendance(10,'present'),true,null);
+select public.atomic_assert(billing_kind='late_cancellation' and penalty_state='pending','late cancellation ignores client presence and fails closed for uncovered original period')
+  from public.session_business_state where session_id=public.business_id(2,10);
+select public.business_reserve(11,11,0,0);
+select public.cancel_session_reservation(public.business_id(2,11),public.business_id(1,11),gen_random_uuid(),1,'Late valid cancellation');
+select public.save_session_attendance(public.business_id(2,11),gen_random_uuid(),2,public.business_attendance(11,'pending'),true,null);
+select public.atomic_assert(classes_remaining=3,'late cancellation with paid valid original credit costs exactly one') from public.students where id=public.business_id(1,11);
+select public.atomic_assert(penalty_state='charged' and billing_kind='late_cancellation','late valid penalty projected durably') from public.session_business_state where session_id=public.business_id(2,11);
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,18),gen_random_uuid(),1,public.business_id(3,1),'{}','{}'::uuid[],'{}')$q$,
+  'Use cancel_session_reservation%');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,11),gen_random_uuid(),3,public.business_id(3,1),'{"attendance_policy_version":1}',array[public.business_id(1,11)],'{}')$q$,
+  'Unsupported reservation metadata%');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,11),gen_random_uuid(),3,public.business_id(3,1),'{"start_time":"2026-10-11T01:00:00Z"}',array[public.business_id(1,11)],'{}')$q$,
+  'Session %');
+
+-- A tombstone releases capacity and overlapping booking conflicts, never its fee.
+select public.save_session_reservation(public.business_id(2,12),gen_random_uuid(),0,public.business_id(3,1),public.business_metadata(3,12,1),array[public.business_id(1,12)],'{}');
+select public.cancel_session_reservation(public.business_id(2,12),public.business_id(1,12),gen_random_uuid(),1,'Release seat');
+select public.save_session_reservation(public.business_id(2,12),gen_random_uuid(),2,public.business_id(3,1),'{}',array[public.business_id(1,13)],'{}');
+select public.atomic_assert(count(*)=2 and count(*) filter(where cancelled_at is null)=1,'last seat counts active enrollments, retains cancelled row')
+  from public.session_students where session_id=public.business_id(2,12);
+select public.business_reserve(13,12,3,12);
+select public.save_session_reservation(public.business_id(2,12),gen_random_uuid(),3,public.business_id(3,1),'{"capacity":1}',
+  array[public.business_id(1,12),public.business_id(1,13)],'{}');
+select public.atomic_assert(reservation_state='cancelled','legacy reservation cannot reactivate cancellation tombstone') from public.session_business_state where session_id=public.business_id(2,12) and student_id=public.business_id(1,12);
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,12),gen_random_uuid(),4,public.business_attendance(13,'present'),true,null)$q$,
+  'Attendance must match%including cancellations');
+
+-- Explicit gift funding and whole-batch rollback across the shared card helper.
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+  values (public.business_id(4,1),public.business_id(3,1),'Business Student 14',public.business_id(1,14),1,'modelado',private.membership_today(),3,'paid');
+select public.business_reserve(14,14,0,18,1);
+select public.save_session_attendance(public.business_id(2,14),gen_random_uuid(),1,public.business_attendance(14,'present'),false,null);
+select public.atomic_assert(sessions_used=0,'gift provisional presence does not consume') from public.gift_cards where id=public.business_id(4,1);
+select public.save_session_attendance(public.business_id(2,14),gen_random_uuid(),2,public.business_attendance(14,'absent'),true,null);
+select public.atomic_assert(sessions_used=1,'explicit gift no-show consumes final credit once') from public.gift_cards where id=public.business_id(4,1);
+select public.waive_session_penalty(public.business_id(2,14),public.business_id(1,14),gen_random_uuid(),3,'Owner gift waiver');
+select public.atomic_assert(sessions_used=0,'owner gift waiver reverses original card') from public.gift_cards where id=public.business_id(4,1);
+reset role;
+update public.students set classes_remaining=0 where id=public.business_id(1,15);
+set role authenticated;
+select public.save_session_reservation(public.business_id(2,15),gen_random_uuid(),0,public.business_id(3,1),public.business_metadata(1,18),
+  array[public.business_id(1,14),public.business_id(1,15)],jsonb_build_object(public.business_id(1,14)::text,public.business_id(4,1)));
+select public.atomic_reject(format($q$select public.save_session_attendance(public.business_id(2,15),gen_random_uuid(),1,%L::jsonb,true,null)$q$,
+  public.business_attendance(14,'present')||public.business_attendance(15,'present')),'Presence requires valid original credit%');
+select public.atomic_assert(sessions_used=0,'mixed batch error rolls back first gift debit') from public.gift_cards where id=public.business_id(4,1);
+select public.atomic_assert(count(*)=0,'mixed batch leaves no billing projection') from public.session_business_billing where session_id=public.business_id(2,15);
+select public.atomic_assert(count(*)=0,'mixed batch leaves no gift ledger or receipt') from public.gift_card_operation_receipts where session_id=public.business_id(2,15);
+select public.atomic_assert(revision=1 and completed_at is null,'mixed batch leaves parent unchanged') from public.sessions where id=public.business_id(2,15);
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+  values (public.business_id(4,2),public.business_id(3,1),'Business Student 15',public.business_id(1,15),1,'modelado',private.membership_today(),3,'paid');
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,15),public.business_id(1,15),gen_random_uuid(),1,'no_credit','Ignore unselected available gift')$q$,
+  'No-credit exception cannot bypass available credit');
+select public.save_session_reservation(public.business_id(2,15),gen_random_uuid(),1,public.business_id(3,1),'{}',
+  array[public.business_id(1,14),public.business_id(1,15)],jsonb_build_object(public.business_id(1,14)::text,public.business_id(4,1),public.business_id(1,15)::text,public.business_id(4,2)));
+select public.save_session_attendance(public.business_id(2,15),gen_random_uuid(),2,
+  public.business_attendance(14,'present')||public.business_attendance(15,'present'),true,null);
+select public.atomic_assert(count(*)=2 and bool_and(sessions_used=1),'corrected explicit gift batch consumes each original card exactly once')
+  from public.gift_cards where id in (public.business_id(4,1),public.business_id(4,2));
+
+-- Membership owner waiver after rollover records the original historical credit.
+select public.business_reserve(16,16);
+select public.save_session_attendance(public.business_id(2,16),gen_random_uuid(),1,public.business_attendance(16,'absent'),true,null);
+reset role;
+update public.student_membership_periods set starts_on=private.membership_today()-20,ends_on=private.membership_today()-1 where student_id=public.business_id(1,16);
+set role authenticated;
+select public.schedule_student_membership(public.business_id(1,16),gen_random_uuid(),'platinum',8);
+reset role;
+create table public.business_outgoing_before as select id,outgoing_snapshot from public.student_membership_periods where student_id=public.business_id(1,16);
+set role authenticated;
+select public.waive_session_penalty(public.business_id(2,16),public.business_id(1,16),gen_random_uuid(),2,'Original historical penalty waived');
+select public.atomic_assert(classes_remaining=8,'historical waiver never credits successor') from public.students where id=public.business_id(1,16);
+select public.atomic_assert(count(*)=1,'historical waiver appends original-period credit only') from public.session_credit_movements where session_id=public.business_id(2,16) and disposition='original_period_credit';
+reset role;
+select public.atomic_assert(not exists(select 1 from public.business_outgoing_before b join public.student_membership_periods p using(id) where b.outgoing_snapshot is distinct from p.outgoing_snapshot),
+  'historical waiver preserves immutable outgoing snapshots');
+
+-- Do not guess, materialize or charge a queued successor during policy2 billing.
+update public.student_membership_periods set starts_on=private.membership_today()-20,ends_on=private.membership_today()-1
+  where student_id=public.business_id(1,19);
+insert into public.student_membership_periods(student_id,sede_id,predecessor_id,membership_tier,allocated_classes,starts_on,ends_on,payment_status)
+  select student_id,sede_id,id,'platinum',8,private.membership_today(),private.membership_today()+29,'paid'
+  from public.student_membership_periods where student_id=public.business_id(1,19);
+set role authenticated;
+select public.business_reserve(19,19,0,12);
+select public.save_session_attendance(public.business_id(2,19),gen_random_uuid(),1,public.business_attendance(19,'absent'),true,null);
+select public.atomic_assert(classes_remaining=4 and current_membership_period_id=(select funding_period_id from public.session_business_state
+  where session_id=public.business_id(2,19)), 'pending no-show leaves original current period/balance and queued successor untouched')
+  from public.students where id=public.business_id(1,19);
+select public.atomic_assert(penalty_state='pending' and penalty_reason like 'Queued successor%', 'queued rollover produces durable pending incident')
+  from public.session_business_state where session_id=public.business_id(2,19);
+select public.business_reserve(20,19,0,14);
+select public.approve_session_exception(public.business_id(2,20),public.business_id(1,19),gen_random_uuid(),1,'membership_override','Use known expired original, not queued successor');
+select public.save_session_attendance(public.business_id(2,20),gen_random_uuid(),2,public.business_attendance(19,'present'),true,null);
+select public.atomic_assert(classes_remaining=3,'expired override consumes only known original balance without rollover') from public.students where id=public.business_id(1,19);
+select public.waive_session_penalty(public.business_id(2,19),public.business_id(1,19),gen_random_uuid(),2,'Owner resolves pending incident without inventing a refund');
+select public.atomic_assert(classes_remaining=3,'pending owner waiver never fabricates a class reversal') from public.students where id=public.business_id(1,19);
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,20),gen_random_uuid(),3,public.business_id(3,1),'{}',
+  array[public.business_id(1,19),public.business_id(1,18)],'{}')$q$,'Finalized roster and original funding are locked');
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,18),gen_random_uuid(),1,public.business_attendance(8,'pending'),true,null)$q$,
+  'Finalized active attendance cannot contain pending students');
+reset role;
+
+-- DST spring gap/autumn overlap rejected; winter/summer cutoff instants exact.
+select public.atomic_assert(private.session_madrid_instant('2026-07-20T18:00:00Z')='2026-07-20T16:00:00Z'::timestamptz
+  and private.session_madrid_instant('2026-01-20T18:00:00Z')='2026-01-20T17:00:00Z'::timestamptz,
+  'Madrid wall-clock conversion uses summer and winter offsets');
+select public.atomic_assert('2026-07-20T08:00:00Z'::timestamptz <= private.session_madrid_instant('2026-07-20T18:00:00Z')-interval '8 hours'
+  and not ('2026-07-20T08:01:00Z'::timestamptz <= private.session_madrid_instant('2026-07-20T18:00:00Z')-interval '8 hours'),
+  '18:00 Madrid cancellation at 10:00 is timely, 10:01 late');
+select public.atomic_reject($q$select private.session_madrid_instant('2026-03-29T02:30:00Z')$q$,'Nonexistent or ambiguous Madrid%');
+select public.atomic_reject($q$select private.session_madrid_instant('2026-10-25T02:30:00Z')$q$,'Nonexistent or ambiguous Madrid%');
+select public.atomic_reject($q$update public.sessions set attendance_policy_version=1 where id=public.business_id(2,2)$q$,'Attendance policy version is immutable');
+set role authenticated;
+set timezone = 'America/Los_Angeles';
+select public.business_reserve(17,17,5);
+set timezone = 'UTC';
+select public.atomic_reject($q$update public.session_students set cancelled_at=null$q$,'permission denied%','42501');
+select public.atomic_reject($q$select private.save_session_attendance_v1(public.business_id(2,2),gen_random_uuid(),7,public.business_attendance(2,'absent'),false,null)$q$,'permission denied%','42501');
+select public.atomic_reject($q$select public.reverse_gift_card_session(public.business_id(4,1),public.business_id(2,14),public.business_id(1,14))$q$,'permission denied%','42501');
+select public.atomic_reject(format($q$select public.adjust_student_membership_classes(public.business_id(1,11),%L::uuid,gen_random_uuid(),3,1)$q$,
+  (select current_membership_period_id from public.students where id=public.business_id(1,11))), 'permission denied%','42501');
+
+-- Unlinked profile and linked integration cannot write/read or replay receipts.
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000004';
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,2),public.business_id(6,3),2,public.business_attendance(2,'present'),true,null)$q$,
+  'Session not accessible','42501');
+select public.atomic_assert(count(*)=0,'unlinked default profile cannot read business state') from public.session_business_state;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,2),public.business_id(6,3),2,public.business_attendance(2,'present'),true,null)$q$,
+  'Session not accessible','42501');
+select public.atomic_assert(count(*)=0,'integration grant never confers broad business-state read') from public.session_business_state;
+select public.atomic_assert(count(*)=0,'integration cannot read session receipts through legacy RLS') from public.session_operation_receipts;
+select public.atomic_assert(count(*)=0,'integration cannot read new roster fields through legacy RLS') from public.session_students;
+reset role;
+select public.atomic_assert(not has_function_privilege('service_role','public.approve_session_exception(uuid,uuid,uuid,bigint,text,text)','execute')
+  and not has_function_privilege('anon','public.cancel_session_reservation(uuid,uuid,uuid,bigint,text)','execute')
+  and not has_function_privilege('authenticated','private.session_business_action(uuid,uuid,uuid,bigint,text,text,text)','execute'),
+  'only authenticated wrappers expose business actions');
+select public.atomic_assert(not has_table_privilege('service_role','public.session_business_state','select')
+  and not has_table_privilege('authenticated','public.session_business_billing','update'), 'business projections have no integration/write grants');
+select public.atomic_reject($q$update public.session_business_events set details='{}'$q$,'Session history is append-only','42501');
+select public.atomic_reject($q$update public.session_business_exceptions set reason='changed'$q$,'Session history is append-only','42501');
+select public.atomic_reject($q$update public.session_students set cancelled_at=clock_timestamp(),cancelled_by='00000000-0000-0000-0000-000000000001'
+  where session_id=public.business_id(2,17)$q$,'%session_cancellation_complete%','23514');
+begin;
+delete from public.sede_members where sede_id=public.business_id(3,1) and user_id=public.business_id(0,1);
+set local role authenticated;
+set local request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,3),public.business_id(1,3),public.business_id(6,6),1,
+  'membership_override','Employee knows pending payment')$q$,'Session not accessible','42501');
+rollback;
+
+-- Verify the public named-argument contract rather than only positional calls.
+select public.atomic_assert(proargnames = array['p_session_id','p_student_id','p_request_key','p_expected_revision','p_kind','p_reason']
+  and prorettype='jsonb'::regtype,'exception RPC exact argument names and jsonb return') from pg_proc
+  where oid='public.approve_session_exception(uuid,uuid,uuid,bigint,text,text)'::regprocedure;
+select public.atomic_assert(proargnames = array['p_session_id','p_student_id','p_request_key','p_expected_revision','p_reason']
+  and prorettype='jsonb'::regtype,'cancellation/waiver exact argument names and jsonb return') from pg_proc
+  where oid in ('public.cancel_session_reservation(uuid,uuid,uuid,bigint,text)'::regprocedure,
+    'public.waive_session_penalty(uuid,uuid,uuid,bigint,text)'::regprocedure);
+select public.atomic_assert(proargnames = array['p_session_id','p_request_key','p_expected_revision','p_attendance','p_finalize','p_teacher_substitute_id'],
+  'attendance RPC retains six-argument named contract') from pg_proc where oid='public.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid)'::regprocedure;
+select public.atomic_assert(proargnames = array['p_session_id','p_request_key','p_expected_revision','p_sede_id','p_metadata','p_student_ids','p_gift_card_ids'],
+  'reservation RPC retains seven-argument named contract') from pg_proc where oid='public.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb)'::regprocedure;
+select public.atomic_assert(array_agg(attname::text order by attnum) = array[
+  'session_id','student_id','sede_id','policy_version','reservation_state','cancelled_at','cancellation_kind',
+  'exception_id','exception_kind','exception_period_id','exception_reason','approved_by','billing_state','billing_kind',
+  'penalty_id','penalty_state','penalty_reason','cancellation_reason','cancelled_by','exception_gift_card_id','approved_at',
+  'billing_debit_id','funding_period_id','funding_gift_card_id','waiver_reason','waived_by','waived_at','finalized_revision'],
+  'business read view exact columns, including extra provenance') from pg_attribute where attrelid='public.session_business_state'::regclass and attnum>0;
+
+-- Concurrency fixtures consumed by the socket-only runner.
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.business_reserve(39,23,19,12);
+select public.business_reserve(43,24,18,12);
+select public.business_reserve(44,24,18,14);
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+  values (public.business_id(4,3),public.business_id(3,1),'Business Student 25',public.business_id(1,25),1,'modelado',private.membership_today(),3,'paid');
+select public.business_reserve(45,25,17,12,3);
+select public.business_reserve(46,25,17,14,3);
+reset role;
+update public.students set classes_remaining=1 where id=public.business_id(1,24);
+\o

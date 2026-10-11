@@ -211,7 +211,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-base animate-fade-in">
       <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-24 pt-3 custom-scrollbar md:px-6 md:py-4">
 
-        <section className="relative mb-5 overflow-hidden rounded-[22px] border border-brand/20 bg-brand-soft px-5 py-5 md:px-7 md:py-6">
+        <section className="relative mb-5 overflow-hidden rounded-[30px] border border-neutral-border bg-white px-5 py-5 md:px-7 md:py-6">
           <DiagonalPattern />
           <div className="relative z-10 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -219,7 +219,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
               <h3 className="ui-page-title mt-2 text-neutral-textMain">El taller, en movimiento.</h3>
               <p className="ui-secondary mt-1.5 max-w-xl">Una lectura rápida de tus clases, alumnos y pendientes para tomar decisiones sin ruido.</p>
             </div>
-            <div className="flex shrink-0 items-center gap-2 rounded-xl bg-white/70 px-3 py-2 text-[11px] font-semibold text-neutral-textSec">
+            <div className="flex shrink-0 items-center gap-2 rounded-full bg-neutral-soft px-3 py-2 text-[11px] font-semibold text-neutral-textSec">
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
               Operación activa
             </div>
@@ -228,27 +228,32 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
 
         {/* ─── GLOBAL STATS ROW ─── */}
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-5">
-           <div className="group flex min-h-[6.5rem] cursor-pointer flex-col justify-between rounded-[18px] border border-neutral-border border-l-4 border-l-brand bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-soft md:p-4"
+           <div className="group relative flex min-h-[9rem] cursor-pointer flex-col justify-between rounded-[28px] border-0 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-soft md:p-5"
              onClick={() => onNavigate(AppView.STUDENTS)}
              style={{ cursor: 'pointer' }}>
-             <p className="eyebrow">Activos de membresía</p>
-              <span className="ui-kpi text-[#20663B]">{globalStats.activeStudents}</span>
+             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
+             <p className="eyebrow text-neutral-textSec">Activos de membresía</p>
+              <span className="ui-kpi text-neutral-textMain">{globalStats.activeStudents}</span>
            </div>
-             <div className="flex min-h-[6.5rem] flex-col justify-between rounded-[18px] border border-neutral-border border-l-4 border-l-[#C98A53] bg-white p-3.5 md:p-4">
-             <p className="eyebrow">Pendientes de pago</p>
-               <span className={`ui-kpi ${globalStats.pendingStudents > 0 ? 'text-[#9E3B2B]' : 'text-[#20663B]'}`}>{globalStats.pendingStudents}</span>
+             <div className="relative flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:p-5">
+             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
+             <p className="eyebrow text-neutral-textSec">Pendientes de pago</p>
+               <span className="ui-kpi text-neutral-textMain">{globalStats.pendingStudents}</span>
             </div>
-            <div className="flex min-h-[6.5rem] flex-col justify-between rounded-[18px] border border-neutral-border border-l-4 border-l-[#9E3B2B] bg-white p-3.5 md:p-4">
-             <p className="eyebrow">Bonos agotándose</p>
-               <span className={`ui-kpi ${bonusAlerts.length > 0 ? 'text-[#9E3B2B]' : 'text-[#20663B]'}`}>{bonusAlerts.length}</span>
+            <div className="relative flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:p-5">
+             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
+             <p className="eyebrow text-neutral-textSec">Bonos agotándose</p>
+               <span className="ui-kpi text-neutral-textMain">{bonusAlerts.length}</span>
             </div>
            {/* Today's metrics */}
-            <div className="flex min-h-[6.5rem] flex-col justify-between rounded-[18px] border border-neutral-border bg-white p-3.5 md:p-4">
-             <p className="eyebrow">Alumnos Hoy</p>
+            <div className="relative flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:p-5">
+             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
+             <p className="eyebrow text-neutral-textSec">Alumnos Hoy</p>
                <span className="ui-kpi text-neutral-textMain">{todayStats.totalAlumnos}</span>
             </div>
-            <div className="flex min-h-[6.5rem] flex-col justify-between rounded-[18px] border border-neutral-border bg-white p-3.5 md:p-4">
-             <p className="eyebrow">Sesiones Hoy</p>
+            <div className="relative col-span-2 flex min-h-[9rem] flex-col justify-between rounded-[28px] border-0 bg-white p-4 md:col-span-1 md:p-5">
+             <span className="absolute right-4 top-4 h-1.5 w-10 rounded-full bg-brand" />
+             <p className="eyebrow text-neutral-textSec">Sesiones Hoy</p>
                <span className="ui-kpi text-neutral-textMain">{todayStats.totalSessions}</span>
            </div>
         </div>

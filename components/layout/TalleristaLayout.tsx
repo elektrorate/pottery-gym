@@ -48,6 +48,14 @@ const navItems = [
     },
 ];
 
+const mobilePrimaryPaths = ['/dashboard', '/calendar', '/students', '/giftcards'];
+const mobilePrimaryLabels: Record<string, string> = {
+    '/dashboard': 'Dashboard',
+    '/calendar': 'Calendario',
+    '/students': 'Alumnos',
+    '/giftcards': 'Bonos de regalo'
+};
+
 const menuConfig = [
     { group: 'INICIO', items: [{ path: '/dashboard', label: 'Inicio' }] },
     {
@@ -221,6 +229,33 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                     {children}
                 </div>
             </main>
+
+            {/* Mobile primary navigation: the four most-used destinations stay reachable at all times. */}
+            <nav
+                aria-label="Navegación principal móvil"
+                className="fixed inset-x-3 bottom-3 z-[80] grid grid-cols-4 gap-1 rounded-[28px] border border-neutral-border bg-white/95 px-3 pb-2 pt-3 shadow-[0_14px_34px_rgba(17,17,17,0.14)] backdrop-blur-xl lg:hidden"
+                style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}
+            >
+                {navItems.filter(item => mobilePrimaryPaths.includes(item.path)).map(item => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                        <button
+                            key={item.path}
+                            type="button"
+                            onClick={() => navigate(item.path)}
+                            aria-current={isActive ? 'page' : undefined}
+                            className={`flex min-h-[72px] min-w-0 flex-col items-center justify-center gap-2 rounded-[18px] px-1 py-2 transition-colors duration-180 ${isActive ? 'text-[#5F5F5F]' : 'text-[#707070] hover:text-[#404040]'}`}
+                        >
+                            <span className="mobile-nav-icon flex h-7 w-7 items-center justify-center [&>svg]:h-7 [&>svg]:w-7">
+                                {item.icon}
+                            </span>
+                            <span className="max-w-full truncate text-center text-[15px] font-medium leading-tight tracking-[-0.02em]">
+                                {mobilePrimaryLabels[item.path]}
+                            </span>
+                        </button>
+                    );
+                })}
+            </nav>
 
             {/* Mobile Menu Drawer */}
             {isMenuOpen && (

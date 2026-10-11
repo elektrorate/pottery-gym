@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#FF5300">
+  <meta name="theme-color" content="#E8E8E8">
   <title>Barro &amp; Co. | Gestión de talleres</title>
   <script>
     try {
@@ -16,7 +16,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       theme: {
@@ -46,8 +46,8 @@
             }
           },
           fontFamily: {
-            sans: ['Outfit', 'system-ui', 'sans-serif'],
-             display: ['Playfair Display', 'Georgia', 'serif']
+            sans: ['Manrope', 'Inter', 'system-ui', 'sans-serif'],
+            display: ['Manrope', 'Inter', 'system-ui', 'sans-serif']
           }
         }
       }
@@ -55,23 +55,31 @@
   </script>
   <style>
     :root {
-      --bg: #F7F4F0;
-      --surface: #FFFFFF;
-      --surface-muted: #FCFAF7;
-      --surface-soft: #F0ECE6;
-      --line: #E5DED5;
-      --text-primary: #172338;
-      --text-secondary: #5C6677;
-       --text-muted: #667085;
-       --brand: #C7460A;
-       --brand-hover: #A83B07;
-       --brand-pressed: #853008;
-       --brand-light: #E56E2B;
-      --brand-soft: #FFF0E8;
-      --brown: #4A2E22;
-      --taupe: #806E64;
-      --sand: #D9BFA9;
-      --caramel: #C98A53;
+      --bg: #E8E8E8;
+      --surface: #FAFAFA;
+      --surface-muted: #FFFFFF;
+      --surface-soft: #F0F0F0;
+      --line: #E3E3E3;
+      --text-primary: #111111;
+      --text-secondary: #707070;
+      --text-muted: #999999;
+      --brand: #FFA365;
+      --brand-hover: #E38B4E;
+      --brand-pressed: #E38B4E;
+      --brand-light: #FFB989;
+      --brand-soft: #FFF1E7;
+      --brown: #111111;
+      --taupe: #707070;
+      --sand: #D4D4D4;
+      --caramel: #E38B4E;
+      --action-primary: #111111;
+      --action-primary-hover: #303030;
+      --surface-elevated: #FFFFFF;
+      --divider: #E7E7E7;
+      --radius-card: 30px;
+      --radius-card-small: 22px;
+      --radius-control: 14px;
+      --radius-pill: 999px;
       --success: #20663B;
       --success-soft: #DFF0E4;
        --warning: #80500F;
@@ -84,23 +92,31 @@
     }
 
     [data-theme='dark'] {
-      --bg: #111820;
-      --surface: #19232F;
-      --surface-muted: #1D2936;
-      --surface-soft: #222F3D;
-      --line: #344252;
-      --text-primary: #F7F2EC;
-      --text-secondary: #C1CAD3;
-       --text-muted: #A8B4C0;
-       --brand: #FF8A50;
-       --brand-hover: #FFAB80;
-       --brand-pressed: #FF6A24;
-       --brand-light: #FFC0A3;
-      --brand-soft: #3B2924;
-      --brown: #F1D2BF;
-      --taupe: #B8A99E;
-      --sand: #725C4E;
-      --caramel: #D79A61;
+      --bg: #222222;
+      --surface: #303030;
+      --surface-muted: #3D3D3D;
+      --surface-soft: #444444;
+      --line: #484848;
+      --text-primary: #F5F5F5;
+      --text-secondary: #B8B8B8;
+      --text-muted: #999999;
+      --brand: #FFA365;
+      --brand-hover: #E38B4E;
+      --brand-pressed: #E38B4E;
+      --brand-light: #FFB989;
+      --brand-soft: #4A3428;
+      --brown: #F5F5F5;
+      --taupe: #B8B8B8;
+      --sand: #626262;
+      --caramel: #FFA365;
+      --action-primary: #111111;
+      --action-primary-hover: #000000;
+      --surface-elevated: #3D3D3D;
+      --divider: #454545;
+      --radius-card: 30px;
+      --radius-card-small: 22px;
+      --radius-control: 14px;
+      --radius-pill: 999px;
       --success: #79C493;
       --success-soft: #1E3B2B;
       --warning: #E4B26B;
@@ -122,7 +138,7 @@
       overflow-x: hidden;
       background: var(--bg);
       color: var(--text-primary);
-      font-family: 'Outfit', system-ui, sans-serif;
+      font-family: 'Manrope', 'Inter', system-ui, sans-serif;
       font-size: 15px;
       font-weight: 400;
       line-height: 1.5;
@@ -132,7 +148,7 @@
      }
 
      /* Semantic type roles keep each screen compact without shrinking every text node. */
-     .ui-page-title { font-size: 1.5rem; line-height: 1.15; font-weight: 600; letter-spacing: -0.025em; }
+     .ui-page-title { font-size: clamp(1.7rem, 3vw, 2.25rem); line-height: 1.2; font-weight: 600; letter-spacing: -0.03em; }
      .ui-section-title { font-size: 1.125rem; line-height: 1.25; font-weight: 600; letter-spacing: -0.018em; }
      .ui-card-title { font-size: 1rem; line-height: 1.3; font-weight: 600; }
      .ui-body { font-size: 0.875rem; line-height: 1.5; }
@@ -141,7 +157,7 @@
      .ui-meta { font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); }
      .ui-label { font-size: 0.75rem; line-height: 1.35; font-weight: 600; color: var(--text-secondary); }
      .ui-kpi { font-size: clamp(1.5rem, 2.5vw, 1.875rem); line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
-     .ui-control { min-height: 2.75rem; font-size: 1rem; line-height: 1.4; }
+     .ui-control { min-height: 2.75rem; font-size: 0.875rem; line-height: 1.45; }
      button[aria-expanded]:has(> span:first-child > h4) > span:last-child { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 12px; }
      button[aria-expanded]:has(> span:first-child > h4) > span:last-child > span { margin-left: 0; color: var(--brand); font-size: 18px; line-height: 1; font-weight: 700; }
 
@@ -150,7 +166,7 @@
 
     h1, h2, h3, h4, h5, h6 {
       margin-top: 0;
-      font-family: 'Outfit', system-ui, sans-serif;
+      font-family: 'Manrope', 'Inter', system-ui, sans-serif;
       letter-spacing: -0.035em;
     }
 
@@ -163,6 +179,49 @@
     ::selection { background: var(--brand); color: #FFFFFF; }
 
     .soft-shadow, .shadow-soft { box-shadow: var(--shadow-soft); }
+
+    /* Visual system overrides: keep the existing component API while moving
+       actions to charcoal and reserving the warm accent for emphasis. */
+    .bg-brand { background-color: var(--action-primary) !important; }
+    .hover\:bg-brand-hover:hover { background-color: var(--action-primary-hover) !important; }
+    .text-brand { color: var(--brand) !important; }
+    .border-brand { border-color: var(--brand) !important; }
+    .bg-brand-soft { background-color: var(--brand-soft) !important; }
+    .bg-white { background-color: var(--surface) !important; }
+    .border-neutral-border { border-color: var(--line) !important; }
+    .rounded-2xl { border-radius: var(--radius-card-small); }
+    .rounded-xl { border-radius: var(--radius-card-small); }
+    .rounded-lg, .rounded-\[10px\] { border-radius: var(--radius-control); }
+    .rounded-full { border-radius: var(--radius-pill); }
+    .mobile-nav-icon svg,
+    .mobile-nav-icon svg path,
+    .mobile-nav-icon svg circle,
+    .mobile-nav-icon svg rect,
+    .mobile-nav-icon svg line,
+    .mobile-nav-icon svg polyline,
+    .mobile-nav-icon svg polygon { stroke-width: 1.75 !important; }
+
+    [data-theme='dark'] [class~="bg-[#FDFBF9]"],
+    [data-theme='dark'] [class~="bg-[#FCFAF7]"],
+    [data-theme='dark'] [class~="bg-[#F7F3EF]"],
+    [data-theme='dark'] [class~="bg-[#FFFCF8]"],
+    [data-theme='dark'] [class~="bg-[#FFF9F4]"],
+    [data-theme='dark'] [class~="bg-[#FFF8F5]"],
+    [data-theme='dark'] [class~="bg-[#FFF8EC]"] { background-color: var(--surface) !important; }
+    [data-theme='dark'] [class~="bg-[#F8EEE5]"],
+    [data-theme='dark'] [class~="bg-[#F7F1EB]"],
+    [data-theme='dark'] [class~="bg-[#F0E2D6]"],
+    [data-theme='dark'] [class~="bg-[#F0E5DB]"] { background-color: var(--surface-soft) !important; }
+    [data-theme='dark'] [class~="text-[#7B3F22]"],
+    [data-theme='dark'] [class~="text-[#3F2E27]"],
+    [data-theme='dark'] [class~="text-[#2F1E17]"] { color: var(--text-primary) !important; }
+    [data-theme='dark'] [class~="border-[#DDBFA4]"],
+    [data-theme='dark'] [class~="border-[#E6D8CB]"],
+    [data-theme='dark'] [class~="border-[#E8D9CC]"] { border-color: var(--line) !important; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+    }
 
     .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
@@ -392,8 +451,8 @@
     [data-theme='dark'] [class~="text-[#9E3B2B]"], [data-theme='dark'] [class~="text-[#9C4235]"] { color: var(--danger) !important; }
     [data-theme='dark'] [class~="text-[#20663B]"], [data-theme='dark'] [class~="text-[#47704D]"] { color: var(--success) !important; }
      [data-theme='dark'] [class~="text-[#8A5517]"], [data-theme='dark'] [class~="text-[#916438]"] { color: var(--warning) !important; }
-      [data-theme='dark'] .bg-brand, [data-theme='dark'] [class~="bg-[#7B3F22]"], [data-theme='dark'] [class~="bg-[#63321C]"], [data-theme='dark'] [class~="bg-[#B07D4E]"], [data-theme='dark'] [class~="bg-[#96643D]"], [data-theme='dark'] [class~="bg-[#B87543]"], [data-theme='dark'] [class~="bg-[#C68952]"] { background-color: var(--brand) !important; }
-     [data-theme='dark'] .text-brand, [data-theme='dark'] [class~="text-[#7B3F22]"], [data-theme='dark'] [class~="text-[#63321C]"], [data-theme='dark'] [class~="text-[#B07D4E]"], [data-theme='dark'] [class~="text-[#96643D]"], [data-theme='dark'] [class~="text-[#C68952]"] { color: #FF8A50 !important; }
+      [data-theme='dark'] .bg-brand, [data-theme='dark'] [class~="bg-[#7B3F22]"], [data-theme='dark'] [class~="bg-[#63321C]"], [data-theme='dark'] [class~="bg-[#B07D4E]"], [data-theme='dark'] [class~="bg-[#96643D]"], [data-theme='dark'] [class~="bg-[#B87543]"], [data-theme='dark'] [class~="bg-[#C68952]"] { background-color: var(--action-primary) !important; }
+      [data-theme='dark'] .text-brand, [data-theme='dark'] [class~="text-[#7B3F22]"], [data-theme='dark'] [class~="text-[#63321C]"], [data-theme='dark'] [class~="text-[#B07D4E]"], [data-theme='dark'] [class~="text-[#96643D]"], [data-theme='dark'] [class~="text-[#C68952]"] { color: var(--brand) !important; }
 
      @media (max-width: 639px) {
        .premium-card { border-radius: 17px; }
@@ -406,6 +465,21 @@
 <body>
   <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
+  <style id="visual-system-final-overrides">
+    .bg-brand { background-color: var(--action-primary) !important; }
+    .hover\:bg-brand-hover:hover { background-color: var(--action-primary-hover) !important; }
+    .text-brand { color: var(--brand) !important; }
+    .border-brand { border-color: var(--brand) !important; }
+    .bg-brand-soft { background-color: var(--brand-soft) !important; }
+    .rounded-2xl, .rounded-xl { border-radius: var(--radius-card-small); }
+    .rounded-lg, .rounded-\[10px\] { border-radius: var(--radius-control); }
+    .rounded-full { border-radius: var(--radius-pill); }
+    [data-theme='dark'] .bg-brand { background-color: var(--action-primary) !important; }
+    [class~="bg-[#7B3F22]"], [class~="bg-[#63321C]"], [class~="bg-[#C68952]"] { background-color: var(--action-primary) !important; }
+    [class~="hover:bg-[#63321C]"]:hover, [class~="hover:bg-[#B87543]"]:hover { background-color: var(--action-primary-hover) !important; }
+    [class~="text-[#7B3F22]"]:not([class~="text-white"]), [class~="text-[#3F2E27]"]:not([class~="text-white"]) { color: var(--text-primary) !important; }
+    [class~="bg-[#FDFBF9]"], [class~="bg-[#FCFAF7]"], [class~="bg-[#F7F3EF]"] { background-color: var(--surface) !important; }
+  </style>
 </body>
 
 </html>
