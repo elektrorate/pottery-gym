@@ -418,7 +418,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
               >
                 <span className="min-w-0">
                   <span className="block text-[12px] font-semibold text-neutral-textMain truncate">{name}</span>
-                  <span className={`text-[10px] font-semibold ${cat === 'membresia' ? 'text-brand' : 'text-caramelo'}`}>{CATEGORY_LABELS[cat] || 'Regular'}</span>
+                  <span className={`text-[11px] font-semibold ${cat === 'membresia' ? 'text-brand' : 'text-caramelo'}`}>{CATEGORY_LABELS[cat] || 'Regular'}</span>
                 </span>
                 <span className="text-[11px] font-semibold text-neutral-textHelper shrink-0">{pieceCount} pieza{pieceCount !== 1 ? 's' : ''}</span>
               </button>

@@ -28,7 +28,7 @@ test('single lifecycle tabs and dashboard share the same membership counts', asy
   await page.getByRole('button', { name: /Temporal 1/ }).click();
   await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toHaveCount(0);
-  await page.getByRole('button', { name: /Todos 4/ }).click();
+  await page.getByRole('tab', { name: 'Todos' }).click();
   await expect(page.locator('header').getByText('6', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
   await expect(page.getByText('Activos de membresía').locator('..')).toContainText('1');
