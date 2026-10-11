@@ -3,13 +3,15 @@ import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import {
     Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement, AssignedClass,
-    InventoryItem, InventoryMovement, Teacher, MembershipTier, MEMBERSHIP_PLANS, inferMembershipTier,
-    WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, CapacityActivity, DEFAULT_CAPACITY_BY_ACTIVITY, getDefaultSessionCapacity
+    InventoryItem, InventoryMovement, Teacher, MembershipTier, RenewalIntent, ClassAdjustmentIntent,
+    WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, CapacityActivity,
+    DEFAULT_CAPACITY_BY_ACTIVITY, getDefaultSessionCapacity
 } from '../types';
 import { showError } from './toast';
 
 // Import modular operations
-import { extractTime, normalizeForMatch, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel } from './data/shared';
+import { extractTime, normalizeForMatch, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, joinStudentMemberships } from './data/shared';
+import { createMembershipOperations } from './data/membershipOps';
 import * as studentOps from './data/studentOps';
 import * as sessionOps from './data/sessionOps';
 import * as teacherOps from './data/teacherOps';
@@ -43,7 +45,10 @@ interface DataContextType {
     addStudent: (student: Omit<Student, 'id'>) => Promise<void>;
     updateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
     deleteStudent: (id: string) => Promise<void>;
-    renewStudent: (id: string, numClasses?: number, membershipTier?: MembershipTier) => Promise<void>;
+    renewStudent: (intent: RenewalIntent) => Promise<void>;
+    confirmMembershipPayment: (studentId: string, periodId: string) => Promise<void>;
+    activateMembership: (studentId: string) => Promise<void>;
+    adjustMembershipClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
 
     // Session CRUD
     addSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
@@ -115,10 +120,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const [loadError, setLoadError] = useState<string | null>(null);
     const hasLoadedOnceRef = useRef(false);
     const operationLockRef = useRef(false);
+    const loadGenerationRef = useRef(0);
 
     // ==================== DATA LOADING ====================
     const loadAllData = useCallback(async () => {
         if (!session) return;
+        const generation = ++loadGenerationRef.current;
         // Removed sedeId guard: RLS on Supabase will filter by get_owned_sede_id()
         // This ensures staff users can load data even before sedeId resolves
         if (!hasLoadedOnceRef.current) setIsLoadingData(true);
@@ -128,7 +135,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             const buildQuery = (table: string) => {
                 let query = supabase.from(table).select('*');
                 if (!isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
-                return query;
+                return withTimeout(`${table}.select`, query, RELOAD_TIMEOUT_MS);
             };
 
             const isMissingOptionalTable = (error: any) => {
@@ -136,17 +143,21 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 return error?.code === '42P01' || error?.code === 'PGRST205' || message.includes('does not exist') || message.includes('could not find the table');
             };
 
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes] = await Promise.all([
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
                 buildQuery('session_students'),
                 buildQuery('pieces'), Promise.resolve(buildQuery('gift_cards')).catch(error => ({ data: [], error })),
                 Promise.resolve(buildQuery('gift_card_movements')).catch(error => ({ data: [], error })),
                 buildQuery('inventory_items'), buildQuery('inventory_movements'), buildQuery('workshop_schedules'),
                 Promise.resolve(buildQuery('workshop_capacity_defaults')).catch(error => ({ data: [], error })),
-                Promise.resolve(buildQuery('workshop_schedule_exceptions')).catch(error => ({ data: [], error }))
+                Promise.resolve(buildQuery('workshop_schedule_exceptions')).catch(error => ({ data: [], error })),
+                buildQuery('students_effective_membership'), buildQuery('student_membership_periods')
             ]);
 
+            if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
             if (studentsRes.error) throw studentsRes.error;
+            if (effectiveRes.error) throw effectiveRes.error;
+            if (periodsRes.error) throw periodsRes.error;
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
@@ -160,39 +171,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (exceptionsRes.error && !isMissingOptionalTable(exceptionsRes.error)) throw exceptionsRes.error;
 
 
-            // Normalize students and apply lifecycle rules before exposing them to the UI.
-            const normalizedStudents: Student[] = (studentsRes.data || []).map((row: any) => {
-                const studentCategory = row.student_category || 'membresia';
-                const membershipTier = studentCategory === 'temporal' ? undefined : (row.membership_tier || inferMembershipTier(undefined, row.price));
-                const student: Student = {
-                id: row.id, name: row.name, surname: row.surname || undefined,
-                email: row.email || undefined, phone: row.phone,
-                phoneCountry: row.phone_country || undefined,
-                birthDay: row.birth_day ? String(row.birth_day) : undefined,
-                birthMonth: row.birth_month ? String(row.birth_month) : undefined,
-                birthYear: row.birth_year ? String(row.birth_year) : undefined,
-                classesRemaining: row.classes_remaining ?? 0, status: row.status,
-                paymentStatus: row.payment_status || undefined,
-                paymentMethod: row.payment_method || undefined,
-                notes: row.notes || undefined, observations: row.observations || undefined,
-                price: row.price ?? undefined,
-                assignedClasses: [],
-                classType: row.class_type || undefined,
-                expiryDate: row.expiry_date ? new Date(row.expiry_date).toISOString().split('T')[0] : undefined,
-                studentCategory,
-                membershipTier,
-                membershipActivatedAt: row.membership_activated_at || undefined,
-                archivedAt: row.archived_at || undefined,
-                groupName: row.group_name || undefined,
-                bonosAsignados: row.bonos_asignados ?? (studentCategory === 'temporal' ? 1 : MEMBERSHIP_PLANS[membershipTier!].bonuses),
-                repetirMensualmente: row.repetir_mensualmente ?? false,
-                createdAt: row.created_at || undefined
-                };
-                if (student.studentCategory === 'temporal') {
-                    student.repetirMensualmente = false;
-                }
-                return student;
-            });
+            const normalizedStudents = joinStudentMemberships(
+                studentsRes.data || [], effectiveRes.data || [], periodsRes.data || []
+            );
 
             // Normalize session students
             const sessionStudentsMap: Record<string, any[]> = {};
@@ -323,33 +304,30 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
             setLoadError(null);
         } catch (error) {
+            if (generation !== loadGenerationRef.current) throw error;
+            setStudents([]);
             console.error('Supabase load error', error);
-            setLoadError('No se pudieron cargar los datos del taller. Comprueba la conexión e inténtalo de nuevo.');
+            setLoadError('No se pudieron cargar las membresías. Comprueba la conexión y la versión del backend.');
+            throw error;
         } finally {
-            setIsLoadingData(false);
-            hasLoadedOnceRef.current = true;
+            if (generation === loadGenerationRef.current) {
+                setIsLoadingData(false);
+                hasLoadedOnceRef.current = true;
+            }
         }
     }, [session, sedeId, isSuperAdmin]);
 
     const safeReload = useCallback(async () => {
-        let didTimeout = false;
-        try {
-            await Promise.race([
-                loadAllData(),
-                new Promise((resolve) => {
-                    setTimeout(() => { didTimeout = true; console.warn(`safeReload: timeout (${RELOAD_TIMEOUT_MS}ms)`); resolve(undefined); }, RELOAD_TIMEOUT_MS);
-                })
-            ]);
-            if (!didTimeout) console.log('safeReload: completed successfully');
-        } catch (err) { console.warn('safeReload: background refresh failed', err); }
+        await loadAllData();
     }, [loadAllData]);
 
     useEffect(() => {
         if (session) {
             // Always load when there's a session. RLS protects data at DB level.
-            loadAllData();
+            void loadAllData().catch(() => undefined);
         }
         if (!session) {
+            ++loadGenerationRef.current;
             setStudents([]); setSessions([]); setPieces([]);
             setGiftCards([]); setInventoryItems([]); setInventoryMovements([]); setTeachers([]);
             setWorkshopSchedule([]);
@@ -357,6 +335,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setCapacityDefaults(Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
             setLoadError(null);
         }
+        return () => { ++loadGenerationRef.current; };
     }, [session, sedeId, isSuperAdmin, loadAllData]);
 
     // ==================== REFS FOR STABLE OPS CONTEXT ====================
@@ -389,7 +368,18 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const addStudent = async (s: Omit<Student, 'id'>) => studentOps.addStudent(getOpsContext(), s);
     const updateStudent = async (id: string, u: Partial<Student>) => studentOps.updateStudent(getOpsContext(), id, u);
     const deleteStudent = async (id: string) => studentOps.deleteStudent(getOpsContext(), id);
-    const renewStudent = async (id: string, n?: number, tier?: MembershipTier) => studentOps.renewStudent(getOpsContext(), id, n, tier);
+    const membership = createMembershipOperations({
+        rpc: (name, args) => withTimeout(name, supabase.rpc(name, args)), refresh: safeReload
+    });
+    const renewStudent = async (intent: RenewalIntent) => { await membership.renew(intent); };
+    const activateMembership = async (id: string) => { await membership.activate(id); };
+    const confirmMembershipPayment = async (id: string, periodId: string) => {
+        if (!studentsRef.current.find(student => student.id === id)?.membershipPeriods?.some(period => period.id === periodId)) {
+            throw new Error('Selecciona un período del alumno. Inicializa primero el registro legado si es necesario.');
+        }
+        await membership.confirm(periodId);
+    };
+    const adjustMembershipClasses = async (intent: ClassAdjustmentIntent) => { await membership.adjust(intent); };
 
     const addSession = async (s: Omit<ClassSession, 'id'>) => sessionOps.addSession(getOpsContext(), s);
     const updateSession = async (id: string, u: Partial<ClassSession>) => sessionOps.updateSession(getOpsContext(), id, u);
@@ -520,7 +510,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
     const value: DataContextType = {
         students, sessions, pieces, giftCards, inventoryItems, inventoryMovements, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults, isLoadingData, loadError,
-        addStudent, updateStudent, deleteStudent, renewStudent,
+        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
         addSession, updateSession, deleteSession,
         addTeacher, updateTeacher, deleteTeacher,
         addPiece, updatePiece, deletePiece,

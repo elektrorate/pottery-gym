@@ -297,8 +297,8 @@
     .calendar-attendance-mixed { color: #603A08; background: #FFD28A; border-color: #F0B85D; }
     .calendar-attendance-empty {
       color: var(--text-primary);
-      background-color: var(--surface-soft);
-      border-color: var(--line);
+      background-color: color-mix(in srgb, var(--surface-soft) 70%, white 30%);
+      border-color: color-mix(in srgb, var(--line) 70%, white 30%);
       background-image: repeating-linear-gradient(-60deg, transparent 0 5px, color-mix(in srgb, var(--brand) 17%, transparent) 5px 7px);
     }
     .calendar-mini-cell { min-height: 44px; border-width: 1px; border-style: solid; border-radius: 9px; padding: 7px; }
@@ -381,6 +381,9 @@
     [data-theme='dark'] .text-\[\#312620\] { color: var(--text-primary) !important; }
     [data-theme='dark'] .border-white { border-color: var(--line) !important; }
     [data-theme='dark'] .shadow-2xl { box-shadow: var(--shadow-float) !important; }
+    [data-theme='dark'] [class~="bg-[#FBF7F2]"] { background-color: var(--surface) !important; }
+    [data-theme='dark'] [class~="bg-[#FFF8F5]"] { background-color: color-mix(in srgb, var(--danger-soft) 58%, var(--surface)) !important; }
+    [data-theme='dark'] [class~="bg-[#FFFBF3]"] { background-color: color-mix(in srgb, var(--warning-soft) 58%, var(--surface)) !important; }
     [data-theme='dark'] [class~="bg-[#F8E1DA]"], [data-theme='dark'] [class~="bg-[#F7E3DF]"] { background-color: var(--danger-soft) !important; }
     [data-theme='dark'] [class~="bg-[#FBEAD2]"], [data-theme='dark'] [class~="bg-[#F5E8D4]"] { background-color: var(--warning-soft) !important; }
     [data-theme='dark'] [class~="bg-[#DFF0E4]"], [data-theme='dark'] [class~="bg-[#E7F0E8]"] { background-color: var(--success-soft) !important; }

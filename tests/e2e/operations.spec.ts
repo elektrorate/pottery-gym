@@ -29,7 +29,7 @@ async function findRows(api: APIRequestContext, table: string, query: string) {
 
 async function deleteRows(api: APIRequestContext, table: string, query: string) {
   const response = await api.delete(`${supabaseUrl}/rest/v1/${table}?${query}`, { headers: serviceHeaders() });
-  expect(response.ok()).toBeTruthy();
+  expect(response.ok(), `${table} cleanup failed (${response.status()}): ${await response.text()}`).toBeTruthy();
 }
 
 async function upsertRows(api: APIRequestContext, table: string, rows: Record<string, unknown>[]) {
@@ -87,7 +87,8 @@ test.describe('Alumnos', () => {
     await page.getByRole('textbox', { name: 'Apellidos', exact: true }).fill('Automatizado');
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(email);
     await page.getByRole('textbox', { name: 'Teléfono', exact: true }).fill('600000002');
-    await page.getByRole('button', { name: 'Gold 120€ · 4 bonos', exact: true }).click();
+    await page.getByLabel('Categoría del alumno').selectOption('temporal');
+    await page.getByRole('button', { name: 'Cambiar categoría', exact: true }).click();
     await page.getByRole('button', { name: 'Guardar alumno' }).click();
     await expect(page.getByText(name, { exact: false }).first()).toBeVisible();
 

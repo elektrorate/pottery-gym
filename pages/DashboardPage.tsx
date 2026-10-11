@@ -4,7 +4,7 @@ import DashboardView from '../components/DashboardView';
 import { useNavigate } from 'react-router-dom';
 
 const DashboardPage: React.FC = () => {
-    const { students, sessions, giftCards, updateStudent, updateSession, redeemGiftCardSession, reverseGiftCardSession, capacityDefaults, workshopSchedule, workshopScheduleExceptions, isLoadingData } = useData();
+    const { students, sessions, giftCards, updateStudent, updateSession, redeemGiftCardSession, reverseGiftCardSession, adjustMembershipClasses, capacityDefaults, workshopSchedule, workshopScheduleExceptions, loadError, isLoadingData } = useData();
     const navigate = useNavigate();
 
     if (isLoadingData) {
@@ -15,12 +15,15 @@ const DashboardPage: React.FC = () => {
         );
     }
 
+    if (loadError) return <p role="alert">{loadError}</p>;
+
     return (
         <DashboardView
             students={students}
             sessions={sessions}
             giftCards={giftCards}
             onUpdateStudent={updateStudent}
+            onAdjustClasses={adjustMembershipClasses}
             onUpdateSession={updateSession}
             onRedeemGiftCardSession={redeemGiftCardSession}
             onReverseGiftCardSession={reverseGiftCardSession}

@@ -122,9 +122,9 @@ const updateSessionAttendance = async (ctx: OpsContext, sessionId: string, atten
         existingRows = result.rows;
         hasGiftCardColumn = result.hasGiftCardColumn;
     } catch (error) {
-        console.error('Load session students error', error);
-        return;
+        throw error;
     }
+    if (!existingRows.length && Object.keys(attendance).length) throw new Error('La sesión no tiene vínculos de alumnos; no se puede guardar asistencia.');
     const updates = existingRows.map(row => {
         const baseRow = {
             session_id: sessionId, student_id: row.student_id, student_name: row.student_name,
@@ -137,7 +137,7 @@ const updateSessionAttendance = async (ctx: OpsContext, sessionId: string, atten
         const { error: upsertError } = await withTimeout('session_students.upsert_attendance_only',
             supabase.from('session_students').upsert(updates, { onConflict: 'session_id,student_id' })
         );
-        if (upsertError) console.error('Session attendance upsert error', upsertError);
+        if (upsertError) throw upsertError;
     }
 };
 
@@ -188,34 +188,30 @@ export const updateSession = async (ctx: OpsContext, id: string, updates: Partia
         const capacity = updates.capacity ?? currentSession?.capacity ?? configuredCapacity ?? getDefaultSessionCapacity(classType);
         if (updates.students.length > capacity) {
             showError(`La sesión supera su capacidad máxima de ${capacity} alumnos.`);
-            return false;
-        }
-    }
-    const payload = buildSessionPayload(updates);
-    if (Object.keys(payload).length) {
-        try {
-            const { error } = await withTimeout('sessions.update', supabase.from('sessions').update(payload).eq('id', id));
-            if (error) { showError(`No se pudo actualizar la sesión. ${error.message || ''}`); return false; }
-        } catch (error: any) {
-            showError(`No se pudo actualizar la sesión. ${error.message || 'Conexión lenta, intenta de nuevo.'}`);
-            return false;
+            throw new Error(`La sesión supera su capacidad máxima de ${capacity} alumnos.`);
         }
     }
     if (updates.classType === 'feriado') {
         const { error: clearError } = await withTimeout('session_students.clear_for_feriado',
             supabase.from('session_students').delete().eq('session_id', id)
         );
-        if (clearError) console.error('session_students clear (feriado) error', clearError);
+        if (clearError) throw clearError;
     }
     if (updates.students) {
         try { await syncSessionStudents(ctx, id, updates.students!, updates.attendance || undefined, updates.giftCardIdByStudentId); }
         catch (syncErr: any) {
-            showWarning(`La sesión se actualizó, pero falló la vinculación de alumnos. ${syncErr?.message || ''}`);
+            throw syncErr;
         }
     } else if (updates.attendance) {
         await updateSessionAttendance(ctx, id, updates.attendance);
     }
-    ctx.safeReload();
+    // Persist completion only after attendance succeeded (still not a transaction).
+    const payload = buildSessionPayload(updates);
+    if (Object.keys(payload).length) {
+        const { error } = await withTimeout('sessions.update', supabase.from('sessions').update(payload).eq('id', id));
+        if (error) throw error;
+    }
+    await ctx.safeReload();
     return true;
 };
 

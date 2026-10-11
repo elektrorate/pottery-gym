@@ -30,6 +30,8 @@ playwright-report/
 Captura desde 2026-02-27 00-11-44.png
 *.png
 *.md
+!.docs/student-data-audit.md
+!odd/tasks/agent-readiness.md
 
 # Entorno / secretos
 .env
@@ -37,3 +39,5 @@ Captura desde 2026-02-27 00-11-44.png
 !.env.example
 .vercel
 .env*
+# Local Pi runtime state
+.atl/
