@@ -176,23 +176,30 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 const message = String(error?.message || '').toLowerCase();
                 return error?.code === '42P01' || error?.code === 'PGRST205' || message.includes('does not exist') || message.includes('could not find the table');
             };
+            // Optional domains must not hold the calendar hostage. They are
+            // retried on the next refresh, while the critical roster/session
+            // snapshot can render as soon as it is available.
+            const optionalQuery = <T,>(query: Promise<T>, fallback: T): Promise<T> => Promise.race([
+                query,
+                new Promise<T>(resolve => setTimeout(() => resolve(fallback), 4500))
+            ]).catch(() => fallback);
 
             const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes, businessRes, ownerRes, creditProfileRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
                 buildQuery('session_students'),
-                buildQuery('pieces'), Promise.resolve(buildQuery('gift_cards')).catch(error => ({ data: [], error })),
-                Promise.resolve(buildQuery('gift_card_movements')).catch(error => ({ data: [], error })),
-                buildQuery('inventory_items'), buildQuery('inventory_movements'), buildQuery('workshop_schedules'),
-                Promise.resolve(buildQuery('workshop_capacity_defaults')).catch(error => ({ data: [], error })),
-                Promise.resolve(buildQuery('workshop_schedule_exceptions')).catch(error => ({ data: [], error })),
+                optionalQuery(buildQuery('pieces'), { data: [], error: null }), optionalQuery(buildQuery('gift_cards'), { data: [], error: null }),
+                optionalQuery(buildQuery('gift_card_movements'), { data: [], error: null }),
+                optionalQuery(buildQuery('inventory_items'), { data: [], error: null }), optionalQuery(buildQuery('inventory_movements'), { data: [], error: null }), optionalQuery(buildQuery('workshop_schedules'), { data: [], error: null }),
+                optionalQuery(buildQuery('workshop_capacity_defaults'), { data: [], error: null }),
+                optionalQuery(buildQuery('workshop_schedule_exceptions'), { data: [], error: null }),
                 buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
                 buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('session_business_state'), readAllRows((offset, size) => withTimeout('sedes.owner.select',
                     supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session.user.id).eq('is_active', true)
                         .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
                 buildQuery('student_credit_profile'),
-                Promise.resolve(buildQuery('session_activity_blocks')).catch(error => ({ data: [], error })),
-                Promise.resolve(buildQuery('session_activity_block_students')).catch(error => ({ data: [], error }))
+                optionalQuery(buildQuery('session_activity_blocks'), { data: [], error: null }),
+                optionalQuery(buildQuery('session_activity_block_students'), { data: [], error: null })
             ]);
 
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
