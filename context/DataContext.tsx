@@ -11,7 +11,7 @@ import {
 import { showError } from './toast';
 
 // Import modular operations
-import { extractTime, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, joinStudentMemberships } from './data/shared';
+import { extractTime, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, mapStudentRowToModel, joinStudentMemberships } from './data/shared';
 import { createMembershipOperations } from './data/membershipOps';
 import { createStudentCreditOperations, StudentCreditIntentStore } from './data/studentCreditOps';
 import { readAllRows } from './data/readAllRows';
@@ -200,7 +200,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
-            const normalizedStudents = joinStudentMemberships(studentsRes.data || [], [], []);
+            // Membership projections are validated in phase 2. The calendar
+            // snapshot only needs the base student identity and roster data.
+            const normalizedStudents = (studentsRes.data || []).map(mapStudentRowToModel);
 
             // Normalize session students
             const sessionStudentsMap: Record<string, any[]> = {};
