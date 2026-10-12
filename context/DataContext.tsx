@@ -194,8 +194,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // Phase 1: only the data required to render the dashboard/calendar.
             // Secondary domains are intentionally loaded below so inventory and
             // gift-card history cannot delay the first useful paint.
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, sessionContractRes, giftContractRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
-                buildQuery('students'), buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
+            const [teachersRes, sessionsRes, sessionStudentsRes, sessionContractRes, giftContractRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
+                buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
                 buildQuery('session_students'),
                 buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 optionalQuery(buildQuery('session_activity_blocks'), { data: [], error: null }),
@@ -203,7 +203,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             ]);
 
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
-            if (studentsRes.error) throw studentsRes.error;
             // Never mix new identity/atomic consumers with older writable projections.
             if (sessionContractRes.error || giftContractRes.error) {
                 throw new Error('El backend no tiene los contratos de bonos y asistencia atómica. Requiere una actualización coordinada autorizada.');
@@ -213,7 +212,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
             // Membership projections are validated in phase 2. The calendar
             // snapshot only needs the base student identity and roster data.
-            const normalizedStudents = (studentsRes.data || []).map(mapStudentRowToModel);
+            const normalizedStudents: Student[] = [];
 
             // Normalize session students
             const sessionStudentsMap: Record<string, any[]> = {};
@@ -306,6 +305,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
             // Phase 2: secondary data is best-effort and updates its own slices.
             void Promise.all([
+                buildQuery('students'),
+                buildQuery('session_operation_receipts', 0),
+                buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('students_effective_membership'),
                 buildQuery('student_membership_periods'),
                 buildQuery('session_business_state'),
@@ -321,9 +323,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 optionalQuery(buildQuery('workshop_schedules'), { data: [], error: null }),
                 optionalQuery(buildQuery('workshop_capacity_defaults'), { data: [], error: null }),
                 optionalQuery(buildQuery('workshop_schedule_exceptions'), { data: [], error: null })
-            ]).then(([effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes]) => {
+            ]).then(([studentsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes]) => {
                 if (generation !== loadGenerationRef.current) return;
-                if (effectiveRes.error || periodsRes.error || businessRes.error || ownerRes.error || creditProfileRes.error) {
+                if (studentsRes.error || effectiveRes.error || periodsRes.error || businessRes.error || ownerRes.error || creditProfileRes.error) {
                     console.warn('Secondary membership/credit data load skipped');
                     return;
                 }
