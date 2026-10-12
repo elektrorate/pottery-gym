@@ -41,6 +41,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
   const [scheduleDraft, setScheduleDraft] = useState<WorkshopScheduleDay[]>(() => buildScheduleDraft(workshopSchedule));
   const [dirtyScheduleDays, setDirtyScheduleDays] = useState<Set<number>>(new Set());
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
+  const [masterDay, setMasterDay] = useState<number>(1);
   const [savingDay, setSavingDay] = useState<number | null>(null);
   const [scheduleNotice, setScheduleNotice] = useState('');
   const [externalScheduleChange, setExternalScheduleChange] = useState(false);
@@ -100,6 +101,22 @@ const WorkshopAvailabilityPanel: React.FC = () => {
   const removeSlot = (dayOfWeek: number, slotIndex: number) => {
     const current = scheduleDraft.filter(item => item.dayOfWeek === dayOfWeek && item.isOpen && item.slotIndex !== slotIndex);
     updateDaySlots(dayOfWeek, current.length ? current : [closedDay(dayOfWeek)]);
+  };
+
+  const replicateMasterDay = () => {
+    const masterSlots = scheduleDraft
+      .filter(item => item.dayOfWeek === masterDay && item.isOpen)
+      .sort((a, b) => a.slotIndex - b.slotIndex);
+    const replicated = dayOrder.flatMap(dayOfWeek => dayOfWeek === masterDay
+      ? scheduleDraft.filter(item => item.dayOfWeek === dayOfWeek)
+      : masterSlots.length
+        ? masterSlots.map((slot, slotIndex) => ({ ...slot, dayOfWeek, slotIndex }))
+        : [closedDay(dayOfWeek)]
+    );
+    setScheduleDraft(replicated);
+    setDirtyScheduleDays(new Set(dayOrder));
+    setScheduleNotice(`${dayLabels[masterDay]} replicado en todos los días. Puedes editar cada día antes de guardar.`);
+    setExpandedDay(null);
   };
 
   const mergedSchedule = () => dayOrder.flatMap(dayOfWeek => {
@@ -278,8 +295,16 @@ const WorkshopAvailabilityPanel: React.FC = () => {
 
       <section className="rounded-2xl border border-neutral-border bg-neutral-sec/50 p-4 md:p-5">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div><p className="eyebrow text-brand">A · Horario habitual de apertura</p><h3 className="ui-section-title mt-1 text-neutral-textMain">Días y franjas</h3><p className="ui-secondary mt-1">Los cambios no mueven ni cancelan sesiones existentes.</p></div>
+          <div><p className="eyebrow text-brand">A · Horario habitual de apertura</p><h3 className="ui-section-title mt-1 text-neutral-textMain">Días y franjas</h3><p className="ui-secondary mt-1">Define un día maestro y replícalo; después puedes editar cualquier día por separado.</p></div>
           {scheduleNotice && <span className="rounded-lg bg-[#E7F0E8] px-3 py-2 text-[12px] font-semibold text-[#47704D]">✓ {scheduleNotice}</span>}
+        </div>
+        <div className="mb-4 flex flex-wrap items-end gap-2 rounded-xl border border-brand/20 bg-brand-soft/50 p-3">
+          <label className="min-w-[180px] flex-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">Día maestro
+            <select value={masterDay} onChange={event => setMasterDay(Number(event.target.value))} className={`${inputClass} mt-1 w-full bg-white`}>
+              {dayOrder.map(dayOfWeek => <option key={dayOfWeek} value={dayOfWeek}>{dayLabels[dayOfWeek]}</option>)}
+            </select>
+          </label>
+          <button type="button" onClick={replicateMasterDay} className="min-h-10 rounded-lg bg-brand px-4 text-[12px] font-semibold text-white hover:bg-brand-hover">Replicar en todos los días</button>
         </div>
         <div className="grid gap-2 lg:grid-cols-2">
           {dayOrder.map(dayOfWeek => {
