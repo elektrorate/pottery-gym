@@ -272,28 +272,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
              onClick={() => onNavigate(AppView.STUDENTS)}
              style={{ cursor: 'pointer' }}>
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="members" /></span>
-             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Activos de membresía</p>
+             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Activos de membresía</p>
               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{globalStats.activeStudents}</span>
            </div>
              <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="payments" /></span>
-             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Pendientes de pago</p>
+             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Pendientes de pago</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{globalStats.pendingStudents}</span>
             </div>
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="bonuses" /></span>
-             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Bonos agotándose</p>
+             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Bonos agotándose</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{bonusAlerts.length}</span>
             </div>
            {/* Today's metrics */}
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="students" /></span>
-             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Alumnos Hoy</p>
+             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Alumnos Hoy</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalAlumnos}</span>
             </div>
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="sessions" /></span>
-             <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Sesiones Hoy</p>
+             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Sesiones Hoy</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalSessions}</span>
            </div>
         </div>
