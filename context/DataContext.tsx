@@ -172,10 +172,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 });
             };
 
-            const isMissingOptionalTable = (error: any) => {
-                const message = String(error?.message || '').toLowerCase();
-                return error?.code === '42P01' || error?.code === 'PGRST205' || message.includes('does not exist') || message.includes('could not find the table');
-            };
             // Optional domains must not hold the calendar hostage. They are
             // retried on the next refresh, while the critical roster/session
             // snapshot can render as soon as it is available.
@@ -184,15 +180,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 new Promise<T>(resolve => setTimeout(() => resolve(fallback), 4500))
             ]).catch(() => fallback);
 
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes, businessRes, ownerRes, creditProfileRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
+            // Phase 1: only the data required to render the dashboard/calendar.
+            // Secondary domains are intentionally loaded below so inventory and
+            // gift-card history cannot delay the first useful paint.
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes, businessRes, ownerRes, creditProfileRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
-                buildQuery('session_students'),
-                optionalQuery(buildQuery('pieces'), { data: [], error: null }), optionalQuery(buildQuery('gift_cards'), { data: [], error: null }),
-                optionalQuery(buildQuery('gift_card_movements'), { data: [], error: null }),
-                optionalQuery(buildQuery('inventory_items'), { data: [], error: null }), optionalQuery(buildQuery('inventory_movements'), { data: [], error: null }), optionalQuery(buildQuery('workshop_schedules'), { data: [], error: null }),
-                optionalQuery(buildQuery('workshop_capacity_defaults'), { data: [], error: null }),
-                optionalQuery(buildQuery('workshop_schedule_exceptions'), { data: [], error: null }),
-                buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
+                buildQuery('session_students'), buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
                 buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('session_business_state'), readAllRows((offset, size) => withTimeout('sedes.owner.select',
                     supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session.user.id).eq('is_active', true)
@@ -216,16 +209,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
-            if (piecesRes.error) throw piecesRes.error;
-            if (giftRes.error) console.warn('Gift cards could not be loaded:', giftRes.error);
-            if (giftCardMovementsRes.error) console.warn('Gift card movements could not be loaded:', giftCardMovementsRes.error);
-            if (inventoryRes.error) throw inventoryRes.error;
-            if (movementsRes.error) throw movementsRes.error;
-            if (scheduleRes.error) throw scheduleRes.error;
-            if (capacityDefaultsRes.error && !isMissingOptionalTable(capacityDefaultsRes.error)) throw capacityDefaultsRes.error;
-            if (exceptionsRes.error && !isMissingOptionalTable(exceptionsRes.error)) throw exceptionsRes.error;
-
-
             const normalizedStudents = joinStudentMemberships(
                 studentsRes.data || [], effectiveRes.data || [], periodsRes.data || []
             );
@@ -308,28 +291,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
             const studentsWithAttendance = attachAttendanceHistory(normalizedStudents, normalizedSessions);
 
-            const normalizedPieces: CeramicPiece[] = (piecesRes.data || []).map((row: any) => ({
-                id: row.id, owner: row.owner_name, description: row.description,
-                status: row.status, glazeType: row.glaze_type || undefined,
-                deliveryDate: row.delivery_date || undefined, notes: row.notes || undefined,
-                extraCommentary: row.extra_commentary || undefined, createdAt: row.created_at || undefined
-            }));
-
-            const giftCardMovements: GiftCardMovement[] = (giftCardMovementsRes.data || []).map((row: any) => ({
-                id: row.id, giftCardId: row.gift_card_id, sessionId: row.session_id || undefined,
-                studentId: row.student_id || undefined, type: row.movement_type, sessionsDelta: row.sessions_delta,
-                note: row.note || undefined, createdAt: row.created_at
-            }));
-            const movementsByGiftCard = giftCardMovements.reduce<Record<string, GiftCardMovement[]>>((groups, movement) => {
-                (groups[movement.giftCardId] ||= []).push(movement);
-                return groups;
-            }, {});
-            const normalizedGiftCards: GiftCard[] = (giftRes.data || []).map((row: any) => ({
-                ...mapGiftCardRowToModel(row), movements: movementsByGiftCard[row.id] || []
-            }));
-
-            setStudents(attachStudentCreditProfiles(studentsWithAttendance, creditProfileRes.data || [],
-                normalizedSessions, normalizedGiftCards));
+            // Publish the critical snapshot now. The calendar no longer waits
+            // for inventory/gift-card/schedule tables.
+            setStudents(attachStudentCreditProfiles(studentsWithAttendance, creditProfileRes.data || [], normalizedSessions, []));
 
             // Lifecycle is derived from the payment due date. Loading data must
             // never renew unpaid memberships or persist automatic archival.
@@ -337,31 +301,52 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setTeachers((teachersRes.data || []) as Teacher[]);
             setSessions(normalizedSessions);
             setOwnedSedeIds((ownerRes.data || []).map((row: any) => row.id));
-            setPieces(normalizedPieces);
-            setGiftCards(normalizedGiftCards);
-            setInventoryItems((inventoryRes.data || []) as InventoryItem[]);
-            setInventoryMovements((movementsRes.data || []) as InventoryMovement[]);
-            setWorkshopSchedule((scheduleRes.data || []).map((row: any) => ({
-                id: row.id,
-                dayOfWeek: Number(row.day_of_week),
-                slotIndex: Number(row.slot_index ?? 0),
-                isOpen: Boolean(row.is_open),
-                opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '',
-                closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : ''
-             })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
-             setCapacityDefaults(loadedCapacityDefaults.length
-                ? loadedCapacityDefaults
-                : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
-            setWorkshopScheduleExceptions((exceptionsRes.error ? [] : (exceptionsRes.data || [])).map((row: any) => ({
-                id: row.id,
-                exceptionDate: String(row.exception_date).slice(0, 10),
-                slotIndex: Number(row.slot_index ?? 0),
-                isOpen: Boolean(row.is_open),
-                opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '',
-                closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '',
-                reason: row.reason || undefined
-            })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
+            // Keep the first render independent from secondary domains.
             setLoadError(null);
+
+            // Phase 2: secondary data is best-effort and updates its own slices.
+            void Promise.all([
+                optionalQuery(buildQuery('pieces'), { data: [], error: null }),
+                optionalQuery(buildQuery('gift_cards'), { data: [], error: null }),
+                optionalQuery(buildQuery('gift_card_movements'), { data: [], error: null }),
+                optionalQuery(buildQuery('inventory_items'), { data: [], error: null }),
+                optionalQuery(buildQuery('inventory_movements'), { data: [], error: null }),
+                optionalQuery(buildQuery('workshop_schedules'), { data: [], error: null }),
+                optionalQuery(buildQuery('workshop_capacity_defaults'), { data: [], error: null }),
+                optionalQuery(buildQuery('workshop_schedule_exceptions'), { data: [], error: null })
+            ]).then(([piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes]) => {
+                if (generation !== loadGenerationRef.current) return;
+                const normalizedPieces: CeramicPiece[] = (piecesRes.data || []).map((row: any) => ({
+                    id: row.id, owner: row.owner_name, description: row.description, status: row.status,
+                    glazeType: row.glaze_type || undefined, deliveryDate: row.delivery_date || undefined,
+                    notes: row.notes || undefined, extraCommentary: row.extra_commentary || undefined, createdAt: row.created_at || undefined
+                }));
+                const giftCardMovements: GiftCardMovement[] = (giftCardMovementsRes.data || []).map((row: any) => ({
+                    id: row.id, giftCardId: row.gift_card_id, sessionId: row.session_id || undefined,
+                    studentId: row.student_id || undefined, type: row.movement_type, sessionsDelta: row.sessions_delta,
+                    note: row.note || undefined, createdAt: row.created_at
+                }));
+                const movementsByGiftCard = giftCardMovements.reduce<Record<string, GiftCardMovement[]>>((groups, movement) => {
+                    (groups[movement.giftCardId] ||= []).push(movement); return groups;
+                }, {});
+                const normalizedGiftCards: GiftCard[] = (giftRes.data || []).map((row: any) => ({
+                    ...mapGiftCardRowToModel(row), movements: movementsByGiftCard[row.id] || []
+                }));
+                setPieces(normalizedPieces); setGiftCards(normalizedGiftCards);
+                setInventoryItems((inventoryRes.data || []) as InventoryItem[]);
+                setInventoryMovements((movementsRes.data || []) as InventoryMovement[]);
+                setWorkshopSchedule((scheduleRes.data || []).map((row: any) => ({
+                    id: row.id, dayOfWeek: Number(row.day_of_week), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open),
+                    opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : ''
+                })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
+                setCapacityDefaults(capacityDefaultsRes.error ? Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })) : loadedCapacityDefaults);
+                setWorkshopScheduleExceptions((exceptionsRes.error ? [] : (exceptionsRes.data || [])).map((row: any) => ({
+                    id: row.id, exceptionDate: String(row.exception_date).slice(0, 10), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open),
+                    opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '', reason: row.reason || undefined
+                })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
+                // Re-attach gift-card state once the secondary domain arrives.
+                setStudents(current => attachStudentCreditProfiles(current, creditProfileRes.data || [], normalizedSessions, normalizedGiftCards));
+            }).catch(error => console.warn('Secondary data load skipped:', error));
         } catch (error) {
             if (generation !== loadGenerationRef.current) throw error;
             setStudents([]);

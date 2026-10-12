@@ -100,22 +100,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
 
         try {
-            const { data: ownedSedes, error: ownedError } = await supabase
-                .from('sedes')
-                .select('id')
-                .eq('owner_id', userId)
-                .eq('is_active', true)
-                .limit(1);
+            // These lookups are independent. Running them together removes a
+            // full round-trip from the initial auth gate for staff accounts.
+            const [{ data: ownedSedes, error: ownedError }, { data: memberships, error: memberError }] = await Promise.all([
+                supabase.from('sedes').select('id').eq('owner_id', userId).eq('is_active', true).limit(1),
+                supabase.from('sede_members').select('sede_id').eq('user_id', userId).limit(1)
+            ]);
 
             if (!ownedError && ownedSedes && ownedSedes.length > 0) {
                 return ownedSedes[0].id;
             }
-
-            const { data: memberships, error: memberError } = await supabase
-                .from('sede_members')
-                .select('sede_id')
-                .eq('user_id', userId)
-                .limit(1);
 
             if (!memberError && memberships && memberships.length > 0) {
                 return memberships[0].sede_id;
