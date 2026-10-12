@@ -156,10 +156,21 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         setLoadError(null);
 
         try {
-            const buildQuery = (table: string, limit?: number) => {
+            const today = new Date();
+            const calendarStart = new Date(today);
+            calendarStart.setDate(calendarStart.getDate() - 62);
+            const calendarEnd = new Date(today);
+            calendarEnd.setDate(calendarEnd.getDate() + 62);
+            const calendarRange = {
+                start: calendarStart.toISOString().slice(0, 10),
+                end: calendarEnd.toISOString().slice(0, 10)
+            };
+
+            const buildQuery = (table: string, limit?: number, range?: { start: string; end: string }) => {
                 const select = () => {
                     let query = supabase.from(table).select('*', { count: 'exact' });
                     if (!isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
+                    if (range && table === 'sessions') query = query.gte('date', range.start).lte('date', range.end);
                     return query;
                 };
                 if (limit !== undefined) return withTimeout(`${table}.select`, select().limit(limit), RELOAD_TIMEOUT_MS);
@@ -184,7 +195,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // Secondary domains are intentionally loaded below so inventory and
             // gift-card history cannot delay the first useful paint.
             const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, sessionContractRes, giftContractRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
-                buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
+                buildQuery('students'), buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
                 buildQuery('session_students'),
                 buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 optionalQuery(buildQuery('session_activity_blocks'), { data: [], error: null }),
