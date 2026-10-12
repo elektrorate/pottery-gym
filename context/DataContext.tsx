@@ -228,12 +228,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 (activityBlocksMap[row.session_id] ||= []).push(row);
             });
 
-            const loadedCapacityDefaults = (capacityDefaultsRes.error ? [] : (capacityDefaultsRes.data || []))
-                .filter((row: any) => row.class_type !== 'feriado')
-                .map((row: any) => ({ id: row.id, classType: row.class_type as CapacityActivity, capacity: Number(row.capacity) }));
-            const configuredCapacityDefaults = loadedCapacityDefaults.length
-                ? loadedCapacityDefaults.reduce<Record<string, number>>((result, item) => ({ ...result, [item.classType]: item.capacity }), {})
-                : DEFAULT_CAPACITY_BY_ACTIVITY;
+            // Capacity configuration is secondary; use stable defaults for the
+            // first calendar render and replace them after the background load.
+            const configuredCapacityDefaults = DEFAULT_CAPACITY_BY_ACTIVITY;
 
             const businessBySession: Record<string, any[]> = {};
             (businessRes.data || []).forEach((row: any) => { (businessBySession[row.session_id] ||= []).push(row); });
@@ -339,7 +336,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     id: row.id, dayOfWeek: Number(row.day_of_week), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open),
                     opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : ''
                 })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
-                setCapacityDefaults(capacityDefaultsRes.error ? Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })) : loadedCapacityDefaults);
+                const loadedCapacityDefaults = (capacityDefaultsRes.error ? [] : (capacityDefaultsRes.data || []))
+                    .filter((row: any) => row.class_type !== 'feriado')
+                    .map((row: any) => ({ id: row.id, classType: row.class_type as CapacityActivity, capacity: Number(row.capacity) }));
+                setCapacityDefaults(loadedCapacityDefaults.length
+                    ? loadedCapacityDefaults
+                    : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
                 setWorkshopScheduleExceptions((exceptionsRes.error ? [] : (exceptionsRes.data || [])).map((row: any) => ({
                     id: row.id, exceptionDate: String(row.exception_date).slice(0, 10), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open),
                     opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '', reason: row.reason || undefined
