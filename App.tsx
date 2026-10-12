@@ -19,6 +19,7 @@ import HistoryPage from './pages/HistoryPage';
 import InventoryPage from './pages/InventoryPage';
 import SettingsPage from './pages/SettingsPage';
 import TeamPage from './pages/TeamPage';
+import AgendaPage from './pages/AgendaPage';
 
 // Admin Module (self-contained with its own context + original UI)
 import AdminApp from './admin/AdminApp';
@@ -79,6 +80,7 @@ const App: React.FC = () => {
           <Route element={<TalleristaShell />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/agenda" element={<AgendaPage />} />
             <Route path="/students" element={<StudentsPage />} />
             <Route path="/teachers" element={<TeachersPage />} />
             <Route path="/pieces" element={<PiecesPage />} />

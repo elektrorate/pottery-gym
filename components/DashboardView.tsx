@@ -326,7 +326,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
             </div>
 
             <div className="space-y-3">
-              {todayActivities.length === 0 && todaySessions.length === 0 ? (
+              {todayActivities.length === 0 ? (
                 <div className="bg-white/60 border border-dashed border-neutral-border p-8 md:p-10 rounded-2xl text-center">
                   <p className="text-neutral-textHelper text-[13px]">No hay actividades programadas para hoy</p>
                   <button onClick={() => { setActivityForm({ title: '', date: todayStr, time: '', description: '' }); setActivityFormOpen(true); }} className="mt-4 min-h-[44px] px-4 py-2.5 bg-brand text-white text-[14px] font-semibold rounded-[10px] hover:bg-brand-hover transition-all">
@@ -337,49 +337,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
                  <>
                  {todayActivities.map(activity => <div key={activity.id} className="flex items-start gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
                    <time className="min-w-[46px] pt-0.5 text-[13px] font-semibold text-neutral-textMain">{activity.time}</time>
-                   <div className="min-w-0 flex-1"><p className="text-[14px] font-semibold text-neutral-textMain">{activity.title}</p><p className="mt-1 text-[14px] leading-snug text-neutral-textHelper">{activity.description || 'Sin descripción'}</p></div>
+                   <div className="min-w-0 flex-1"><p className="text-[18px] font-semibold leading-tight text-brand">{activity.title}</p><p className="mt-1 text-[14px] leading-snug text-neutral-textHelper">{activity.description || 'Sin descripción'}</p></div>
                    <button type="button" aria-label={`Eliminar ${activity.title}`} onClick={() => setActivityPendingDelete(activity)} className="text-[12px] text-neutral-textHelper hover:text-brand">Eliminar</button>
                  </div>)}
-                 {todaySessions.map(session => {
-                   const occupancy = getSessionOccupancy(session, capacityMap);
-                   const conflict = getScheduleConflictReason(session, workshopSchedule, workshopScheduleExceptions);
-                   const isFull = occupancy.availability === 'full' || occupancy.availability === 'over_capacity';
-                   return (
-                      <div key={session.id} className="group flex flex-col items-stretch justify-between gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-soft sm:flex-row sm:items-center md:p-4">
-                      <div className="flex items-center gap-3 md:gap-5">
-                        <div className="min-w-[50px] text-center">
-                           <p className="ui-card-title text-neutral-textMain">{session.startTime}</p>
-                           <p className="ui-meta mt-1 font-semibold tracking-wide">Inicio</p>
-                        </div>
-                        <div className="h-8 w-[1px] bg-neutral-border"></div>
-                        <div>
-                           <p className="ui-card-title text-neutral-textMain">{getSessionTypeLabel(session.classType)}</p>
-                           <div className="mt-1 flex flex-wrap items-center gap-2">
-                              {session.classType === 'feriado' ? <span className="ui-meta font-semibold text-neutral-textHelper">Día bloqueado</span> : <span className={`ui-meta font-semibold ${isFull ? 'text-[#9E3B2B]' : 'text-[#20663B]'}`}>
-                               {occupancy.enrolled}/{occupancy.capacity} {sessionAvailabilityLabel[occupancy.availability]}
-                             </span>}
-                             {conflict && <span className="ui-meta font-semibold text-[#916438]">Conflicto de horario</span>}
-                          </div>
-                        </div>
-                      </div>
-                       <div className="flex items-center justify-between gap-2 sm:justify-end">
-                         {session.classType !== 'feriado' && <button type="button" className="min-h-11 rounded-lg border border-neutral-border px-3 text-[12px] font-semibold text-brand" onClick={() => onOpenSession ? onOpenSession(session.id, session.date) : onNavigate(AppView.CALENDAR)}>Control de asistencia</button>}
-                        <div className="flex -space-x-2">
-                          {session.students.slice(0, 3).map((st, i) => (
-                              <div key={i} className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-neutral-sec text-[11px] font-semibold text-neutral-textSec">
-                              {st.charAt(0)}
-                            </div>
-                          ))}
-                          {session.students.length > 3 && (
-                              <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-brand-soft text-[11px] font-semibold text-brand">
-                              +{session.students.length - 3}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
                 </>
               )}
             </div>
