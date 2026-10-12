@@ -12,8 +12,9 @@ const StudentsPage: React.FC = () => {
         addStudent,
         updateStudent,
         deleteStudent,
-        renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
-        loadError,
+        renewStudent, confirmMembershipPayment, activateMembership, initializeLegacyMemberships, adjustMembershipClasses, canAdjustMembershipClasses,
+        approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
+        getPendingStudentCreditOperation, retryPendingStudentCreditOperation, loadAllData, loadError,
         isLoadingData
     } = useData();
 
@@ -39,7 +40,7 @@ const StudentsPage: React.FC = () => {
         );
     }
 
-    if (loadError) return <p role="alert">{loadError}</p>;
+    if (loadError) return <div role="alert"><p>{loadError}</p><button type="button" className="min-h-11 rounded border px-3" onClick={() => void loadAllData().catch(() => undefined)}>Recargar datos sin repetir escrituras</button></div>;
 
     return (
         <StudentList
@@ -48,7 +49,15 @@ const StudentsPage: React.FC = () => {
             onRenew={renewStudent}
             onConfirmPayment={confirmMembershipPayment}
             onActivateMembership={activateMembership}
+            onInitializeLegacyMemberships={initializeLegacyMemberships}
             onAdjustClasses={adjustMembershipClasses}
+            canAdjustClasses={canAdjustMembershipClasses}
+            onApproveManualCredit={approveStudentManualCredit}
+            onSettlePendingPenalty={settlePendingStudentPenalty}
+            onWaivePendingPenalty={waiveStudentPenalty}
+            canManageStudentCredits={canManageStudentCredits}
+            getPendingStudentCreditOperation={getPendingStudentCreditOperation}
+            onRetryPendingStudentCreditOperation={retryPendingStudentCreditOperation}
             onUpdate={updateStudent}
             onDeleteStudent={deleteStudent}
             selectedStudentId={selectedStudentId}

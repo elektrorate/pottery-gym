@@ -4,8 +4,9 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { root, runtime, projectId, dbContainer, apiUrl, cli, assertRuntime, localStatus, localFetch,
   testPassword, testEmails, redact } from './local-staging-runtime.mjs';
+import { seedBusinessActors } from './local-staging-business-fixtures.mjs';
 
-const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+const hash = file => createHash('sha256').update(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
 try {
   if (!existsSync(path.dirname(runtime))) throw new Error('Pre-approved temporary parent directory is missing.');
   if (existsSync(runtime)) assertRuntime();
@@ -16,17 +17,22 @@ try {
   }
   const sourceConfig = path.join(root, 'local-staging', 'supabase', 'config.toml');
   const runtimeConfig = path.join(runtime, 'supabase', 'config.toml');
-  if (hash(sourceConfig) !== hash(runtimeConfig)) {
-    console.log('Applying owned staging configuration; stopping only this local stack and retaining its snapshot.');
-    cli(['stop']);
-    copyFileSync(sourceConfig, runtimeConfig);
-  }
+  const configChanged = hash(sourceConfig) !== hash(runtimeConfig);
   const migrations = readdirSync(path.join(root, 'supabase', 'migrations')).filter(name => name.endsWith('.sql')).sort();
   for (const name of migrations) {
     const source = path.join(root, 'supabase', 'migrations', name);
     const target = path.join(runtime, 'supabase', 'migrations', name);
     if (existsSync(target) && hash(source) !== hash(target)) throw new Error(`Migration ${name} changed. Create a follow-up migration; existing staging is never reset.`);
-    if (!existsSync(target)) copyFileSync(source, target);
+  }
+  // Validate every persisted migration before touching a running stack.
+  if (configChanged) {
+    console.log('Applying owned staging configuration; stopping only this local stack and retaining its snapshot.');
+    cli(['stop']);
+    copyFileSync(sourceConfig, runtimeConfig);
+  }
+  for (const name of migrations) {
+    const target = path.join(runtime, 'supabase', 'migrations', name);
+    if (!existsSync(target)) copyFileSync(path.join(root, 'supabase', 'migrations', name), target);
   }
   cpSync(path.join(root, 'supabase', 'functions'), path.join(runtime, 'supabase', 'functions'), { recursive: true });
   mkdirSync(path.join(runtime, 'supabase', 'tests'), { recursive: true });
@@ -58,6 +64,7 @@ try {
   execFileSync('docker', ['exec', dbContainer, 'psql', '-X', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1',
     '-v', `staff_id=${ids[0]}`, '-v', `other_id=${ids[1]}`, '-v', `reader_id=${ids[2]}`,
     '-c', `set app.local_staging = '${projectId}';`, '-f', '/tmp/local-staging-seed.psql'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  seedBusinessActors(ids);
   console.log(`Local staging ready: API ${apiUrl}; Studio http://127.0.0.1:55323`);
   console.log('Synthetic login: staff@pottery.local / LocalStaging2026!');
   console.log('No remote link, reset, production data or administrative key was written to frontend configuration.');

@@ -16,6 +16,8 @@ Password sintetico: LocalStaging2026!
 
 Otro taller: other@pottery.local (mismo password de prueba).
 Lector de API: reader@pottery.local (mismo password de prueba).
+Empleado no propietario: employee@pottery.local (mismo password de prueba).
+Superadministrador no propietario: supervisor@pottery.local (mismo password).
 El lector no puede iniciar una sesion de la aplicacion: solo tiene permisos
 limitados de lectura para un alumno de prueba, con caducidad de un dia.
 
@@ -25,6 +27,14 @@ Abrir Docker Desktop. Desde la carpeta del repositorio:
 
   npm run staging:setup
   npm run staging:dev
+
+Para aplicar cambios de politica al staging existente con comprobacion de
+historicos y respaldo cifrado previo:
+  npm run staging:policy-setup
+
+El respaldo AES-256-GCM se guarda fuera de Git en el runtime/backups. Su clave
+esta protegida con DPAPI del usuario Windows; se verifica el descifrado, no
+se afirma haber ensayado una restauracion completa.
 
 El segundo comando mantiene el frontend en la terminal. Tambien existe
 staging:launch para ejecutarlo en segundo plano, con logs en el directorio
@@ -48,18 +58,36 @@ Con el frontend funcionando:
 
   npm run staging:test
 
-Ejecuta exclusivamente cuatro escenarios con Auth, REST/PostgreSQL y Edge
-reales del staging local. Bloquea peticiones a backends remotos y no utiliza
+Ejecuta exclusivamente 45 escenarios con Auth, REST/PostgreSQL, Edge y navegador
+reales del staging local, con un worker y cero retries. Bloquea backends remotos y no utiliza
 la clave service_role para las operaciones de negocio. Los fixtures de cada
 ejecucion tienen UUIDs nuevos y se conservan; no hay borrado masivo de QA.
 Los datos de demostracion se comparan antes y despues para comprobar que no
 fueron alterados.
 
 Casos verificados:
-- Asistir, corregir a falta y asistir de nuevo: saldo, ledger y ficha coherentes.
+- Reserva/provisional sin consumo; presencia, falta y cancelacion tardia cobran
+  una clase al finalizar. Cancelacion con al menos ocho horas no consume.
+- Pago pendiente/null o vencimiento necesitan aprobacion individual por empleado.
+- Sin credito puede aprobarse cortesia; la penalizacion sin credito es incidencia.
+- Solo el propietario exime/revierte una penalizacion. Cambiar falta a presencia
+  no borra el cargo; superadministrador no puede autoasignarse como propietario.
 - Respuesta perdida despues del commit: reintento exacto sin otro descuento.
+- Recargar/remontar recupera el intento original para asistencia, excepcion,
+  cancelacion y exencion; no crea otro UUID ni reescribe los argumentos.
 - Alumnos homonimos: destinatario explicito por ID, sin crear otra persona.
 - Otro taller y lector limitado: RLS, RPCs, permisos y API Edge reales.
+- Creditos manuales: evidencia y aprobacion del propietario, ledger separado
+  del scalar legado, conciliacion completa solo si el saldo es conocido.
+- Liquidacion del perfil solo contra fuente original; no se sustituye por un
+  periodo siguiente, otra Gift Card o un nuevo credito manual.
+- Aprobacion/liquidacion/exencion: respuesta perdida tras commit, o recibo/rechazo
+  SQL seguido de fallo de recarga, conservan el intento tras reload completo.
+- Recuperar datos es solo lectura; el replay explicito envia la misma key/revision.
+
+Verificacion final 2026-10-12: 45/45 reales, 370/370 regresiones, 37/37 unitarias,
+TypeScript/build y lint aprobados; pgTAP 3/3. La suite real completa duro 13 min.
+El rollout manual, respaldo y limites se registran en docs/manual-credit-phase.txt.
 
 PARADA
 
@@ -83,8 +111,17 @@ la red. Esta herramienta no modifica automaticamente el firewall del sistema.
 
 Tras un dia, la prueba de lectura acotada puede fallar por expiracion de grants;
 se necesita una nueva autorizacion sintetica explicita, no un reset de datos.
-En Windows, un timeout del wrapper CLI puede dejar su proceso nativo activo;
-comprobar los procesos/servicios propios antes de reintentar una operacion.
+El runner Windows usa el ejecutable nativo, no el shim Node. Un timeout de red
+no acredita rollback; comprobar el recibo antes de crear una operacion diferente.
+Los caches Vite de staging y regresion estan separados.
+
+Los temporales con saldo manual positivo sin periodo/bono atribuible requieren
+conciliacion explicita completa con evidencia, no cortesia que suponga saldo cero.
+Si el saldo es desconocido, no se concilia; un derecho nuevo requiere evidencia
+independiente del propietario. Ambiguedades Gift quedan vetadas de forma durable.
+Los ajustes genericos de membresia permanecen bloqueados. Las incidencias
+pendientes solo se liquidan por el propietario desde la ficha contra la fuente
+original valida; no hay liquidacion automatica ni cargo al siguiente periodo.
 
 Antes de produccion faltan revision visual, respaldo/restauracion ensayados,
 reglas de negocio pendientes y autorizacion explicita del rollout coordinado.

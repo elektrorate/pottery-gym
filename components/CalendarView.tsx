@@ -1,7 +1,7 @@
 import { showError } from '../context/toast';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, SessionBusinessIntent, Teacher, WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, getDefaultSessionCapacity } from '../types';
+import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, SessionActivityBlock, SessionBusinessIntent, PendingSessionOperation, Teacher, WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, getDefaultSessionCapacity } from '../types';
 import { getStudentLifecycle, isStudentArchived } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
@@ -18,7 +18,9 @@ interface CalendarViewProps {
   onApproveSessionException?: (intent: SessionBusinessIntent) => Promise<void>;
   onCancelSessionReservation?: (intent: SessionBusinessIntent) => Promise<void>;
   onWaiveSessionPenalty?: (intent: SessionBusinessIntent) => Promise<void>;
-  canWaiveSessionPenalty?: boolean;
+  getPendingSessionOperation?: (id?: string) => PendingSessionOperation | null;
+  onRetryPendingSessionOperation?: (id?: string) => Promise<void>;
+  canWaiveSessionPenalty?: boolean | ((session: ClassSession) => boolean);
   giftCards: GiftCard[];
   students: Student[];
   teachers: Teacher[];
@@ -33,7 +35,13 @@ type AttendanceStatus = 'present' | 'absent' | 'pending';
 type SaveAttempt =
   | { kind: 'attendance'; id: string; updates: Partial<ClassSession> }
   | { kind: 'reservation'; id: string | null; updates: Omit<ClassSession, 'id'> }
-  | { kind: 'business'; id: string; intent: SessionBusinessIntent };
+  | { kind: 'business'; id: string; intent: SessionBusinessIntent }
+  | { kind: 'recovery'; id: string | null; descriptor: PendingSessionOperation };
+
+const pendingOperationLabels: Record<PendingSessionOperation['operation'], string> = {
+  attendance: 'Guardar asistencia', reservation: 'Guardar reserva', approve_exception: 'Aprobar excepción',
+  cancel_reservation: 'Cancelar reserva', waive_penalty: 'Eximir penalización'
+};
 
 const hasPersistedRoster = (session: ClassSession) => Array.isArray(session.studentIds)
   && session.studentIds.length === session.students.length
@@ -45,9 +53,11 @@ const isCancelled = (session: ClassSession, studentId: string) => session.attend
   && session.businessStateByStudentId?.[studentId]?.reservationState === 'cancelled';
 const shortId = (id: string) => id.slice(-8);
 
-const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onApproveSessionException, onCancelSessionReservation, onWaiveSessionPenalty, canWaiveSessionPenalty = false, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
+const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onApproveSessionException, onCancelSessionReservation, onWaiveSessionPenalty, getPendingSessionOperation, onRetryPendingSessionOperation, canWaiveSessionPenalty, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
   const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
-  const getSessionCapacity = (classType: ClassSession['classType']) => getDefaultSessionCapacity(classType, capacityMap);
+  const getSessionCapacity = (classType: ClassSession['classType']) => classType === 'mixto'
+    ? getDefaultSessionCapacity('mesa', capacityMap) + getDefaultSessionCapacity('torno', capacityMap)
+    : getDefaultSessionCapacity(classType, capacityMap);
   const location = useLocation();
   const deepLinkHandledRef = useRef('');
   const submittingRef = useRef(false);
@@ -67,11 +77,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingSave, setPendingSave] = useState<SaveAttempt | null>(null);
   const [saveError, setSaveError] = useState('');
-  const [refreshConflict, setRefreshConflict] = useState<{ kind: SaveAttempt['kind']; id: string; revision?: number } | null>(null);
+  const [refreshConflict, setRefreshConflict] = useState<{ kind: Exclude<SaveAttempt['kind'], 'recovery'>; id: string; revision?: number } | null>(null);
   const formLocked = isSubmitting || !!pendingSave || !!refreshConflict;
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [businessForms, setBusinessForms] = useState<Record<string, { reason: string; kind: 'membership_override' | 'no_credit'; cancellationReason: string; waiverReason: string }>>({});
   const policy2 = attendanceSession?.attendancePolicyVersion === 2;
+  const mayWaivePenalty = !!attendanceSession && (typeof canWaiveSessionPenalty === 'function'
+    ? canWaiveSessionPenalty(attendanceSession) : !!canWaiveSessionPenalty);
   const storedAttendanceSession = sessions.find(session => session.id === attendanceSession?.id);
   const attendanceDirty = !!attendanceSession && (!storedAttendanceSession
     || substituteId !== (storedAttendanceSession.teacherSubstituteId || '')
@@ -88,11 +100,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     capacity: getSessionCapacity('mesa'),
     selectedStudents: [] as string[],
     giftCardIdByStudentId: {} as Record<string, string>,
+    manualCreditIdByStudentId: {} as Record<string, string>,
     revision: undefined as number | undefined,
     teacherId: '',
     workshopName: '',
     privateReason: '',
-    sessionAudience: 'membresia' as 'membresia' | 'temporal' | 'ambos'
+    sessionAudience: 'membresia' as 'membresia' | 'temporal' | 'ambos',
+    activityBlocks: [] as SessionActivityBlock[]
   });
   const activeSelectedCount = sessionForm.selectedStudents.filter(id => !editingReservation || !isCancelled(editingReservation, id)).length;
 
@@ -105,16 +119,30 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   const getSessionRoster = (session: ClassSession) => hasPersistedRoster(session)
     ? session.studentIds!.map(id => ({ id, name: getStudentName(id, session) }))
     : session.students.map(name => ({ id: undefined, name }));
+  const getActiveRosterCount = (session: ClassSession) => session.attendancePolicyVersion === 2 && hasPersistedRoster(session)
+    ? session.studentIds!.filter(id => !isCancelled(session, id)).length
+    : getSessionOccupancy(session, capacityMap).enrolled;
   const getFundingCards = (studentId: string) => giftCards.filter(card => card.recipientStudentId === studentId
     && card.status === 'active' && !card.consumedAt && (card.sessionsRemaining || 0) > 0
     && (!card.expiryDate || card.expiryDate.slice(0, 10) >= madridDateKey()));
+  const getFundingManualCredits = (student: Student | undefined) => {
+    if (!student?.sedeId || isStudentArchived(student, today) || (editingReservation && editingReservation.attendancePolicyVersion !== 2)) return [];
+    const sedeId = editingReservation ? editingReservation.sedeId : student.sedeId;
+    const earliest = sessionForm.date < today ? sessionForm.date : today;
+    const latest = sessionForm.date > today ? sessionForm.date : today;
+    return (student.manualCredits || []).filter(credit => credit.studentId === student.id && credit.sedeId === sedeId
+      && credit.sedeId === student.sedeId && credit.activity === sessionForm.classType && credit.remainingClasses > 0
+      && credit.startsOn <= earliest && credit.endsOn >= latest);
+  };
 
   const sessionToForm = (session: ClassSession) => ({
     date: session.date, startTime: session.startTime, endTime: session.endTime, classType: session.classType,
     capacity: session.capacity ?? getSessionCapacity(session.classType),
-    selectedStudents: [...session.studentIds!], giftCardIdByStudentId: { ...(session.giftCardIdByStudentId || {}) }, revision: session.revision,
+    selectedStudents: [...session.studentIds!], giftCardIdByStudentId: { ...(session.giftCardIdByStudentId || {}) },
+    manualCreditIdByStudentId: { ...(session.manualCreditIdByStudentId || {}) }, revision: session.revision,
     teacherId: session.teacherId || '', workshopName: session.workshopName || '', privateReason: session.privateReason || '',
-    sessionAudience: session.sessionAudience || 'membresia'
+    sessionAudience: session.sessionAudience || 'membresia',
+    activityBlocks: session.activityBlocks?.map(block => ({ ...block, studentIds: [...block.studentIds] })) || []
   });
 
   const formatDateKey = (date: Date) => {
@@ -157,6 +185,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     const map: Record<ClassSession['classType'], string> = {
       mesa: 'Mesa',
       torno: 'Torno',
+      mixto: 'Mixto',
       coworking: 'Coworking',
       workshop: 'Workshop',
       privada: 'Privadas',
@@ -186,9 +215,62 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     }
   };
 
+  const restorePendingOperation = (session?: ClassSession) => {
+    if (!getPendingSessionOperation) return false;
+    try {
+      let descriptor = getPendingSessionOperation(session?.id);
+      if (!descriptor && session) descriptor = getPendingSessionOperation();
+      for (const candidate of sessions) {
+        if (descriptor) break;
+        descriptor = getPendingSessionOperation(candidate.id);
+      }
+      if (!descriptor) return false;
+      if (!onRetryPendingSessionOperation) {
+        showError('Hay una operación pendiente, pero su recuperación no está disponible. No se creará otro intento.');
+        return true;
+      }
+      const latest = sessions.find(item => item.id === descriptor.sessionId);
+      if (!descriptor.isNewSession && (!latest || !hasPersistedRoster(latest))) {
+        showError('Recarga el roster de la sesión pendiente antes de recuperar su intento.');
+        return true;
+      }
+      setSaveError('');
+      setPendingSave({ kind: 'recovery', id: descriptor.isNewSession ? null : descriptor.sessionId, descriptor });
+      if (descriptor.operation === 'reservation') {
+        setEditingSessionId(descriptor.isNewSession ? null : descriptor.sessionId);
+        if (!descriptor.isNewSession) setSessionForm(sessionToForm(latest!));
+        else setSessionForm(prev => ({ ...prev, date: formatDateKey(selectedDate) }));
+        setShowAttendanceModal(false);
+        setShowSessionModal(true);
+      } else {
+        setAttendanceSession(latest!);
+        setSubstituteId(latest!.teacherSubstituteId || '');
+        setBusinessForms({});
+        setIsEditingAttendance(false);
+        setAttendanceEditBaseline(null);
+        setShowSessionModal(false);
+        setShowAttendanceModal(true);
+      }
+      return true;
+    } catch (error: any) {
+      showError(error?.message || 'No se pudo leer el intento pendiente. No se creará otro intento.');
+      return true;
+    }
+  };
+
+  const recoveryAlert = pendingSave?.kind === 'recovery' && (
+    <p role="alert" data-testid="pending-session-operation" data-operation={pendingSave.descriptor.operation} className="mx-5 mt-3 rounded-[10px] bg-[#F8EEE5] px-4 py-3 text-[12px] text-[#7B3F22] sm:mx-8">
+      Operación pendiente: {pendingOperationLabels[pendingSave.descriptor.operation]}.
+      {pendingSave.descriptor.studentId && ` Alumno: ${getStudentName(pendingSave.descriptor.studentId, attendanceSession || undefined)} (${shortId(pendingSave.descriptor.studentId)}).`}
+      {pendingSave.descriptor.reason && ` Motivo: ${pendingSave.descriptor.reason}.`}
+      {' Reintenta el intento guardado antes de editar, cerrar o iniciar otra operación. Se conservarán sus datos originales.'}
+    </p>
+  );
+
   // Abrir modal de Edición/Creación de Sesión
   const handleOpenSessionModal = (session?: ClassSession) => {
     if (formLocked) return;
+    if (restorePendingOperation(session)) return;
     if (session && !hasPersistedRoster(session)) {
       showError('La reserva requiere IDs persistidos y alineados. Recarga la sesión; no se identificarán alumnos por nombre.');
       return;
@@ -208,6 +290,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         capacity: getSessionCapacity('mesa'),
         selectedStudents: [],
         giftCardIdByStudentId: {},
+        manualCreditIdByStudentId: {},
         revision: undefined,
         teacherId: '',
         workshopName: '',
@@ -239,6 +322,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   // Abrir modal de Control de Asistencia (Nueva funcionalidad separada)
   const handleOpenAttendanceModal = (session: ClassSession) => {
     if (formLocked) return;
+    if (restorePendingOperation(session)) return;
     if (!hasPersistedRoster(session)) {
       showError('La asistencia requiere IDs persistidos y alineados. Recarga la sesión; no se identificarán alumnos por nombre.');
       return;
@@ -281,9 +365,17 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     setIsSubmitting(true);
     setSaveError('');
     setPendingSave(attempt);
+    const kind = attempt.kind === 'recovery'
+      ? attempt.descriptor.operation === 'reservation' ? 'reservation' : attempt.descriptor.operation === 'attendance' ? 'attendance' : 'business'
+      : attempt.kind;
+    const revision = attempt.kind === 'recovery' ? attempt.descriptor.expectedRevision
+      : attempt.kind === 'business' ? attempt.intent.expectedRevision : attempt.updates.revision;
     try {
       let result: boolean | void;
-      if (attempt.kind === 'business') {
+      if (attempt.kind === 'recovery') {
+        if (!onRetryPendingSessionOperation) throw new Error('La recuperación del intento no está disponible.');
+        result = await onRetryPendingSessionOperation(attempt.descriptor.isNewSession ? undefined : attempt.descriptor.sessionId);
+      } else if (attempt.kind === 'business') {
         const callback = attempt.intent.operation === 'approve_exception' ? onApproveSessionException
           : attempt.intent.operation === 'cancel_reservation' ? onCancelSessionReservation : onWaiveSessionPenalty;
         if (!callback) throw new Error('La operación no está disponible. Conserva el intento para reintentar.');
@@ -295,9 +387,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       }
       if (result === false) throw new Error('No se confirmó el guardado. Reintenta los mismos datos.');
       setPendingSave(null);
-      if (attempt.kind === 'business') {
-        setRefreshConflict({ kind: 'business', id: attempt.id, revision: attempt.intent.expectedRevision });
-      } else if (attempt.kind === 'attendance') {
+      if (kind === 'business') {
+        setRefreshConflict({ kind: 'business', id: attempt.id!, revision });
+      } else if (kind === 'attendance') {
         setShowAttendanceModal(false);
         setIsEditingAttendance(false);
         setAttendanceEditBaseline(null);
@@ -308,10 +400,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       // Only a SQL rejection proves rollback. Otherwise retry the same object,
       // including its timestamp/revision, to resolve the stored atomic receipt.
       const rolledBack = /^[0-9A-Z]{5}$/.test(error?.code || '')
-        && !['08000', '08003', '08006', '57014'].includes(error.code);
+        && !['08000', '08003', '08006', '57014'].includes(error.code)
+        && !getPendingSessionOperation?.(attempt.id ?? undefined);
       if (rolledBack) setPendingSave(null);
-      if (error?.code === '40001' && attempt.id) {
-        setRefreshConflict({ kind: attempt.kind, id: attempt.id, revision: attempt.kind === 'business' ? attempt.intent.expectedRevision : attempt.updates.revision });
+      if (rolledBack && error?.code === '40001' && attempt.id) {
+        setRefreshConflict({ kind, id: attempt.id, revision });
       }
       setSaveError(`${error?.message || 'No se pudo guardar la sesión.'}${rolledBack
         ? error.code === '40001' ? ' La sesión cambió. Revisa los datos recargados antes de guardar.' : ''
@@ -342,7 +435,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   const saveAttendance = async (finalize: boolean) => {
     if (submittingRef.current || refreshConflict || !attendanceSession) return;
     if (pendingSave) {
-      if (pendingSave.kind === 'attendance') await persistSave(pendingSave);
+      if (pendingSave.kind === 'attendance' || pendingSave.kind === 'recovery') await persistSave(pendingSave);
       return;
     }
     if (!hasPersistedRoster(attendanceSession) || !Number.isSafeInteger(attendanceSession.revision) || attendanceSession.revision! < 0) {
@@ -389,10 +482,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     }
     const business = attendanceSession.businessStateByStudentId?.[studentId];
     if (operation === 'waive_penalty') {
-      if (!canWaiveSessionPenalty || !onWaiveSessionPenalty || !business?.penaltyId
+      if (!mayWaivePenalty || !onWaiveSessionPenalty || !business?.penaltyId
         || !['charged', 'pending'].includes(business.penaltyState || '')) return;
     } else if (attendanceSession.completedAt || isCancelled(attendanceSession, studentId)
-      || (operation === 'approve_exception' && (!onApproveSessionException || business?.exceptionId))
+      || (operation === 'approve_exception' && !onApproveSessionException)
       || (operation === 'cancel_reservation' && !onCancelSessionReservation)) return;
     // Freeze the identity before invoking the callback; uncertain failures retry it unchanged.
     const intent: SessionBusinessIntent = Object.freeze({ operation, sessionId: attendanceSession.id, studentId,
@@ -404,7 +497,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   const handleSessionSubmit = async () => {
     if (submittingRef.current || refreshConflict) return;
     if (pendingSave) {
-      if (pendingSave.kind === 'reservation') await persistSave(pendingSave);
+      if (pendingSave.kind === 'reservation' || pendingSave.kind === 'recovery') await persistSave(pendingSave);
       return;
     }
     if (!sessionForm.date) {
@@ -414,6 +507,22 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     if (requiresTeacher(sessionForm.classType) && !sessionForm.teacherId) {
       showError("Debes asignar un profesor.");
       return;
+    }
+    if (sessionForm.classType === 'mixto') {
+      const blocks = sessionForm.activityBlocks;
+      const assigned = blocks.flatMap(block => block.studentIds);
+      if (!blocks.some(block => block.activityType === 'mesa') || !blocks.some(block => block.activityType === 'torno')) {
+        showError('Una sesión mixta debe incluir un bloque de Mesa y otro de Torno.');
+        return;
+      }
+      if (new Set(assigned).size !== assigned.length || assigned.length === 0) {
+        showError('Asigna cada alumno a un único bloque de actividad.');
+        return;
+      }
+      if (blocks.some(block => block.studentIds.length > block.capacity)) {
+        showError('Uno de los bloques supera su capacidad configurada.');
+        return;
+      }
     }
     if (requiresWorkshopName(sessionForm.classType) && !sessionForm.workshopName.trim()) {
       showError("Debes indicar el nombre del workshop.");
@@ -463,7 +572,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       setSaveError('Recarga la sesión para obtener su roster por ID y revisión antes de guardar.');
       return;
     }
-    const studentIds: string[] = sessionForm.classType === 'feriado' ? [] : [...sessionForm.selectedStudents];
+    const studentIds: string[] = sessionForm.classType === 'feriado' ? [] : sessionForm.classType === 'mixto'
+      ? [...new Set(sessionForm.activityBlocks.flatMap(block => block.studentIds))]
+      : [...sessionForm.selectedStudents];
     if (current?.studentIds?.some(id => isCancelled(current, id) && !studentIds.includes(id))) {
       setSaveError('Las reservas canceladas se conservan por ID en el historial. No se pueden quitar ni reactivar.');
       return;
@@ -471,7 +582,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     const giftCardIdByStudentId = Object.fromEntries(studentIds
       .filter(id => !!sessionForm.giftCardIdByStudentId[id])
       .map(id => [id, sessionForm.giftCardIdByStudentId[id] as string]));
-    const payload = {
+    const manualCreditIdByStudentId = Object.fromEntries(studentIds
+      .filter(id => !!sessionForm.manualCreditIdByStudentId[id])
+      .map(id => [id, sessionForm.manualCreditIdByStudentId[id]]));
+    if (Object.keys(manualCreditIdByStudentId).some(id => !!giftCardIdByStudentId[id])) {
+      setSaveError('Selecciona una sola fuente de financiacion para cada ID.');
+      return;
+    }
+    if (current && current.attendancePolicyVersion !== 2 && Object.keys(manualCreditIdByStudentId).length) {
+      setSaveError('El credito manual requiere una sesion con politica 2.');
+      return;
+    }
+    const payload: Omit<ClassSession, 'id'> = {
       date: sessionForm.date,
       startTime: sessionForm.startTime,
       endTime: sessionForm.endTime,
@@ -480,11 +602,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       studentIds,
       students: studentIds.map(id => getStudentName(id, current)),
       giftCardIdByStudentId,
+      manualCreditIdByStudentId,
       ...(current ? { revision: sessionForm.revision } : { attendancePolicyVersion: 2 }),
       teacherId: sessionForm.teacherId || undefined,
       workshopName: sessionForm.workshopName.trim() || undefined,
       privateReason: sessionForm.privateReason.trim() || undefined,
-      sessionAudience: sessionForm.sessionAudience
+      sessionAudience: sessionForm.sessionAudience,
+      activityBlocks: sessionForm.classType === 'mixto' ? sessionForm.activityBlocks : undefined
     };
     await persistSave({ kind: 'reservation', id: editingSessionId, updates: payload });
   };
@@ -528,7 +652,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
     if (daySessions.some(session => session.classType === 'feriado')) return 'full' as const;
 
     const capacity = daySessions.reduce((total, session) => total + getSessionCapacity(session.classType), 0);
-    const occupied = daySessions.reduce((total, session) => total + getSessionOccupancy(session, capacityMap).enrolled, 0);
+    const occupied = daySessions.reduce((total, session) => total + getActiveRosterCount(session), 0);
     const occupancy = capacity > 0 ? occupied / capacity : 0;
 
     if (occupancy >= 0.9 || daySessions.length >= 4) return 'full' as const;
@@ -639,7 +763,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                          <div className="flex w-full flex-col items-start gap-2 pr-14 mb-4">
                            <span className="text-[14px] font-semibold text-neutral-textMain leading-none">{session.startTime} - {session.endTime}</span>
                            <span className={`px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] text-white ${getSessionBadgeClasses(session.classType)}`}>{getSessionLabel(session).toUpperCase()}</span>
-                          {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{occupancy.enrolled}/{occupancy.capacity} cupos</span>}
+                          {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{getActiveRosterCount(session)}/{occupancy.capacity} cupos</span>}
                          </div>
                       <div className="text-[13.75px] font-medium text-neutral-textHelper uppercase tracking-widest mb-4">
                         <span>Profesor/a: </span>
@@ -664,6 +788,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                             Vacaciones
                           </span>
                         )}
+                        {session.classType === 'mixto' && session.activityBlocks?.map(block => (
+                          <span key={block.id || block.activityType} className="mt-1 block text-[12px] font-medium uppercase tracking-widest text-neutral-textSec">
+                            {block.activityType === 'mesa' ? 'Mesa' : 'Torno'} · {getTeacherName(block.teacherId)} · {block.studentIds.length}/{block.capacity}
+                          </span>
+                        ))}
                       </div>
                       <div className="w-full flex-1 space-y-2 overflow-hidden">
                         {getSessionRoster(session).map(({ id: studentId, name: studentName }, idx) => {
@@ -823,8 +952,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
             </header>
 
             {saveError && <p role="alert" className="mx-5 mt-3 rounded-[10px] bg-[#F7E3DF] px-4 py-3 text-[12px] text-[#9C4235] sm:mx-8">{saveError}</p>}
+            {recoveryAlert}
             {refreshConflict?.kind === 'business' && <p role="status" className="mx-5 mt-3 text-[12px] text-[#8B6B5E] sm:mx-8">Esperando la revisión actualizada del servidor. No cierres ni repitas otra operación.</p>}
-            <fieldset disabled={formLocked} className="custom-scrollbar m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-5 py-4 sm:px-8 sm:py-5">
+            <div className="custom-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-5">
+              <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
               <div className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="text-[13px] font-semibold text-[#7B3F22]">{attendanceSession.startTime}–{attendanceSession.endTime}</span>
@@ -878,7 +1009,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h4 className="ui-label uppercase tracking-[0.14em] text-[#7B3F22]">Alumnos</h4>
-                <span className="ui-meta">{attendanceSession.students.length} asignados</span>
+                <span data-testid="attendance-roster-count" className="ui-meta">{policy2 ? `${getActiveRosterCount(attendanceSession)} activos / ${attendanceSession.students.length} en historial` : `${attendanceSession.students.length} asignados`}</span>
               </div>
 
               <div className="overflow-hidden rounded-[12px] border border-[#E8D9CC] bg-white">
@@ -897,7 +1028,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   const business = policy2 ? attendanceSession.businessStateByStudentId?.[studentId] : undefined;
                   const cancelled = isCancelled(attendanceSession, studentId);
                   const businessForm = businessForms[studentId] || { reason: '', kind: 'membership_override' as const, cancellationReason: '', waiverReason: '' };
-                  const canWaive = canWaiveSessionPenalty && !!onWaiveSessionPenalty && !!business?.penaltyId
+                  const canWaive = mayWaivePenalty && !!onWaiveSessionPenalty && !!business?.penaltyId
                     && ['charged', 'pending'].includes(business.penaltyState || '');
                   return (
                     <div key={studentId} data-student-id={studentId} data-attendance-status={status} data-reservation-state={cancelled ? 'cancelled' : 'reserved'} data-billing-state={business?.billingState} className="border-b border-[#EFE3D8] px-3 py-2.5 last:border-b-0 sm:px-4">
@@ -956,11 +1087,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                       </div>
                       {policy2 && <div className="mt-2 space-y-3 border-t border-[#EFE3D8] pt-3 text-[12px] text-[#6E5145]">
                         {studentObj?.studentCategory === 'membresia' && <p>Pago: {studentObj.paymentStatus === 'paid' ? 'pagado' : studentObj.paymentStatus === 'pending' ? 'pendiente' : 'desconocido'}. La aprobación no confirma ni modifica el pago.</p>}
-                        {cancelled && <p data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: sin consumo' : business?.cancellationKind === 'late' ? 'Cancelación tardía: una clase al finalizar' : 'Cancelación registrada; clasificación pendiente del servidor'}{business?.cancelledAt && ` · Hora registrada: ${business.cancelledAt}`}</p>}
-                        {business?.exceptionId && <p data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Registrado en el servidor'}. Aprobada por: {business.approvedBy || 'Actor registrado'}.</p>}
+                        {cancelled && <p data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: sin consumo' : business?.cancellationKind === 'late' ? 'Cancelación tardía: una clase al finalizar' : 'Cancelación registrada; clasificación pendiente del servidor'}. Motivo: {business?.cancellationReason || 'Registrado en el servidor'}. Cancelada por: {business?.cancelledBy || 'Actor registrado'}.{business?.cancelledAt && ` · Hora registrada: ${business.cancelledAt}`}</p>}
+                        {business?.exceptionId && <p data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Registrado en el servidor'}. Aprobada por: {business.approvedBy || 'Actor registrado'}.{business.approvedAt && ` · Hora registrada: ${business.approvedAt}`}</p>}
                         {business?.billingState && <p data-testid="billing-state">{({ unfinalized: 'Consumo sin finalizar', charged: 'Una clase consumida', no_charge: 'Sin consumo', incident: 'Incidencia pendiente de resolución administrativa', waived: 'Penalización eximida' })[business.billingState]}{business.billingKind && ` · ${({ attendance: 'Asistencia', no_show: 'Falta', late_cancellation: 'Cancelación tardía', timely_cancellation: 'Cancelación a tiempo', courtesy: 'Asistencia sin descuento' })[business.billingKind]}`}</p>}
                         {business?.penaltyId && <p data-testid="penalty-state">Penalización: {business.penaltyState === 'charged' ? 'una clase consumida' : business.penaltyState === 'waived' ? 'eximida' : 'pendiente de resolución'}. {business.penaltyReason}</p>}
-                        {!cancelled && !attendanceSession.completedAt && onApproveSessionException && !business?.exceptionId && <div className="space-y-2">
+                        {business?.penaltyState === 'waived' && <p data-testid="waiver-state">Motivo de exención: {business.waiverReason || 'Registrado en el servidor'}. Eximida por: {business.waivedBy || 'Actor registrado'}.{business.waivedAt && ` · Hora registrada: ${business.waivedAt}`}</p>}
+                        {!cancelled && !attendanceSession.completedAt && onApproveSessionException && <div className="space-y-2">
                           <label htmlFor={`exception-kind-${studentId}`} className="block">Tipo de excepción para {studentName} ({shortId(studentId)})</label>
                           <select id={`exception-kind-${studentId}`} value={businessForm.kind} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, kind: event.target.value as 'membership_override' | 'no_credit' } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]">
                             <option value="membership_override">Usar membresía con pago pendiente/desconocido o vencida</option>
@@ -968,7 +1100,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                           </select>
                           <label htmlFor={`exception-reason-${studentId}`} className="block">Motivo de excepción para {studentName} ({shortId(studentId)})</label>
                           <input id={`exception-reason-${studentId}`} value={businessForm.reason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, reason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
-                          <button type="button" onClick={() => handleBusinessOperation(studentId, 'approve_exception')} disabled={attendanceDirty || !businessForm.reason.trim()} className="min-h-10 rounded-[9px] border border-[#DDBFA4] bg-[#F8EEE5] px-3 py-2 text-[12px] font-semibold text-[#7B3F22] disabled:opacity-50">Aprobar excepción</button>
+                          <button type="button" onClick={() => handleBusinessOperation(studentId, 'approve_exception')} disabled={attendanceDirty || !businessForm.reason.trim()} className="min-h-10 rounded-[9px] border border-[#DDBFA4] bg-[#F8EEE5] px-3 py-2 text-[12px] font-semibold text-[#7B3F22] disabled:opacity-50">{business?.exceptionId ? 'Reaprobar excepción' : 'Aprobar excepción'}</button>
                         </div>}
                         {!cancelled && !attendanceSession.completedAt && onCancelSessionReservation && <div className="space-y-2">
                           <label htmlFor={`cancellation-reason-${studentId}`} className="block">Motivo de cancelación para {studentName} ({shortId(studentId)})</label>
@@ -986,11 +1118,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                 })
               )}
               </div>
-            </fieldset>
+              </fieldset>
+            </div>
 
             <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
-              {pendingSave?.kind === 'business' ? (
-                <button type="button" onClick={() => persistSave(pendingSave)} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white disabled:opacity-60">{isSubmitting ? 'Procesando operación...' : 'Reintentar operación'}</button>
+              {pendingSave?.kind === 'business' || pendingSave?.kind === 'recovery' ? (
+                <button type="button" onClick={() => persistSave(pendingSave)} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white disabled:opacity-60">{pendingSave.kind === 'recovery' && ['attendance', 'reservation'].includes(pendingSave.descriptor.operation) ? isSubmitting ? 'Guardando...' : 'Reintentar guardado' : isSubmitting ? 'Procesando operación...' : 'Reintentar operación'}</button>
               ) : attendanceSession.completedAt ? (
                 isEditingAttendance ? (
                   <>
@@ -1062,7 +1195,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
             </header>
 
             {saveError && <p role="alert" className="mx-5 mt-3 rounded-[10px] bg-[#F7E3DF] px-4 py-3 text-[12px] text-[#9C4235] sm:mx-8">{saveError}</p>}
-            <fieldset disabled={formLocked} className="custom-scrollbar m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-5 py-4 sm:px-8 sm:py-5">
+            {recoveryAlert}
+            <div hidden={pendingSave?.kind === 'recovery' && pendingSave.descriptor.isNewSession} className="custom-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-5">
+              <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
               <div className="grid gap-6 md:grid-cols-[0.9fr_1.1fr] md:gap-8">
                 <div className="space-y-5">
                   <fieldset>
@@ -1098,19 +1233,26 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                             workshopName: classType === 'workshop' ? sessionForm.workshopName : '',
                             privateReason: classType === 'privada' ? sessionForm.privateReason : '',
                             selectedStudents: classType === 'feriado' ? [] : sessionForm.selectedStudents,
-                            giftCardIdByStudentId: classType === 'feriado' ? {} : sessionForm.giftCardIdByStudentId,
+                             giftCardIdByStudentId: classType === 'feriado' ? {} : sessionForm.giftCardIdByStudentId,
+                             manualCreditIdByStudentId: classType === 'feriado' ? {} : sessionForm.manualCreditIdByStudentId,
                             startTime: classType === 'feriado' ? '00:00' : sessionForm.startTime,
-                            endTime: classType === 'feriado' ? '24:00' : sessionForm.endTime
+                            endTime: classType === 'feriado' ? '24:00' : sessionForm.endTime,
+                            activityBlocks: classType === 'mixto' && sessionForm.activityBlocks.length === 0
+                              ? [
+                                { activityType: 'mesa', capacity: getSessionCapacity('mesa'), studentIds: [], teacherId: undefined },
+                                { activityType: 'torno', capacity: getSessionCapacity('torno'), studentIds: [], teacherId: undefined }
+                              ] : sessionForm.activityBlocks
                           });
                         }}
                         className="h-11 w-full appearance-none rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 pr-10 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
                       >
                         <option value="mesa">Mesa</option>
                         <option value="torno">Torno</option>
+                        <option value="mixto">Mixto (Mesa + Torno)</option>
                         <option value="coworking">Coworking</option>
                         <option value="workshop">Workshop</option>
                         <option value="privada">Privadas</option>
-                        <option value="feriado" disabled={editingReservation?.studentIds?.some(id => isCancelled(editingReservation, id))}>Feriados</option>
+                        <option value="feriado" disabled={!!editingReservation?.completedAt || editingReservation?.studentIds?.some(id => isCancelled(editingReservation, id))}>Feriados</option>
                       </select>
                       <svg className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m7 10 5 5 5-5" /></svg>
                    </div>
@@ -1172,6 +1314,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
                 {sessionForm.classType !== 'feriado' && (
                   <div className="space-y-6 border-t border-[#E8D9CC] pt-6 md:border-l md:border-t-0 md:pl-10 md:pt-0">
+                    {sessionForm.classType === 'mixto' && <fieldset className="space-y-3 rounded-[12px] border border-[#E8D9CC] bg-[#FFF9F3] p-3">
+                      <legend className="ui-label px-1 uppercase tracking-[0.14em] text-[#7B3F22]">Actividades y profesores</legend>
+                      {sessionForm.activityBlocks.map((block, blockIndex) => <div key={block.activityType} className="rounded-[10px] border border-[#E1C9B5] bg-white p-3">
+                        <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">{block.activityType === 'mesa' ? 'Mesa' : 'Torno'}</span><input aria-label={`Cupo ${block.activityType}`} type="number" min="1" max="100" value={block.capacity} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, capacity: Number(event.target.value) } : item) })} className="h-8 w-20 rounded border border-[#DDBFA4] px-2 text-[12px]" /></div>
+                        <select aria-label={`Profesor de ${block.activityType}`} value={block.teacherId || ''} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, teacherId: event.target.value || undefined } : item) })} className="mb-2 h-9 w-full rounded border border-[#DDBFA4] bg-white px-2 text-[12px]"><option value="">Sin profesor</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{`${teacher.name} ${teacher.surname || ''}`.trim()}</option>)}</select>
+                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => !isStudentArchived(student, today) && (sessionForm.sessionAudience === 'ambos' || (student.studentCategory || 'membresia') === sessionForm.sessionAudience)).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{student.name} {student.surname || ''}</span><span className="ml-auto text-[10px] opacity-60">{student.studentCategory === 'temporal' ? 'Temporal' : 'Membresía'}</span></label>; })}</div>
+                      </div>)}
+                    </fieldset>}
                     <fieldset>
                       <legend className="ui-label mb-3 uppercase tracking-[0.14em] text-[#7B3F22]">Tipo de alumnos</legend>
                        <div className="grid grid-cols-3 gap-2 rounded-[12px] bg-brand-soft p-1">
@@ -1202,7 +1352,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                     <div>
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <label htmlFor="student-search" className="ui-label uppercase tracking-[0.14em] text-[#7B3F22]">Alumnos</label>
-                        <span className="ui-meta">{sessionForm.selectedStudents.length} seleccionados</span>
+                        <span data-testid="reservation-roster-count" className="ui-meta">{activeSelectedCount} seleccionados{sessionForm.selectedStudents.length > activeSelectedCount && ` / ${sessionForm.selectedStudents.length - activeSelectedCount} cancelados`}</span>
                       </div>
                       <div className="relative mb-2.5">
                         <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" /></svg>
@@ -1250,12 +1400,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                            const cancelled = !!editingReservation && isCancelled(editingReservation, studentKey);
                            const capacityReached = !isSelected && activeSelectedCount >= sessionForm.capacity;
                            return (
-                             <button type="button" key={s.id} data-student-id={s.id} aria-pressed={isSelected} disabled={capacityReached || cancelled} onClick={() => {
+                             <button type="button" key={s.id} data-student-id={s.id} aria-pressed={isSelected} disabled={capacityReached || cancelled || !!editingReservation?.completedAt} onClick={() => {
                                const newList = isSelected
                                  ? sessionForm.selectedStudents.filter(n => n !== studentKey)
                                  : [...sessionForm.selectedStudents, studentKey];
                                setSessionForm({ ...sessionForm, selectedStudents: newList,
-                                 giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => newList.includes(id))) });
+                                  giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => newList.includes(id))),
+                                  manualCreditIdByStudentId: Object.fromEntries(Object.entries(sessionForm.manualCreditIdByStudentId).filter(([id]) => newList.includes(id))) });
                              }} className={`mb-0.5 flex min-h-11 w-full items-center justify-between gap-3 rounded-[8px] px-3 py-2 text-left transition last:mb-0 focus:outline-none focus:ring-2 focus:ring-[#C68952] ${isSelected ? 'bg-[#C68952] text-white' : capacityReached ? 'cursor-not-allowed opacity-45' : 'text-[#4E3A31] hover:bg-[#F8EEE5]'}`}>
                               <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                                 {fullName}
@@ -1280,9 +1431,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                             const isTemporary = cat === 'temporal';
                             const persistedSession = sessions.find(session => session.id === editingSessionId);
                             const displayName = getStudentName(studentId, persistedSession);
-                            const selectedCardId = sessionForm.giftCardIdByStudentId[studentId] || '';
-                            const fundingCards = getFundingCards(studentId);
-                            const linkedCard = giftCards.find(card => card.id === selectedCardId && card.recipientStudentId === studentId);
+                             const selectedCardId = sessionForm.giftCardIdByStudentId[studentId] || '';
+                             const selectedManualId = sessionForm.manualCreditIdByStudentId[studentId] || '';
+                             const fundingCards = getFundingCards(studentId);
+                             const manualCredits = getFundingManualCredits(studentObj);
+                             const linkedCard = giftCards.find(card => card.id === selectedCardId && card.recipientStudentId === studentId);
+                             const linkedManual = studentObj?.manualCredits?.find(credit => credit.id === selectedManualId
+                               && credit.studentId === studentId && !!studentObj.sedeId && credit.sedeId === studentObj.sedeId
+                               && (!persistedSession || credit.sedeId === persistedSession.sedeId));
                             const cancelled = !!persistedSession && isCancelled(persistedSession, studentId);
                             const fundingLocked = !!persistedSession && (!!persistedSession.completedAt || cancelled
                               || (persistedSession.attendancePolicyVersion !== 2 && Object.values(persistedSession.attendanceByStudentId || {}).includes('present')));
@@ -1297,10 +1453,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                                 </span>
                                 <button
                                   type="button"
-                                  disabled={cancelled}
+                                   disabled={cancelled || !!persistedSession?.completedAt}
                                   onClick={() => setSessionForm({ ...sessionForm,
                                     selectedStudents: sessionForm.selectedStudents.filter(id => id !== studentId),
-                                    giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => id !== studentId)) })}
+                                    giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => id !== studentId)),
+                                    manualCreditIdByStudentId: Object.fromEntries(Object.entries(sessionForm.manualCreditIdByStudentId).filter(([id]) => id !== studentId)) })}
                                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8B6B5E] transition hover:bg-[#F8EEE5] hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952]"
                                   aria-label={`Quitar ${displayName} (${shortId(studentId)})`}
                                 >
@@ -1311,23 +1468,37 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                                   Financiación de {displayName} ({shortId(studentId)})
                                   <select
                                     aria-label={`Financiación de ${displayName} (${shortId(studentId)})`}
-                                    value={selectedCardId}
-                                    disabled={fundingLocked || (!!selectedCardId && !linkedCard)}
+                                    value={selectedManualId ? `manual:${selectedManualId}` : selectedCardId}
+                                    disabled={fundingLocked || (!!selectedCardId && !linkedCard) || (!!selectedManualId && !linkedManual)}
                                     onChange={event => {
-                                      const mapping = { ...sessionForm.giftCardIdByStudentId };
-                                      if (event.target.value) mapping[studentId] = event.target.value;
-                                      else delete mapping[studentId];
-                                      setSessionForm({ ...sessionForm, giftCardIdByStudentId: mapping });
+                                      const giftMapping = { ...sessionForm.giftCardIdByStudentId };
+                                      const manualMapping = { ...sessionForm.manualCreditIdByStudentId };
+                                      delete giftMapping[studentId];
+                                      delete manualMapping[studentId];
+                                      const value = event.target.value;
+                                      if (value.startsWith('manual:')) manualMapping[studentId] = value.slice(7);
+                                      else if (value) giftMapping[studentId] = value;
+                                      setSessionForm({ ...sessionForm, giftCardIdByStudentId: giftMapping, manualCreditIdByStudentId: manualMapping });
                                     }}
                                     className="mt-1 h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-2 text-[12px] text-[#2F211B] disabled:opacity-55"
                                   >
-                                    <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin bono regalo seleccionado'}</option>
+                                    <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin fuente de credito seleccionada'}</option>
                                     {selectedCardId && !fundingCards.some(card => card.id === selectedCardId) && (
                                       <option value={selectedCardId} disabled>{linkedCard ? `Bono de ${displayName} (${shortId(selectedCardId)})` : `Vínculo persistido (${shortId(selectedCardId)}): recarga para verificar`}</option>
                                     )}
                                     {fundingCards.map(card => <option key={card.id} value={card.id}>Bono de {displayName} ({shortId(card.id)})</option>)}
+                                    {selectedManualId && !manualCredits.some(credit => credit.id === selectedManualId) && (
+                                      <option value={`manual:${selectedManualId}`} disabled>Credito manual original ({shortId(selectedManualId)}): {linkedManual ? 'no disponible para nueva seleccion' : 'no accesible en los datos cargados'}</option>
+                                    )}
+                                    {manualCredits.map(credit => <option key={credit.id} value={`manual:${credit.id}`}>Credito manual ({shortId(credit.id)}): {credit.remainingClasses}/{credit.allocatedClasses} clases, {credit.startsOn} a {credit.endsOn}</option>)}
                                   </select>
                                 </label>
+                                {selectedManualId && <p data-testid="selected-manual-credit-info" className="mt-2 text-[11px] text-[#8B6B5E] [overflow-wrap:anywhere]">
+                                  ID de credito manual: {selectedManualId}.
+                                  {linkedManual ? ` Saldo cargado: ${linkedManual.remainingClasses}/${linkedManual.allocatedClasses} clases. Vigencia: ${linkedManual.startsOn} a ${linkedManual.endsOn}. Evidencia: ${linkedManual.evidence}.`
+                                    : ' Fuente original no accesible en los datos cargados; no se sustituira automaticamente.'}
+                                  {' La seleccion no autoriza el cargo; el servidor valida identidad, vigencia y saldo de la fuente original.'}
+                                </p>}
                               </div>
                             );
                           })}
@@ -1338,7 +1509,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   </div>
                 )}
               </div>
-            </fieldset>
+              </fieldset>
+            </div>
 
             <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
               {editingSessionId && (

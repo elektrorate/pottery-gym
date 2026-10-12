@@ -5,6 +5,7 @@ import { ConfirmModal } from './shared/ConfirmModal';
 import { getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
+import type { ManualCreditIntent, PenaltySettlementIntent, SessionBusinessIntent, PendingStudentCreditOperation } from '../types';
 
 interface StudentListProps {
   students: Student[];
@@ -12,12 +13,202 @@ interface StudentListProps {
   onRenew: (intent: RenewalIntent) => Promise<void>;
   onConfirmPayment: (studentId: string, periodId: string) => Promise<void>;
   onActivateMembership: (studentId: string) => Promise<void>;
+  onInitializeLegacyMemberships?: () => Promise<{ initialized: number; failed: number }>;
   onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
+  canAdjustClasses?: boolean;
   onUpdate: (id: string, updates: Partial<Student>) => Promise<void>;
   onDeleteStudent: (id: string) => Promise<void>;
   selectedStudentId?: string | null;
   onClearSelectedStudent?: () => void;
+  onApproveManualCredit?: (intent: ManualCreditIntent) => Promise<void>;
+  onSettlePendingPenalty?: (intent: PenaltySettlementIntent) => Promise<void>;
+  onWaivePendingPenalty?: (intent: SessionBusinessIntent) => Promise<void>;
+  canManageStudentCredits?: (student: Student) => boolean;
+  getPendingStudentCreditOperation?: (studentId: string) => PendingStudentCreditOperation | null;
+  onRetryPendingStudentCreditOperation?: (studentId: string) => Promise<void>;
 }
+
+const CREDIT_ACTIVITY_LABELS = { mesa: 'Modelado / mesa', torno: 'Torno', coworking: 'Coworking', workshop: 'Workshop', privada: 'Privada' };
+
+const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit' | 'onSettlePendingPenalty' | 'onWaivePendingPenalty' |
+  'canManageStudentCredits' | 'getPendingStudentCreditOperation' | 'onRetryPendingStudentCreditOperation'> & { student: Student; today: string }> =
+  ({ student, today, onApproveManualCredit, onSettlePendingPenalty, onWaivePendingPenalty,
+    canManageStudentCredits, getPendingStudentCreditOperation, onRetryPendingStudentCreditOperation }) => {
+  const [draft, setDraft] = useState({ mode: 'new_manual' as ManualCreditIntent['mode'], quantity: '',
+    activity: '' as ManualCreditIntent['activity'] | '', startsOn: today, endsOn: addMembershipMonth(today), reason: '', evidence: '' });
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submitting = useRef(false);
+  const latest = useRef({ student, getPendingStudentCreditOperation, onRetryPendingStudentCreditOperation });
+  latest.current = { student, getPendingStudentCreditOperation, onRetryPendingStudentCreditOperation };
+  const pending = getPendingStudentCreditOperation?.(student.id) ?? null;
+  const locked = busy || !!pending;
+  const ownerHint = canManageStudentCredits?.(student) === true;
+  const recoveryAvailable = !!getPendingStudentCreditOperation && !!onRetryPendingStudentCreditOperation;
+  const legacyBalance = typeof student.legacyManualBalance === 'number' && Number.isFinite(student.legacyManualBalance)
+    ? student.legacyManualBalance : null;
+  const canReconcile = student.canReconcileLegacy !== false && !isManagedMembership(student)
+    && !student.effectivePeriodId && !student.materializedPeriodId && !student.membershipPeriods?.length
+    && Number.isSafeInteger(legacyBalance) && legacyBalance! > 0
+    && !(student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy');
+  const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0
+    && !!draft.activity && Object.hasOwn(CREDIT_ACTIVITY_LABELS, draft.activity)
+    && /^\d{4}-\d{2}-\d{2}$/.test(draft.startsOn) && /^\d{4}-\d{2}-\d{2}$/.test(draft.endsOn)
+    && Number.isFinite(Date.parse(draft.startsOn)) && Number.isFinite(Date.parse(draft.endsOn))
+    && draft.startsOn <= draft.endsOn && !!draft.reason.trim() && draft.reason.trim().length <= 2000
+    && !!draft.evidence.trim() && draft.evidence.trim().length <= 10000
+    && (draft.mode !== 'reconcile_legacy' || (canReconcile && Number(draft.quantity) === legacyBalance));
+  const controlClass = 'w-full min-w-0 h-10 px-3 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952] disabled:opacity-60';
+  const buttonClass = 'min-h-10 px-3 py-2 rounded-md border border-[#DDBFA4] text-[12px] font-bold text-[#7B3F22] hover:bg-[#F0E2D6] disabled:opacity-50 disabled:cursor-not-allowed';
+
+  const runOperation = async (operation: PendingStudentCreditOperation['operation'] | 'retry', penaltyId?: string) => {
+    if (submitting.current) return;
+    const current = latest.current;
+    const stored = current.getPendingStudentCreditOperation?.(current.student.id);
+    if (operation !== 'retry' && (stored || locked || !ownerHint || !recoveryAvailable || !current.student.sedeId)) return;
+    let action: (() => Promise<void>) | undefined;
+    if (operation === 'retry') {
+      if (!stored || stored.studentId !== current.student.id || !current.onRetryPendingStudentCreditOperation) return;
+      action = () => current.onRetryPendingStudentCreditOperation!(current.student.id);
+    } else if (operation === 'approve_manual') {
+      if (!onApproveManualCredit || !validDraft) return;
+      // Only explicit raw observations are concurrency tokens, never a projected ledger total.
+      const intent: ManualCreditIntent = Object.freeze({ studentId: current.student.id, requestKey: crypto.randomUUID(),
+        mode: draft.mode, quantity: Number(draft.quantity), expectedLegacyBalance: legacyBalance,
+        activity: draft.activity as ManualCreditIntent['activity'], startsOn: draft.startsOn, endsOn: draft.endsOn,
+        reason: draft.reason.trim(), evidence: draft.evidence.trim() });
+      action = () => onApproveManualCredit(intent);
+    } else {
+      const penalty = current.student.pendingPenalties?.find(item => item.id === penaltyId);
+      const reason = reasons[penaltyId || '']?.trim();
+      if (!penalty?.id || penalty.studentId !== current.student.id || penalty.sedeId !== current.student.sedeId
+        || !['pending', 'charged'].includes(penalty.state) || !penalty.sessionId || !Number.isSafeInteger(penalty.sessionRevision)
+        || penalty.sessionRevision! < 0 || !reason || reason.length > 2000) return;
+      if (operation === 'settle_penalty') {
+        const sources = [penalty.originalPeriodId, penalty.originalGiftCardId, penalty.originalManualCreditId].filter(Boolean);
+        if (!onSettlePendingPenalty || penalty.state !== 'pending' || penalty.canSettle !== true || sources.length !== 1) return;
+        const intent: PenaltySettlementIntent = Object.freeze({ penaltyId: penalty.id, studentId: current.student.id,
+          requestKey: crypto.randomUUID(), expectedRevision: penalty.sessionRevision!, reason });
+        action = () => onSettlePendingPenalty(intent);
+      } else {
+        if (!onWaivePendingPenalty) return;
+        const intent: SessionBusinessIntent = Object.freeze({ operation: 'waive_penalty', sessionId: penalty.sessionId,
+          studentId: current.student.id, requestKey: crypto.randomUUID(), expectedRevision: penalty.sessionRevision!, reason });
+        action = () => onWaivePendingPenalty(intent);
+      }
+    }
+    submitting.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+      // The callback refreshes authoritative props before resolving. Never apply a receipt as a balance.
+      const remaining = latest.current.getPendingStudentCreditOperation?.(student.id);
+      if (remaining) setError('El resultado sigue pendiente. Reintenta la misma operación con sus datos originales.');
+      else if (operation === 'approve_manual' || stored?.operation === 'approve_manual') setDraft(value => ({ ...value, quantity: '', reason: '', evidence: '' }));
+      else setReasons({});
+    } catch (failure: any) {
+      const remaining = latest.current.getPendingStudentCreditOperation?.(student.id);
+      const rejected = /^[0-9A-Z]{5}$/.test(failure?.code || '') && !['08000', '08003', '08006', '57014'].includes(failure.code);
+      // Main retains any uncertain write until its receipt/refresh is resolved.
+      // No stored intent means pre-write validation or a fully refreshed rejection.
+      setError(`${failure?.message || 'No se pudo completar la operación.'}${remaining
+        ? ' Resultado sin confirmar. Reintenta los mismos datos originales; no crees otro intento.'
+        : rejected ? ' Revisa los datos recargados antes de aprobar un nuevo intento.'
+          : ' Revisa y corrige los datos antes de volver a intentarlo.'}`);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
+
+  return <section aria-label="Créditos manuales e incidencias" data-testid="student-credit-panel" data-student-id={student.id}
+    className="min-w-0 space-y-4 border-t border-[#E6D8CB] py-6 text-[12px] text-[#8B6B5E]">
+    <div><h4 className="text-[14px] font-bold text-[#7B3F22]">Créditos manuales e incidencias</h4>
+      <p className="mt-1">Aprobar un crédito no confirma pagos, no cambia categorías, no reactiva fichas y no renueva membresías. Solo el propietario de esta sede puede gestionar estos derechos; el servidor verifica su identidad y permiso.</p>
+      <p className="break-all">Alumno: <code>{student.id}</code> · Sede: <code>{student.sedeId || 'Sin sede verificada'}</code></p></div>
+    {error && <p role="alert" className="rounded-md border border-[#E8CABB] bg-[#FBF1EC] p-3 text-[#A85D3B]">{error}</p>}
+    {pending && <div role="status" data-testid="pending-student-credit-operation" data-operation={pending.operation}
+      className="space-y-2 rounded-md border border-[#DDBFA4] bg-[#F7F1EB] p-3">
+      <p>Operación pendiente: {pending.operation === 'approve_manual' ? 'Aprobación de crédito manual' : pending.operation === 'settle_penalty' ? 'Descuento de incidencia' : 'Exención de incidencia'}. Se recuperan sus datos originales, sin generar otro intento.</p>
+      {pending.penaltyId && <p className="break-all">Incidencia: <code>{pending.penaltyId}</code></p>}
+      {pending.sessionId && <p className="break-all">Sesión: <code>{pending.sessionId}</code></p>}
+      {pending.reason && <p className="break-words">Motivo original: {pending.reason}</p>}
+      {onRetryPendingStudentCreditOperation && pending.studentId === student.id
+        ? <button type="button" disabled={busy} className={buttonClass} onClick={() => void runOperation('retry')}>{busy ? 'Procesando operación...' : 'Reintentar operación pendiente'}</button>
+        : <p>La recuperación no está disponible. No se pueden crear operaciones de reemplazo.</p>}
+    </div>}
+    <div className="rounded-md border border-[#E6D8CB] bg-white p-3" data-testid="legacy-credit-observation">
+      <h5 className="font-bold text-[#7B3F22]">Observación del saldo legado</h5>
+      <p>Saldo legado observado: {legacyBalance === null ? 'Desconocido / sin observación de origen' : legacyBalance}.</p>
+      <p>{canReconcile ? 'Saldo positivo sin derecho administrado: requiere conciliación explícita.' : 'No hay saldo legado conciliable con los datos de origen disponibles.'} No se suma al registro de derechos manuales ni prueba un pago.</p>
+      {(student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy') && <p>Este saldo ya fue conciliado. La observación original se conserva como historial, no como crédito adicional.</p>}
+    </div>
+    <div className="space-y-2" data-testid="manual-credit-ledger"><h5 className="font-bold text-[#7B3F22]">Derechos manuales aprobados</h5>
+      {(student.manualCredits || []).length === 0 ? <p>Sin derechos manuales aprobados.</p> : student.manualCredits!.map(credit => <article key={credit.id}
+        data-manual-credit-id={credit.id} className="min-w-0 space-y-1 rounded-md border border-[#E6D8CB] bg-white p-3 break-words">
+        <p className="font-bold text-[#7B3F22]">{credit.mode === 'reconcile_legacy' ? 'Conciliación de saldo legado' : 'Nuevo crédito manual'} · {CREDIT_ACTIVITY_LABELS[credit.activity]}</p>
+        <p>{credit.remainingClasses} restantes / {credit.allocatedClasses} aprobadas · {credit.startsOn} a {credit.endsOn}</p>
+        <p className="break-all">Derecho: <code>{credit.id}</code> · Alumno: <code>{credit.studentId}</code> · Sede: <code>{credit.sedeId}</code></p>
+        <p>Motivo: {credit.reason}</p><p>Evidencia / origen: {credit.evidence}</p>
+        <p className="break-all">Aprobado por (ID de actor): <code>{credit.approvedBy}</code> · {credit.approvedAt}</p>
+      </article>)}
+    </div>
+    {ownerHint ? <fieldset disabled={locked || !student.sedeId || !recoveryAvailable || !onApproveManualCredit} className="min-w-0 space-y-3 rounded-md border border-[#DDBFA4] p-3">
+      <legend className="px-1 font-bold text-[#7B3F22]">Aprobación explícita de crédito manual</legend>
+      {(!onApproveManualCredit || !recoveryAvailable) && <p>La aprobación o la recuperación segura no está disponible.</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label>Modo del crédito manual<select aria-label="Modo del crédito manual" className={controlClass} value={draft.mode} onChange={event => setDraft({ ...draft, mode: event.target.value as ManualCreditIntent['mode'] })}>
+          <option value="new_manual">Nuevo crédito manual</option><option value="reconcile_legacy" disabled={!canReconcile}>Conciliar saldo legado</option>
+        </select></label>
+        <label>Actividad del crédito manual<select aria-label="Actividad del crédito manual" className={controlClass} value={draft.activity} onChange={event => setDraft({ ...draft, activity: event.target.value as ManualCreditIntent['activity'] })}>
+          <option value="">Seleccionar actividad</option>{Object.entries(CREDIT_ACTIVITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+        <label>Cantidad de clases manuales<input aria-label="Cantidad de clases manuales" className={controlClass} type="number" min="1" step="1" value={draft.quantity} onChange={event => setDraft({ ...draft, quantity: event.target.value })} /></label>
+        <p>{draft.mode === 'reconcile_legacy' ? `La conciliación debe incluir el saldo legado completo (${legacyBalance ?? 'desconocido'} clases), no una cantidad parcial. ` : ''}La cantidad, actividad y vigencia requieren aprobación expresa. Las fechas propuestas son editables; no acreditan validez antes de aprobar.</p>
+        <label>Inicio del crédito manual<input aria-label="Inicio del crédito manual" className={controlClass} type="date" value={draft.startsOn} onChange={event => setDraft({ ...draft, startsOn: event.target.value })} /></label>
+        <label>Fin del crédito manual<input aria-label="Fin del crédito manual" className={controlClass} type="date" value={draft.endsOn} onChange={event => setDraft({ ...draft, endsOn: event.target.value })} /></label>
+      </div>
+      <label>Motivo del crédito manual<textarea aria-label="Motivo del crédito manual" maxLength={2000} className={`${controlClass} min-h-20 py-2`} value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value })} /></label>
+      <label>Evidencia / origen del crédito manual<textarea aria-label="Evidencia / origen del crédito manual" maxLength={10000} className={`${controlClass} min-h-20 py-2`} value={draft.evidence} onChange={event => setDraft({ ...draft, evidence: event.target.value })} /></label>
+      <p>Motivo: máximo 2000 caracteres. Evidencia / origen: máximo 10000 caracteres.</p>
+      <button type="button" disabled={!validDraft} className={`${buttonClass} bg-[#7B3F22] text-white hover:bg-[#63321C]`} onClick={() => void runOperation('approve_manual')}>Aprobar crédito manual</button>
+    </fieldset> : <p>Solo lectura. La gestión corresponde al propietario de esta sede, no al rol de administrador ni al de superadministrador.</p>}
+    <div className="space-y-2" data-testid="student-penalty-list"><h5 className="font-bold text-[#7B3F22]">Incidencias y derecho original</h5>
+      <p>Solo se descuenta el derecho original. No se elige otro bono ni se usa el período actual como sustituto. Si no es utilizable, la incidencia permanece pendiente o el propietario puede eximirla. Eximir un cargo ya aplicado revierte únicamente su derecho original, con validación del servidor.</p>
+      {(student.pendingPenalties || []).length === 0 ? <p>Sin incidencias registradas.</p> : student.pendingPenalties!.map(penalty => {
+        const sources = [['Período original', penalty.originalPeriodId], ['Gift Card original', penalty.originalGiftCardId], ['Crédito manual original', penalty.originalManualCreditId]].filter(([, id]) => !!id);
+        const identityAvailable = !!penalty.id && penalty.studentId === student.id && !!student.sedeId && penalty.sedeId === student.sedeId
+          && !!penalty.sessionId && Number.isSafeInteger(penalty.sessionRevision) && penalty.sessionRevision! >= 0;
+        const validReason = !!reasons[penalty.id]?.trim() && reasons[penalty.id].trim().length <= 2000;
+        return <article key={penalty.id} data-penalty-id={penalty.id} data-penalty-state={penalty.state} className="min-w-0 space-y-2 rounded-md border border-[#E6D8CB] bg-white p-3 break-words">
+          <p className="font-bold text-[#7B3F22]">{penalty.kind === 'no_show' ? 'Falta sin asistencia' : 'Cancelación tardía'} · {penalty.state === 'pending' ? 'Pendiente de resolución' : penalty.state === 'charged' ? 'Descuento aplicado' : 'Eximida'}</p>
+          <p>{penalty.sessionDate} · {penalty.sessionStart} · Revisión de sesión: {penalty.sessionRevision ?? 'Sin revisión'}</p>
+          <p className="break-all">Incidencia: <code>{penalty.id}</code> · Sesión: <code>{penalty.sessionId}</code> · Alumno: <code>{penalty.studentId}</code> · Sede: <code>{penalty.sedeId}</code></p>
+          <div data-testid="penalty-original-source">{sources.length ? sources.map(([label, id]) => <p key={label} className="break-all">{label}: <code>{id}</code></p>) : <p>Sin derecho original atribuible. No se sustituye por el saldo actual.</p>}</div>
+          <p>Motivo registrado: {penalty.reason}</p>
+          {(penalty.settlementId || penalty.settlementReason || penalty.settledBy || penalty.settledAt) && <div data-testid="penalty-settlement-audit" className="space-y-1 border-t border-[#E6D8CB] pt-2">
+            <p className="font-bold text-[#7B3F22]">Liquidación registrada</p>
+            {penalty.settlementId && <p className="break-all">Liquidación: <code>{penalty.settlementId}</code></p>}
+            {penalty.settlementReason && <p>Motivo de liquidación: {penalty.settlementReason}</p>}
+            {penalty.settledBy && <p className="break-all">Aplicada por (ID de actor): <code>{penalty.settledBy}</code></p>}
+            {penalty.settledAt && <p>Fecha de liquidación: {penalty.settledAt}</p>}
+          </div>}
+          {penalty.blockedReason && <p>{penalty.blockedReason}</p>}
+          {penalty.state === 'pending' && <p>La disponibilidad indicada se calcula en la aplicación sobre el derecho original; no concede permiso ni garantiza un cargo. El servidor valida la operación final.{penalty.canSettle !== true ? ' El descuento no está disponible con los datos actuales.' : ''}</p>}
+          {ownerHint && (penalty.state === 'pending' || (penalty.state === 'charged' && onWaivePendingPenalty)) && <fieldset disabled={locked || !identityAvailable || !recoveryAvailable} className="min-w-0 space-y-2 border-0 p-0">
+            <label>Motivo de resolución<input aria-label={`Motivo de resolución ${penalty.id}`} maxLength={2000} className={controlClass} value={reasons[penalty.id] || ''} onChange={event => setReasons({ ...reasons, [penalty.id]: event.target.value })} /></label>
+            <p>Motivo obligatorio: máximo 2000 caracteres.</p>
+            <div className="flex flex-wrap gap-2">{penalty.state === 'pending' && <button type="button" className={buttonClass} disabled={!onSettlePendingPenalty || penalty.canSettle !== true || sources.length !== 1 || !validReason} onClick={() => void runOperation('settle_penalty', penalty.id)}>Aplicar descuento pendiente</button>}
+              {onWaivePendingPenalty && <button type="button" className={buttonClass} disabled={!validReason} onClick={() => void runOperation('waive_penalty', penalty.id)}>Eximir incidencia</button>}</div>
+            {penalty.state === 'pending' && !onSettlePendingPenalty && <p>La liquidación no está disponible.</p>}
+          </fieldset>}
+        </article>;
+      })}
+    </div>
+  </section>;
+};
 
 type TabType = 'all' | 'active' | 'pending' | 'expired';
 type CategoryFilter = 'todos' | 'membresia' | 'temporal' | 'archivados';
@@ -51,15 +242,19 @@ const StudentList: React.FC<StudentListProps> = ({
   students,
   onAddStudent,
   onRenew,
-  onConfirmPayment, onActivateMembership, onAdjustClasses,
+  onConfirmPayment, onActivateMembership, onInitializeLegacyMemberships, onAdjustClasses, canAdjustClasses = true,
   onUpdate,
   onDeleteStudent,
   selectedStudentId,
-  onClearSelectedStudent
+  onClearSelectedStudent,
+  onApproveManualCredit, onSettlePendingPenalty, onWaivePendingPenalty, canManageStudentCredits,
+  getPendingStudentCreditOperation, onRetryPendingStudentCreditOperation
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('todos');
   const [membershipTierFilter, setMembershipTierFilter] = useState<MembershipTierFilter>('todos');
+  const [showLegacyInitialization, setShowLegacyInitialization] = useState(false);
+  const [initializingLegacy, setInitializingLegacy] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showPersonalInfo, setShowPersonalInfo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -341,6 +536,10 @@ const StudentList: React.FC<StudentListProps> = ({
     });
     return counts;
   }, [students, today]);
+  const legacyMembershipCount = useMemo(() => students.filter(student =>
+    (student.studentCategory || 'membresia') === 'membresia'
+    && !student.effectivePeriodId && !student.materializedPeriodId && !student.membershipPeriods?.length
+  ).length, [students]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[#F7F3EF] text-neutral-textMain" style={{ fontFamily: "'Outfit', sans-serif" }}>
@@ -386,6 +585,11 @@ const StudentList: React.FC<StudentListProps> = ({
             </div>}
           </section>
 
+          {legacyMembershipCount > 0 && onInitializeLegacyMemberships && <div className="mb-4 flex flex-col gap-2 rounded-lg border border-[#E8CABB] bg-[#FBF1EC] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[13px] text-[#7B3F22]">Hay {legacyMembershipCount} membresías antiguas sin período inicializado.</p>
+            <button type="button" onClick={() => setShowLegacyInitialization(true)} className="min-h-10 shrink-0 rounded-md bg-[#7B3F22] px-3 py-2 text-[12px] font-bold text-white hover:bg-[#63321C]">Inicializar períodos</button>
+          </div>}
+
            <div className="bg-white border border-[#DDBFA4] rounded-xl overflow-hidden">
              <div className="hidden md:grid grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-4 px-5 py-3 border-b border-[#EDE2D8] text-[12px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E]"><span>Alumno</span><span>Actividad</span><span>Bonos</span><span>Estado</span></div>
             {filteredStudents.length === 0 ? <div className="px-6 py-16 text-center"><p className="text-[15px] text-[#7B3F22]" style={{ fontFamily: "'Outfit', sans-serif" }}>No hay alumnos que mostrar</p><p className="text-[12px] text-[#8B6B5E] mt-1">Prueba a cambiar la búsqueda o los filtros.</p></div> : filteredStudents.map(s => {
@@ -397,7 +601,7 @@ const StudentList: React.FC<StudentListProps> = ({
               const membershipTier = inferMembershipTier(s.membershipTier, s.price);
               const initials = `${s.name.charAt(0)}${s.surname?.charAt(0) || ''}`.toUpperCase();
               const percentage = Math.min(100, (s.classesRemaining / (s.bonosAsignados || 4)) * 100);
-               return <button key={s.id} onClick={() => handleEditClick(s)} className="ui-list w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-3 md:gap-4 items-center px-4 md:px-5 py-3.5 border-b last:border-0 border-[#EDE2D8] hover:bg-[#FCF8F4] focus:outline-none focus:bg-[#FCF8F4] transition-colors group">
+               return <button key={s.id} data-student-id={s.id} onClick={() => handleEditClick(s)} className="ui-list w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-3 md:gap-4 items-center px-4 md:px-5 py-3.5 border-b last:border-0 border-[#EDE2D8] hover:bg-[#FCF8F4] focus:outline-none focus:bg-[#FCF8F4] transition-colors group">
                   <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{s.name} {s.surname}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{s.classType || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : CATEGORY_LABELS[cat] || cat}</span></span></div>
                   <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{s.classType || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? MEMBERSHIP_PLANS[membershipTier].label : CATEGORY_LABELS[cat] || cat}</span></div>
                   <div className="text-right md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados || 4}</span></strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
@@ -503,24 +707,42 @@ const StudentList: React.FC<StudentListProps> = ({
                  <p>Renovar programa un único sucesor pendiente; conserva las clases y el pago actuales hasta su inicio.</p>
                  <button type="button" disabled={isSubmitting} onClick={handleRenewMembership}>Programar renovación / reintentar</button>
                  <p>Saldo actual del período: {liveEditingStudent.classesRemaining} / {liveEditingStudent.bonosAsignados ?? 'desconocido'}</p>
-                 {adjustmentNeedsReview && <button type="button" disabled={isSubmitting} onClick={() => { pendingIntents.current.clear(`adjust:${liveEditingStudent.id}`); adjustmentIntentRef.current = null; setAdjustmentNeedsReview(false); }}>Revisé el período y saldo: crear un nuevo intento</button>}
+                  {canAdjustClasses ? <>
+                  {adjustmentNeedsReview && <button type="button" disabled={isSubmitting} onClick={() => { pendingIntents.current.clear(`adjust:${liveEditingStudent.id}`); adjustmentIntentRef.current = null; setAdjustmentNeedsReview(false); }}>Revisé el período y saldo: crear un nuevo intento</button>}
                  <label>Ajuste explícito de clases <input type="number" value={adjustmentDelta} disabled={isSubmitting || !!adjustmentIntentRef.current} onChange={event => setAdjustmentDelta(Number(event.target.value))} /></label>
                  <button type="button" disabled={isSubmitting || adjustmentNeedsReview || !liveEditingStudent.effectivePeriodId || !Number.isInteger(adjustmentDelta) || !adjustmentDelta} onClick={() => void runMembershipAction(async () => {
                    adjustmentIntentRef.current ||= createClassAdjustmentIntent(liveEditingStudent, adjustmentDelta);
                    pendingIntents.current.set(`adjust:${liveEditingStudent.id}`, adjustmentIntentRef.current);
                    try { await onAdjustClasses(adjustmentIntentRef.current); pendingIntents.current.clear(`adjust:${liveEditingStudent.id}`); adjustmentIntentRef.current = null; }
                    catch (error: any) { if (error.code === '40001') setAdjustmentNeedsReview(true); throw error; }
-                 })}>Aplicar ajuste / reintentar</button>
+                  })}>Aplicar ajuste / reintentar</button>
+                  </> : <p className="text-sm">Los ajustes genéricos están bloqueados para no eludir penalizaciones. Las exenciones se revisan en el control de asistencia y solo las realiza el propietario. Un ajuste anterior sin confirmar requiere revisar su recibo, no crear otro.</p>}
                </section>}
                {editingStudent && isStudentArchived(editingStudent, today) && <button type="button" disabled={isSubmitting} onClick={async () => { setIsSubmitting(true); try { await onUpdate(editingStudent.id, getStudentReactivationUpdates()); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo reactivar.'); } finally { setIsSubmitting(false); } }} className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7B3F22] hover:text-[#C68952] disabled:opacity-50">Reactivar alumno manualmente</button>}
                {editingStudent && !isStudentArchived(editingStudent, today) && <button type="button" onClick={() => setStudentToArchive(editingStudent.id)} className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7B3F22] hover:text-[#C68952]">Archivar alumno manualmente</button>}
                {editingStudent && !managedEdit && <button type="button" onClick={() => setStudentToDelete(editingStudent.id)} className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#A85D3B] hover:text-[#7B3F22]">Eliminar alumno</button>}
             </div>
-          </form></div>
+          </form>
+          {editingStudent && students.find(student => student.id === editingStudent.id) && <StudentCreditPanel key={editingStudent.id}
+            student={students.find(student => student.id === editingStudent.id)!} today={today}
+            onApproveManualCredit={onApproveManualCredit} onSettlePendingPenalty={onSettlePendingPenalty}
+            onWaivePendingPenalty={onWaivePendingPenalty} canManageStudentCredits={canManageStudentCredits}
+            getPendingStudentCreditOperation={getPendingStudentCreditOperation} onRetryPendingStudentCreditOperation={onRetryPendingStudentCreditOperation} />}
+          </div>
 
           <div className="absolute bottom-0 left-0 right-0 px-4 sm:px-7 py-3 bg-[#FDFBF9]/95 backdrop-blur border-t border-[#E6D8CB] flex items-center justify-end gap-3 shrink-0 z-10"><button type="button" onClick={() => setShowModal(false)} className="h-10 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E] hover:text-[#7B3F22]">Cancelar</button><button onClick={handleSubmit} disabled={isSubmitting} className="h-10 px-4 sm:px-5 bg-[#7B3F22] text-white rounded-md text-[11px] font-bold uppercase tracking-[0.1em] hover:bg-[#63321C] transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? 'Guardando...' : (editingStudent ? 'Guardar cambios' : 'Guardar alumno')}</button></div>
         </div>
       </div>}
+      <ConfirmModal isOpen={showLegacyInitialization} title="¿Inicializar períodos?" message={`Se crearán los períodos de membresía para ${legacyMembershipCount} alumnos antiguos. No se modifican pagos ni bonos existentes.`} confirmText="Inicializar" isDestructive={false} loading={initializingLegacy} loadingText="Inicializando..." onCancel={() => { if (!initializingLegacy) setShowLegacyInitialization(false); }} onConfirm={async () => {
+        if (!onInitializeLegacyMemberships || initializingLegacy) return;
+        setInitializingLegacy(true);
+        try {
+          const result = await onInitializeLegacyMemberships();
+          setShowLegacyInitialization(false);
+          if (result.failed > 0) showError(`Se inicializaron ${result.initialized} períodos; ${result.failed} requieren revisión.`);
+        } catch (error: any) { showError(error?.message || 'No se pudieron inicializar los períodos.'); }
+        finally { setInitializingLegacy(false); }
+      }} />
 
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory === 'temporal' ? 'Temporal' : 'Membresía'}. Se ajustarán sus bonos y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y los bonos contratados.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />

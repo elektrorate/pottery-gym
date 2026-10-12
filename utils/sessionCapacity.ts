@@ -20,8 +20,9 @@ export const capacityDefaultsToMap = (defaults: WorkshopCapacityDefault[] | Capa
 
 export const getSessionEnrolledCount = (session: ClassSession): number => {
   const enrolled = new Set<string>();
-  session.students.forEach((name, index) => {
-    const id = session.studentIds?.[index];
+    session.students.forEach((name, index) => {
+        const id = session.studentIds?.[index];
+        if (id && session.attendancePolicyVersion === 2 && session.businessStateByStudentId?.[id]?.reservationState === 'cancelled') return;
     enrolled.add(id || normalizeName(name));
   });
   return enrolled.size;

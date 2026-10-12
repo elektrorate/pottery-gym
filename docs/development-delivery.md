@@ -1,6 +1,7 @@
 # Domain Integrity Delivery
 
-Branch: `feat/domain-integrity-authorized-api`.
+Current integration branch: `feat/session-policy-integration`, based on main `8dd8315`.
+Prior delivery branch: `feat/domain-integrity-authorized-api`.
 Starting commit: `0ee7a72`, which already integrates the four commits of PR #1.
 Issues #2 through #7 and PR #1 were read before editing. Issues #8/#9 expose
 additional business/security dependencies and remain open too.
@@ -22,7 +23,7 @@ commits. Generated Supabase CLI metadata is also excluded.
 | --- | --- | --- | --- | --- |
 | #2 Permissions by tenant/student/operation | Partial | Backend-provisioned exact read grants; expiring/revocable principals; negative authorization checks; server tenant checks for session/card effects | SQL permissions tests and domain contract tests | Approve business matrix #8, provisioning operator and credential lifecycle; no student self-service |
 | #3 Gift identity/balance/history | Partial | Explicit same-tenant recipient ID; no name lookup/auto-person creation; guarded append-only ledger and durable receipts; repeat consume/reverse cycles; server expiry; separate payment action | Gift SQL fixtures/concurrency, client and browser tests | Real isolated staging approval; preserve/reconcile inconsistent legacy rows explicitly; old shared-key read exposes more fields than the new pilot |
-| #4 Atomic reservations/attendance | Partial | Session ID/revision RPCs; whole-batch balance + attendance transaction; exact roster; original funding records; retry receipts; deterministic locks; server cup/conflict checks; Calendar integration; Dashboard opens same control | Atomic SQL fixtures/races, session client and Calendar browser tests | Approve cancellation/no-show/eligibility policy. Unknown historical funding rejects. Historical re-debit after period rollover rejects rather than charging successor. Physical deletion disabled to preserve history |
+| #4 Atomic reservations/attendance | Partial, policy/manual phases verified locally | Policy2 finalization, exceptions, 8h cancellations, attributable manual credits, owner-only original-source settlement and waivers, durable ID/revision intents | 45 real local-stack scenarios, 370 regression cases, SQL preservation and races | Unknown/ambiguous legacy funds fail closed; no automatic incident settlement; remote activation/history rules remain pending |
 | #5 Minimal authorized domain API | Partial | Version 1 student summary / membership status; shared SQL/Edge contracts, strict fields, no administrative client key; metadata-only audit | SQL and in-memory HTTP/contract tests | Session/reservation/report read catalog, rate limits and deployed gateway validation still pending. Direct RPC calls are not covered by Edge request audit |
 | #6 MCP adapter | Partial | Two read tools adapt exactly the same API; fixed destination; bounded schemas; no SQL/CRUD/write tools | Adapter contract/negative input tests | No live MCP transport/server. Agree clients, authentication/consent/revocation and run client conformance before enabling |
 | #7 Integration/deployment | Partial | Reproducible isolated runners, regression suite, separate local Supabase staging, rollout/recovery gates | Local Auth/PostgreSQL/Edge/browser integration now passed; see evidence below | Remote staging/preview integration, backup restoration rehearsal and coordinated rollout remain pending. No deployment authorization inferred |
@@ -39,10 +40,15 @@ Executed in the initial development session and local-staging follow-up:
   final-seat races, full-capacity edits, original-period corrections and lost replies.
 - `npm run test:sql:domain-read`: passed, including revocation, injected data,
   forged scopes, minimized fields and unchanged historical snapshots.
-- `npm run test:local`: latest 102/102 passed, including the three additional
-  gift lifecycle regressions from the staging review.
-- `npm run staging:test`: 4/4 real local-stack integration scenarios passed,
-  without altering the demonstration seed or deleting fixture history.
+- `npm run test:local`: latest 370/370 passed, including manual credit/pagination and policy controls,
+  persistent remount recovery, layout and projection/RPC regression cases.
+- `npm run staging:test`: latest 45/45 real local-stack scenarios passed,
+  including original-source settlement and exact replay after reload/read failure.
+- `npm run test:sql:manual-credits`: 837 isolated SQL assertions, including 339
+  expected denials; 17 manual and five prior policy2 concurrent scenarios passed.
+  The cold 24-migration chain includes genuine pre-integrity gift-created mirrors.
+- `npm run test:sql:policy`: 275 assertions, 105 expected denials and five
+  concurrent scenarios passed; old sessions/receipts retained their v1 behavior.
 - The owned local Supabase schema passed `db lint`.
 - Owned local `supabase test db`: 3/3 passed; all fixture writes rolled back.
 - `npx tsc --noEmit`: passed.
@@ -68,6 +74,14 @@ Created but NOT applied remotely:
 1. `20261011200000_gift_card_integrity.sql`
 2. `20261011210000_authorized_read_api.sql`
 3. `20261011220000_atomic_session_operations.sql`
+4. `20261011230000_session_business_policy.sql`
+5. `20261011233000_session_policy_validation_volatility.sql`
+6. `20261011234000_session_policy_validation_stable.sql`
+7. `20261012090000_manual_credit_reconciliation_settlement.sql`
+
+The manual migration was applied only to the owned local stack on 2026-10-12,
+after an encrypted, decryption-verified backup and preservation fingerprints.
+See `docs/manual-credit-phase.txt`. Existing applied SQL files were not edited.
 
 Do not blindly push a local baseline or repair remote history. Inspect the target
 schema/history with explicit authorization. Constraint replacements use
@@ -100,21 +114,30 @@ clear historical archives or invent payment observations.
 
 ## Next Session
 
-Approve the capabilities/eligibility matrix and MCP transport/client targets.
+Complete the financial/delegation/privacy matrix and MCP transport/client targets.
 Synthetic local Supabase staging is now available; see docs/local-staging.txt.
-Its four real browser/Auth/PostgreSQL/Edge scenarios passed, including lost
-committed replies, original-source correction, homonyms, foreign RLS and scoped
-reader authorization. Fixtures and grants are retained; no production data was
-copied or changed. The local environment has a separate project identity and
-ports and does not load production .env files.
+Its 45 real scenarios passed. New sessions use policy2; pre-existing sessions
+remain v1 without rebilling. Every old business observation/policy was compared
+before/after local migration and preserved. Encrypted backup and decryption
+were verified outside Git; a full restoration rehearsal remains pending.
 
 The tests exposed and verified fixes for cumulative gift-redeem UI inference
 and concurrent login authorization. Remote staging/preview integration,
 backup restoration rehearsal and deployment authorization remain pending.
 No changes to production are required to review this draft.
 
+Manual credit approval and pending-penalty settlement are wired into the student
+profile. Only the actual sede owner can mutate; settlement cannot choose another
+source. Stored actor/student-scoped intents retain original arguments through
+transport loss, failed refresh, read-only recovery and full reload. Complete
+paginated reads avoid the 1000-row historical truncation failure.
+Private append-only gift ambiguity observations prevent legacy mirror duplication
+even after recipient or label changes; observations never establish ownership.
+Unknown origins require independent evidence, not automatic financial conversion.
+
 Developer-only staging limitations are documented in docs/local-staging.txt:
 Docker publishes service ports on all host interfaces unless the firewall
 restricts access; the reader grants intentionally expire after one day; and a
-Windows CLI-shim timeout can leave a native descendant running. This tooling
+Windows startup/timeouts require checking actual service health before retry.
+The local runner now invokes the native binary instead of a Node shim. This tooling
 must never contain real data or be exposed as a public staging service.

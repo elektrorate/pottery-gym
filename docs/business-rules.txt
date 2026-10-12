@@ -6,9 +6,10 @@ Registro: OpenCode, mediante respuestas explicitas del solicitante.
 
 ESTADO
 
-Reglas comerciales aprobadas. PENDIENTES de implementacion y pruebas.
-Este documento no afirma que las reglas nuevas ya esten activas ni autoriza
-migraciones remotas, fusion de PRs o despliegues en produccion.
+Reglas implementadas y probadas en el staging LOCAL para fuentes atribuibles
+de periodo de membresia, Gift Card y credito manual, con politica 2.
+Las sesiones anteriores mantienen politica 1, sin recobro ni reinterpretacion.
+No autoriza migraciones remotas, fusion de PRs o despliegues en produccion.
 
 REGLAS APROBADAS
 
@@ -96,6 +97,45 @@ La fecha de corte de cancelacion debe seguir la convencion horaria aprobada
 del taller y validarse alrededor de cambios de hora; no reinterpretar los
 timestamps historicos silenciosamente.
 
-La version de codigo actual todavia consume al guardar presencia, rechaza
-la financiacion de membresia pendiente/vencida y no penaliza faltas.
-Las pruebas actuales prueban ese contrato anterior, no estas reglas nuevas.
+La version integrada aplica estas reglas a sesiones nuevas. Incidencias sin
+credito no se liquidan automaticamente ni se trasladan a periodos futuros.
+El saldo manual positivo/desconocido de temporales sin una fuente atribuible
+requiere conciliacion; no se lo consume ni se lo declara cero/cortesia.
+Los ajustes genericos de membresia estan bloqueados para no eludir penalizaciones.
+
+Verificacion final local: 370 pruebas de regresion, 37 unitarias y 45 escenarios
+reales Auth/PostgreSQL/PostgREST/Edge/navegador. El runner manual incluye 837
+aserciones SQL y 22 escenarios concurrentes. TypeScript y build aprobados.
+El corte exacto de ocho horas y los cambios de hora de Madrid se comprobaron
+en SQL; horas inexistentes o ambiguas fallan cerradas, sin cambiar historicos.
+
+DECISION ADICIONAL - CREDITOS MANUALES Y LIQUIDACION
+
+Fecha: 2026-10-12T08:06:43+02:00
+Responsable: solicitante del proyecto en esta conversacion.
+Acuerdo implementado y probado SOLO LOCALMENTE el 2026-10-12.
+Ver docs/manual-credit-phase.txt para respaldo, rollout, evidencia y limites.
+
+- Solo el PROPIETARIO DEL TALLER puede aprobar creditos manuales.
+- Solo el PROPIETARIO DEL TALLER puede aplicar el descuento de una incidencia
+  pendiente; la accion se gestionara desde el PERFIL DEL ALUMNO.
+- El perfil es el punto de interfaz, no una autorizacion ni una cartera generica.
+- Solo se puede consumir el DERECHO ORIGINAL vinculado a esa incidencia:
+  el periodo o bono original, si dispone de credito valido para resolverla.
+- No se permite elegir otra membresia, bono, periodo posterior o credito manual
+  nuevo como sustituto, ni realizar compensaciones automaticas.
+- Si el derecho original no es valido o no tiene saldo, mantener la incidencia
+  pendiente o eximirla mediante la accion del propietario ya aprobada.
+- Aprobar un credito manual no confirma un pago, cambia la categoria del alumno,
+  reactiva una ficha ni renueva una membresia automaticamente.
+- Las operaciones requieren motivo, evidencia/origen del credito, actor,
+  identidades verificadas y recibo idempotente; no sobrescribir historicos.
+- El rol administrador/superadministrador o un parametro del cliente no
+  sustituye la comprobacion de sedes.owner_id para estas acciones.
+
+La implementacion activa en el staging local RPCs concretos de aprobacion y
+liquidacion, sin ajuste generico de saldo ni selector de fuente sustituta.
+Conciliacion exige saldo positivo conocido completo y evidencia; se bloquean
+duplicaciones de membresias y ambiguedades Gift aun despues de reasignarlas.
+Los reintentos conservan identidades/argumentos y solo se limpian tras recarga.
+No se aplico ni se autorizo este bloque en produccion.

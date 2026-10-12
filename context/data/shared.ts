@@ -142,6 +142,7 @@ export const mapGiftCardRowToModel = (row: any): GiftCard => {
     );
     return {
         id: row.id,
+        sedeId: row.sede_id ?? undefined,
         code: row.code || `CR-${String(row.id).replace(/-/g, '').slice(0, 10).toUpperCase()}`,
         buyer: row.buyer || '',
         buyerPhone: row.buyer_phone || undefined,

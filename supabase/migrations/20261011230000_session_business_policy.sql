@@ -111,15 +111,41 @@ create table public.session_business_events (
   foreign key (student_id, sede_id) references public.students(id, sede_id) on delete restrict
 );
 
-create function private.session_employee_sede(p_sede_id uuid) returns boolean
+-- Reads retain the shipped global super-admin scope; business writes require
+-- an actual workshop employee. Integration identities never get either scope.
+create function private.session_business_read_sede(p_sede_id uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
-  select auth.uid() is not null and auth.role() = 'authenticated'
+  select auth.uid() is not null and auth.role() is not distinct from 'authenticated'
     and exists (select 1 from public.profiles where id = auth.uid() and role in ('tallerista', 'staff', 'super_admin'))
     and not exists (select 1 from private.domain_read_principals where user_id = auth.uid() and kind = 'integration')
+    and private.can_access_sede(p_sede_id);
+$$;
+create function private.session_employee_sede(p_sede_id uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select private.session_business_read_sede(p_sede_id)
     and exists (select 1 from public.sedes t where t.id = p_sede_id and t.is_active is true
       and (t.owner_id = auth.uid() or exists (select 1 from public.sede_members m
         where m.sede_id = t.id and m.user_id = auth.uid() and m.role in ('tallerista', 'staff', 'super_admin'))));
 $$;
+
+-- Global administrators keep metadata/read scope, not ownership escalation.
+create function private.guard_sede_financial_owner() returns trigger
+language plpgsql security invoker set search_path = '' as $$
+begin
+  if new.owner_id is distinct from old.owner_id
+    and current_user <> pg_get_userbyid((select relowner from pg_class where oid = tg_relid)) then
+    if current_user = 'authenticated' then
+      if old.owner_id is not distinct from auth.uid() and private.session_employee_sede(old.id) then return new; end if;
+    end if;
+    raise exception 'Only the current workshop owner may transfer ownership' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger guard_sede_financial_owner before update on public.sedes
+  for each row execute function private.guard_sede_financial_owner();
+-- USING still admits only the old owner/global admin; the trigger checks any
+-- owner change against OLD, so a legitimate transfer can pass the new-row check.
+alter policy sedes_update_owner_or_super_admin on public.sedes with check (true);
 
 do $$
 declare tab text;
@@ -129,7 +155,7 @@ begin
     execute format('alter table public.%I enable row level security', tab);
     execute format('revoke all on public.%I from public, anon, authenticated, service_role', tab);
     execute format('grant select on public.%I to authenticated', tab);
-    execute format('create policy business_employee_read on public.%I for select to authenticated using (private.session_employee_sede(sede_id))', tab);
+    execute format('create policy business_employee_read on public.%I for select to authenticated using (private.session_business_read_sede(sede_id))', tab);
     if tab <> 'session_business_billing' then
       execute format('create trigger guard_business_history before insert or update or delete on public.%I for each row execute function private.guard_session_history()', tab);
     end if;
@@ -137,13 +163,13 @@ begin
 end $$;
 revoke all on sequence public.session_business_events_id_seq from public, anon, authenticated, service_role;
 create policy session_business_employee_read on public.sessions as restrictive for select to authenticated
-  using (private.session_employee_sede(sede_id));
+  using (private.session_business_read_sede(sede_id));
 create policy session_business_employee_read on public.session_students as restrictive for select to authenticated
-  using (private.session_employee_sede(sede_id));
+  using (private.session_business_read_sede(sede_id));
 create policy session_business_employee_read on public.session_operation_receipts as restrictive for select to authenticated
-  using (private.session_employee_sede(sede_id));
+  using (private.session_business_read_sede(sede_id));
 create policy session_business_employee_read on public.session_credit_movements as restrictive for select to authenticated
-  using (private.session_employee_sede(sede_id));
+  using (private.session_business_read_sede(sede_id));
 
 create function private.guard_session_business_projection() returns trigger
 language plpgsql security invoker set search_path = '' as $$
@@ -216,7 +242,7 @@ create function private.session_business_funding(p_session_id uuid, p_student_id
 language plpgsql stable security definer set search_path = '' set timezone = 'UTC' as $$
 declare s public.sessions; e public.session_students; st public.students;
   p public.student_membership_periods; g public.gift_cards; snapshot jsonb;
-  usable boolean := false; overridable boolean := false; positive boolean := false;
+  usable boolean := false; overridable boolean := false; positive boolean := false; unattributed_balance boolean := false;
   reason text := 'No known valid credit'; session_date date; due_successor boolean := false;
 begin
   select * into s from public.sessions where id = p_session_id;
@@ -243,6 +269,9 @@ begin
   else
     select * into p from public.student_membership_periods where id = e.membership_period_id
       and student_id = st.id and sede_id = s.sede_id;
+    -- An unmanaged scalar balance is not zero credit or an attributable source.
+    unattributed_balance := (p.id is null or coalesce(st.student_category, 'membresia') <> 'membresia')
+      and st.classes_remaining is distinct from 0;
     due_successor := exists (select 1 from public.student_membership_periods
       where predecessor_id = st.current_membership_period_id and starts_on <= private.membership_today());
     positive := p.id is not null and p.id = st.current_membership_period_id
@@ -255,7 +284,8 @@ begin
     snapshot := jsonb_build_object('period_id', e.membership_period_id, 'current_period_id', st.current_membership_period_id,
       'balance', st.classes_remaining, 'allocated_classes', p.allocated_classes, 'starts_on', p.starts_on,
       'ends_on', p.ends_on, 'payment_status', p.payment_status, 'due_successor', due_successor);
-    reason := case when p.id is null then 'Original membership source is unknown'
+    reason := case when unattributed_balance then 'Unsupported temporal/manual funding: legacy balance requires attributable funding or reconciliation'
+      when p.id is null then 'Original membership source is unknown'
       when p.id is distinct from st.current_membership_period_id then 'Original membership balance is no longer current'
       when due_successor then 'Queued successor is not an authorized funding source'
       when not positive then 'Original membership has no known positive balance'
@@ -271,7 +301,7 @@ begin
     and card.activated_at <= session_date and card.expiry_date >= greatest(session_date, private.membership_today())
     and s.class_type = case when card.type = 'torno' then 'torno' when card.type = 'modelado' then 'mesa' end) then positive := true; end if;
   return jsonb_build_object('usable', coalesce(usable, false), 'overridable', coalesce(overridable, false),
-    'no_credit_allowed', not coalesce(positive, false), 'period_id', e.membership_period_id,
+    'no_credit_allowed', not unattributed_balance and not coalesce(positive, false), 'period_id', e.membership_period_id,
     'gift_card_id', e.gift_card_id, 'snapshot', snapshot, 'reason', reason);
 end $$;
 
@@ -319,7 +349,7 @@ left join public.session_business_exceptions x on x.id = e.business_exception_id
 left join public.session_business_billing b on b.session_id = e.session_id and b.student_id = e.student_id and b.sede_id = s.sede_id
 left join public.session_business_penalties p on p.session_id = e.session_id and p.student_id = e.student_id and p.sede_id = s.sede_id
 left join public.session_business_waivers w on w.penalty_id = p.id and w.sede_id = s.sede_id
-where private.session_employee_sede(s.sede_id);
+where private.session_business_read_sede(s.sede_id);
 revoke all on public.session_business_state from public, anon, authenticated, service_role;
 grant select on public.session_business_state to authenticated;
 
@@ -351,6 +381,126 @@ alter function private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uu
 alter function private.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb) rename to save_session_reservation_v1;
 revoke all on function private.save_session_attendance_v1(uuid,uuid,bigint,jsonb,boolean,uuid),
   private.save_session_reservation_v1(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb) from public, anon, authenticated, service_role;
+-- Keep the v1 reservation/receipt contract, except that a v2 cancellation no
+-- longer conflicts with an active booking, whichever policy creates that booking.
+create or replace function private.save_session_reservation_v1(
+  p_session_id uuid, p_request_key uuid, p_expected_revision bigint, p_sede_id uuid,
+  p_metadata jsonb, p_student_ids uuid[], p_gift_card_ids jsonb default '{}'
+) returns jsonb language plpgsql security definer set search_path = '' set timezone = 'UTC' as $$
+declare s public.sessions; proposed public.sessions; prior public.session_operation_receipts;
+  intent jsonb; result jsonb; roster uuid[]; existed boolean; has_history boolean;
+begin
+  if auth.uid() is null or not private.can_access_sede(p_sede_id)
+    or not exists (select 1 from public.sedes where id = p_sede_id and is_active is true) then
+    raise exception 'Session not accessible' using errcode = '42501';
+  end if;
+  if p_session_id is null or p_request_key is null or p_expected_revision is null or p_expected_revision < 0
+    or p_student_ids is null or array_position(p_student_ids, null) is not null
+    or p_metadata is null or jsonb_typeof(p_metadata) <> 'object'
+    or p_gift_card_ids is null or jsonb_typeof(p_gift_card_ids) <> 'object' then
+    raise exception 'Explicit session, request key, revision, metadata and ID roster required';
+  end if;
+  if (p_metadata - array['date', 'start_time', 'end_time', 'class_type', 'capacity', 'teacher_id',
+    'workshop_name', 'private_reason', 'session_audience']) <> '{}'::jsonb then
+    raise exception 'Unsupported reservation metadata; attendance uses its own RPC';
+  end if;
+  select coalesce(array_agg(id order by id), '{}'::uuid[]) into roster from unnest(p_student_ids) id;
+  if cardinality(roster) <> (select count(distinct id) from unnest(roster) id) then raise exception 'Duplicate roster student IDs'; end if;
+  if exists (select 1 from jsonb_each_text(p_gift_card_ids) c where c.key <> c.key::uuid::text) then
+    raise exception 'Gift card map keys must be canonical lowercase hyphenated UUIDs';
+  end if;
+  if exists (select 1 from jsonb_each_text(p_gift_card_ids) c where c.key::uuid <> all(roster) or c.value is null) then
+    raise exception 'Gift card links must identify roster students';
+  end if;
+  intent := jsonb_build_object('expected_revision', p_expected_revision, 'metadata', p_metadata,
+    'student_ids', to_jsonb(roster), 'gift_card_ids', p_gift_card_ids, 'sede_id', p_sede_id);
+  perform pg_advisory_xact_lock(hashtextextended(p_session_id::text, 0));
+  select * into s from public.sessions where id = p_session_id for update;
+  existed := found;
+  if existed then
+    s := private.lock_atomic_session(p_session_id);
+    if s.sede_id <> p_sede_id then raise exception 'Session not accessible' using errcode = '42501'; end if;
+    select * into prior from public.session_operation_receipts where session_id = s.id and request_key = p_request_key;
+    if found then
+      if prior.operation <> 'reservation' or prior.intent <> intent then raise exception 'Idempotency key conflicts with original session intent'; end if;
+      return prior.result || jsonb_build_object('replayed', true);
+    end if;
+    if s.revision <> p_expected_revision then raise exception 'Stale session revision' using errcode = '40001'; end if;
+  elsif p_expected_revision <> 0 then raise exception 'Stale session revision' using errcode = '40001';
+  end if;
+  proposed := jsonb_populate_record(null::public.sessions, coalesce(to_jsonb(s), '{}'::jsonb) || p_metadata);
+  proposed.capacity := coalesce(proposed.capacity, 8);
+  proposed.session_audience := coalesce(proposed.session_audience, 'membresia');
+  perform private.atomic_session_date(proposed.date, proposed.start_time, proposed.end_time);
+  if proposed.class_type is null or proposed.class_type not in ('mesa', 'torno', 'coworking', 'workshop', 'privada', 'feriado')
+    or proposed.capacity not between 1 and 100 then raise exception 'Valid session interval, date, class type and capacity required'; end if;
+  if cardinality(roster) > proposed.capacity then raise exception 'Session capacity exceeded'; end if;
+  if proposed.class_type = 'feriado' and cardinality(roster) > 0 then raise exception 'Holiday sessions cannot have a roster'; end if;
+  if proposed.teacher_id is not null and not exists (select 1 from public.teachers
+    where id = proposed.teacher_id and sede_id = p_sede_id) then raise exception 'Teacher must belong to the session sede'; end if;
+  perform 1 from public.gift_cards where id in (
+    select value::uuid from jsonb_each_text(p_gift_card_ids)
+    union select gift_card_id from public.session_students where session_id = p_session_id
+  ) order by id for update;
+  perform 1 from public.students where id in (select unnest(roster) union select student_id from public.session_students where session_id = p_session_id)
+    order by id for update;
+  if (select count(*) from public.students where id = any(roster) and sede_id = p_sede_id) <> cardinality(roster) then
+    raise exception 'Roster students must belong to the session sede';
+  end if;
+  if exists (select 1 from public.session_students e left join public.students st on st.id = e.student_id
+    where e.session_id = p_session_id and (e.sede_id is distinct from p_sede_id or st.sede_id is distinct from p_sede_id)) then
+    raise exception 'Legacy cross-sede roster requires reconciliation';
+  end if;
+  if exists (select 1 from public.session_students e join public.sessions other on other.id = e.session_id
+    where e.student_id = any(roster) and other.id <> p_session_id and e.cancelled_at is null
+      and other.start_time < proposed.end_time and other.end_time > proposed.start_time) then
+    raise exception 'Student already reserved in an overlapping session';
+  end if;
+  has_history := existed and (s.completed_at is not null
+    or exists (select 1 from public.session_operation_receipts where session_id = s.id and operation = 'attendance')
+    or exists (select 1 from public.session_credit_movements where session_id = s.id)
+    or exists (select 1 from public.gift_card_movements where session_id = s.id)
+    or exists (select 1 from public.session_students where session_id = s.id and attendance = 'present'));
+  if has_history and (proposed.date is distinct from s.date or proposed.start_time is distinct from s.start_time
+    or proposed.end_time is distinct from s.end_time or proposed.class_type is distinct from s.class_type
+    or roster is distinct from (select coalesce(array_agg(student_id order by student_id), '{}'::uuid[]) from public.session_students where session_id = s.id)
+    or exists (select 1 from public.session_students where session_id = s.id
+      and gift_card_id is distinct from (p_gift_card_ids->>student_id::text)::uuid)) then
+    raise exception 'Session history locks roster, interval and original funding; correct attendance instead';
+  end if;
+  if exists (select 1 from jsonb_each_text(p_gift_card_ids) c left join public.gift_cards g on g.id = c.value::uuid
+    where g.id is null or g.sede_id is distinct from p_sede_id or g.recipient_student_id is distinct from c.key::uuid) then
+    raise exception 'Explicit gift card must belong to its roster student and session sede';
+  end if;
+  if existed then
+    if not has_history then
+      delete from public.session_students where session_id = s.id and student_id <> all(roster);
+    end if;
+    update public.sessions set date = proposed.date, start_time = proposed.start_time, end_time = proposed.end_time,
+      class_type = proposed.class_type, capacity = proposed.capacity, teacher_id = proposed.teacher_id,
+      workshop_name = proposed.workshop_name, private_reason = proposed.private_reason,
+      session_audience = proposed.session_audience, revision = revision + 1 where id = s.id returning * into s;
+  else
+    insert into public.sessions(id, sede_id, date, start_time, end_time, class_type, capacity, teacher_id,
+      workshop_name, private_reason, session_audience, revision)
+      values (p_session_id, p_sede_id, proposed.date, proposed.start_time, proposed.end_time, proposed.class_type,
+        proposed.capacity, proposed.teacher_id, proposed.workshop_name, proposed.private_reason, proposed.session_audience, 1)
+      returning * into s;
+  end if;
+  update public.session_students set gift_card_id = (p_gift_card_ids->>student_id::text)::uuid
+    where session_id = s.id and student_id = any(roster);
+  insert into public.session_students(session_id, student_id, student_name, sede_id, attendance, gift_card_id, is_temporary, temp_group_name)
+    select s.id, st.id, upper(trim(concat_ws(' ', st.name, st.surname))), s.sede_id, 'pending',
+      (p_gift_card_ids->>st.id::text)::uuid, st.student_category = 'temporal',
+      case when st.student_category = 'temporal' then st.group_name else null end
+    from public.students st where st.id = any(roster)
+      and not exists (select 1 from public.session_students e where e.session_id = s.id and e.student_id = st.id);
+  result := jsonb_build_object('session_id', s.id, 'request_key', p_request_key, 'revision', s.revision,
+    'session', to_jsonb(s), 'student_ids', to_jsonb(roster), 'replayed', false);
+  insert into public.session_operation_receipts(session_id, request_key, sede_id, operation, intent, result, created_by)
+    values (s.id, p_request_key, s.sede_id, 'reservation', intent, result, auth.uid());
+  return result;
+end $$;
 -- A standalone balance credit has no session, reason or penalty authority.
 -- V1 still uses the unchanged private adjustment inside its definer boundary.
 revoke all on function public.adjust_student_membership_classes(uuid,uuid,uuid,integer,integer),
@@ -436,16 +586,19 @@ begin
       if billing_kind = 'timely_cancellation' then billing_state := 'no_charge';
       elsif debit_id is not null then billing_state := 'charged';
       else
+        -- Ordinary usable funding needs no exception; keep old approvals as history.
         select * into x from public.session_business_exceptions where id = e.business_exception_id
-          and session_id = s.id and student_id = e.student_id and sede_id = s.sede_id;
+          and session_id = s.id and student_id = e.student_id and sede_id = s.sede_id
+          and not (funding->>'usable')::boolean;
         if billing_kind = 'attendance' and x.id is not null then
           if x.funding_snapshot is distinct from funding->'snapshot' then raise exception 'Session exception is stale; explicit reapproval required'; end if;
           exception_id := x.id;
         end if;
         if billing_kind = 'attendance' and x.kind = 'no_credit' then
-          if not (funding->>'no_credit_allowed')::boolean then raise exception 'No-credit exception cannot bypass available credit'; end if;
+          if not (funding->>'no_credit_allowed')::boolean then raise exception 'No-credit exception cannot bypass available credit: %', funding->>'reason'; end if;
           billing_kind := 'courtesy'; billing_state := 'no_charge';
         elsif (funding->>'usable')::boolean or (billing_kind = 'attendance' and x.kind = 'membership_override' and (funding->>'overridable')::boolean) then
+          if (funding->>'usable')::boolean then exception_id := null; end if;
           if e.gift_card_id is not null then
             perform private.apply_gift_card_session(e.gift_card_id, s.id, e.student_id, false, gen_random_uuid());
           else
@@ -457,7 +610,7 @@ begin
               case when e.gift_card_id is not null then 'gift_card' else 'current_period' end, auth.uid()) returning id into debit_id;
           billing_state := 'charged';
         elsif billing_kind in ('no_show', 'late_cancellation') then billing_state := 'incident';
-        else raise exception 'Presence requires valid original credit or an explicit current session exception';
+        else raise exception 'Presence requires valid original credit or an explicit current session exception: %', funding->>'reason';
         end if;
       end if;
       if billing_kind in ('no_show', 'late_cancellation') then
@@ -639,7 +792,7 @@ begin
     if p_kind is null or p_kind not in ('membership_override', 'no_credit') then raise exception 'Unknown session exception kind'; end if;
     funding := private.session_business_funding(s.id, e.student_id);
     if p_kind = 'membership_override' and (not (funding->>'overridable')::boolean or (funding->>'usable')::boolean) then raise exception 'Membership override requires known original positive credit needing an exception'; end if;
-    if p_kind = 'no_credit' and not (funding->>'no_credit_allowed')::boolean then raise exception 'No-credit exception cannot bypass available credit'; end if;
+    if p_kind = 'no_credit' and not (funding->>'no_credit_allowed')::boolean then raise exception 'No-credit exception cannot bypass available credit: %', funding->>'reason'; end if;
     insert into public.session_business_exceptions(session_id, student_id, sede_id, revision, kind, period_id, gift_card_id,
       funding_snapshot, reason, approved_by) values (s.id, e.student_id, s.sede_id, s.revision + 1, p_kind,
         e.membership_period_id, e.gift_card_id, funding->'snapshot', p_reason, auth.uid()) returning id into exception_id;
@@ -712,13 +865,13 @@ language sql security definer set search_path = '' as $$
   select private.session_business_action(p_session_id, p_student_id, p_request_key, p_expected_revision, 'waive_session_penalty', null, p_reason);
 $$;
 
-revoke all on function private.session_employee_sede(uuid), private.guard_session_business_projection(),
+revoke all on function private.session_business_read_sede(uuid), private.session_employee_sede(uuid), private.guard_sede_financial_owner(), private.guard_session_business_projection(),
   private.session_madrid_instant(timestamptz), private.session_business_funding(uuid,uuid), private.session_business_adjust(uuid,uuid,integer),
   private.session_business_action(uuid,uuid,uuid,bigint,text,text,text),
   private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid), private.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb),
   public.approve_session_exception(uuid,uuid,uuid,bigint,text,text), public.cancel_session_reservation(uuid,uuid,uuid,bigint,text),
   public.waive_session_penalty(uuid,uuid,uuid,bigint,text) from public, anon, authenticated, service_role;
-grant execute on function private.session_employee_sede(uuid), private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid),
+grant execute on function private.session_business_read_sede(uuid), private.session_employee_sede(uuid), private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid),
   private.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb), public.approve_session_exception(uuid,uuid,uuid,bigint,text,text),
   public.cancel_session_reservation(uuid,uuid,uuid,bigint,text), public.waive_session_penalty(uuid,uuid,uuid,bigint,text) to authenticated;
 notify pgrst, 'reload schema';

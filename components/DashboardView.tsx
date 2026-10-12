@@ -85,6 +85,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
     const map: Record<ClassSession['classType'], string> = {
       mesa: 'Mesa de Trabajo',
       torno: 'Clase de Torno',
+      mixto: 'Sesión mixta',
       coworking: 'Coworking',
       workshop: 'Workshop',
       privada: 'Privadas',

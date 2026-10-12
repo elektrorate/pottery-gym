@@ -1,0 +1,99 @@
+POTTERY GYM - CREDITOS MANUALES Y LIQUIDACION: ENTREGA LOCAL
+
+Fecha de cierre de verificacion: 2026-10-12T17:58:10+02:00.
+Rama: feat/session-policy-integration, base inicial main 8dd8315.
+Autorizacion: el solicitante aprobo aplicar este bloque SOLO al staging local,
+con respaldo, conservacion de datos, pruebas reales y documentacion.
+No se hicieron commit, push, fusion, migracion remota ni despliegue productivo
+por esta fase. Durante el cierre se observaron cambios concurrentes del usuario:
+HEAD d4816f1 y main/origin/main b7a5250; se conservaron sin revertir ni publicar.
+
+ROLLOUT LOCAL VERIFICADO
+
+Proyecto: pottery-gym-local-staging.
+Frontend: http://127.0.0.1:3017.
+API: http://127.0.0.1:55321. PostgreSQL: 127.0.0.1:55322.
+Contenedor: supabase_db_pottery-gym-local-staging.
+El stack anterior en 54321/54322 no se modifico.
+El proyecto remoto ilkrcakrduibgsfqfzti ES PRODUCCION, no staging.
+
+Se ejecuto npm run staging:policy-setup y se aplico un solo seguimiento:
+20261012090000_manual_credit_reconciliation_settlement.sql.
+La cadena local contiene 24 migraciones. No se editaron las ya aplicadas.
+Se valido la identidad del runtime, ausencia de enlace remoto y hashes de los
+archivos previos antes de operar. Se genero pg_dump cifrado AES-256-GCM,
+con clave DPAPI CurrentUser, fuera de Git, y se verifico el descifrado.
+Respaldo de esta aplicacion: runtime/backups/before-policy-1791819079502.
+Esto NO demuestra una restauracion completa de la base.
+
+Los fingerprints confirmaron conservacion de todas las observaciones previas,
+recibos, pagos, saldos, periodos, bonos, auditoria, grants y politicas RLS.
+Solo se excluyeron las cuatro columnas nuevas manual_credit_id al comparar
+las formas antiguas de las filas; no se ocultaron cambios de datos existentes.
+Las versiones de politica de todas las sesiones anteriores se conservaron.
+La migracion agrega observaciones privadas de ambiguedad, no saldos historicos.
+
+CONTRATO OPERATIVO
+
+- Solo el propietario actual de la sede aprueba un credito manual, liquida una
+  incidencia o exime un cargo. El rol super_admin solo no concede ese permiso.
+- reconcile_legacy requiere todo el saldo positivo conocido, evidencia, motivo,
+  actividad y fechas explicitas. NULL no se convierte en cero ni en credito.
+- No se concilia una membresia ni un posible reflejo de Gift Card. Un registro
+  privado append-only conserva el veto aunque se reasigne el bono o cambien
+  nombres/emails. Un homonimo puede ser ambiguo; no se elige una identidad.
+- new_manual es un derecho independiente con evidencia aprobada. No acredita
+  pago, cambia categoria, reactiva una ficha ni renueva una membresia.
+- La observacion escalar y el ledger manual se muestran separados y no se suman.
+- La reserva selecciona un derecho manual por UUID, sin seleccion automatica.
+  Guardar provisional no consume; finalizar usa el ledger acotado e idempotente.
+- La liquidacion no recibe un selector de fuente. Solo consume el periodo,
+  Gift Card o derecho manual ORIGINAL registrado antes de la incidencia.
+- Fuente ausente, vencida, no pagada, aun no activada o sin saldo: permanece
+  pendiente o el propietario la exime. Nunca se carga un sucesor o bono distinto.
+- Eximir un cargo revierte su debito original sin borrar liquidacion ni auditoria.
+- Policy1 y sus recibos mantienen el comportamiento anterior. No hay recobro.
+- Los intents de ficha se persisten por actor/alumno antes del RPC. Tras perdida
+  de respuesta o recarga se recuperan los mismos IDs, revision, key y argumentos.
+- Un recibo o rechazo SQL solo limpia el intento despues de una recarga exitosa.
+  El boton de recuperar datos no ejecuta escrituras ni crea otra key.
+- Las lecturas completas usan paginacion estable y count exacto; no dependen
+  del tope PostgREST de 1000 filas. Inconsistencias fallan cerradas.
+
+EVIDENCIA
+
+- npm run staging:test: 45/45 en 13.0 minutos, un worker, cero retries.
+  Cinco identidades Auth reales; PostgREST, PostgreSQL, Edge y navegador reales.
+  Incluye 16 casos manuales: permisos negativos, datos raw conservados, fuente
+  original, respuesta perdida, recibo seguido de recarga fallida, rechazo SQL
+  seguido de recarga fallida, boton de solo lectura y reload/replay exacto.
+- npm run test:local: 370/370. UI, operaciones y paginacion con transporte simulado.
+- npm run test:unit: 37/37.
+- npm run test:sql:manual-credits: 837 aserciones en PostgreSQL 17.11 aislado;
+  339 denegaciones incluidas, 17 carreras manuales y cinco previas de policy2.
+  Cadena fria de 24 migraciones/seed, trigger legado real, rollback post-debito,
+  reasignacion del bono, activacion futura y revocacion durante bloqueos.
+  Este runner SQL usa stubs Auth; no sustituye la suite real anterior.
+- Lint local de public/private: results []. pgTAP local: 3/3, con rollback.
+- npx tsc --noEmit y npm run build: aprobados. Warnings de chunks conocidos.
+- Revision independiente de backend e integracion: sin P0/P1 confirmados en
+  el alcance revisado; no certifica produccion ni exhaustividad de las carreras.
+
+Los primeros intentos detectaron errores CASE del fixture (transaccion
+revertida), una asercion Playwright de option.disabled y un 401/PGRST303 de Auth.
+Se corrigieron fixture/asercion; 60 logins de diagnostico no reprodujeron el JWT.
+La suite completa final paso sin retries ni cambiar grants/roles para ocultarlo.
+Todos los fixtures con commit se conservaron; no hubo limpieza masiva QA.
+
+LIMITES
+
+Evidencia libre es una aprobacion del propietario, no verificacion externa de
+pagos. Procedencia completamente borrada antes del rollout no se reconstruye:
+no conciliar ni reciclar fondos inciertos sin evidencia independiente suficiente.
+No se completo el ensayo de restauracion, la matriz financiera/privacidad,
+el transporte MCP, la activacion historica o la autorizacion de produccion.
+Faltan casos reales de cambio de actor en la misma pestana y liquidacion positiva
+de fuentes manual/membresia en la ficha; tienen cobertura SQL/proyeccion separada.
+La paginacion detecta cambios de cardinalidad, no es un snapshot transaccional.
+Docker publica puertos en todas las interfaces: solo datos sinteticos y firewall.
+Los grants del lector caducan y no se renuevan automaticamente al reiniciar.

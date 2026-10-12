@@ -1,11 +1,11 @@
-import type { ClassSession, Student } from '../../types';
+import type { ClassSession, Student, SessionBusinessIntent } from '../../types';
 
 export type AttendanceStatus = 'present' | 'absent' | 'pending';
 export type RevisionedSession = ClassSession & { revision?: number };
 export type SessionUpdates = Partial<RevisionedSession>;
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export interface SessionIntent {
-    readonly operation: 'attendance' | 'reservation';
+    readonly operation: 'attendance' | 'reservation' | SessionBusinessIntent['operation'];
     readonly sessionId: string;
     readonly requestKey: string;
     readonly input: string;
@@ -74,6 +74,9 @@ export const createSessionAttendanceIntent = (
     session: RevisionedSession, students: Student[], updates: SessionUpdates, requestKey: string = crypto.randomUUID()
 ): SessionIntent => {
     if (!session.studentIds) throw new Error('La asistencia requiere el roster persistido por ID. Recarga la sesion.');
+    if (session.attendancePolicyVersion !== 2 && Object.keys(session.manualCreditIdByStudentId || {}).length) {
+        throw new Error('El credito manual requiere una sesion con politica 2.');
+    }
     const ids = resolveSessionStudentIds(students, [], session.studentIds);
     const byId: Record<string, AttendanceStatus> = Object.fromEntries(ids.map(id => [id, 'pending']));
     const merge = (values: Record<string, string> | undefined, namesAllowed: boolean) => {
@@ -95,7 +98,10 @@ export const createSessionAttendanceIntent = (
     if (updates.attendance && updates.attendanceByStudentId) throw new Error('No combines asistencia por nombre y por ID.');
     merge(updates.attendanceByStudentId ?? updates.attendance, !updates.attendanceByStudentId);
     const finalize = updates.completedAt === undefined ? Boolean(session.completedAt) : Boolean(updates.completedAt);
-    if (finalize && Object.values(byId).includes('pending')) throw new Error('Completa la asistencia de todos los IDs antes de finalizar.');
+    if (finalize && ids.some(id => byId[id] === 'pending'
+        && !(session.attendancePolicyVersion === 2 && session.businessStateByStudentId?.[id]?.reservationState === 'cancelled'))) {
+        throw new Error('Completa la asistencia de todos los IDs activos antes de finalizar.');
+    }
     return freeze({ operation: 'attendance', sessionId: session.id, requestKey, input: attendanceInput(updates), args: {
         p_session_id: session.id, p_request_key: requestKey,
         p_expected_revision: requireSessionRevision(session, updates.revision ?? session.revision),
@@ -107,11 +113,41 @@ export const createSessionAttendanceIntent = (
 
 export const createSessionReservationIntent = (
     sessionId: string, expectedRevision: number, sedeId: string, metadata: Record<string, unknown>,
-    studentIds: string[], giftCardIds: Record<string, string>, input: string, requestKey: string = crypto.randomUUID()
-): SessionIntent => freeze({ operation: 'reservation', sessionId, requestKey, input, args: {
-    p_session_id: sessionId, p_request_key: requestKey, p_expected_revision: expectedRevision,
-    p_sede_id: sedeId, p_metadata: { ...metadata }, p_student_ids: [...studentIds].sort(), p_gift_card_ids: { ...giftCardIds }
-} });
+    studentIds: string[], giftCardIds: Record<string, string>, input: string, requestKey: string = crypto.randomUUID(),
+    manualCreditIds: Record<string, string> = {}
+): SessionIntent => {
+    for (const mapping of [giftCardIds, manualCreditIds]) {
+        for (const [studentId, sourceId] of Object.entries(mapping)) {
+            if (!studentIds.includes(studentId) || typeof sourceId !== 'string' || !sourceId.trim()) {
+                throw new Error('La financiacion requiere IDs explicitos del roster y de su fuente.');
+            }
+        }
+    }
+    if (Object.keys(manualCreditIds).some(id => Object.hasOwn(giftCardIds, id))) {
+        throw new Error('No combines bono regalo y credito manual para el mismo ID.');
+    }
+    return freeze({ operation: 'reservation', sessionId, requestKey, input, args: {
+        p_session_id: sessionId, p_request_key: requestKey, p_expected_revision: expectedRevision,
+        p_sede_id: sedeId, p_metadata: { ...metadata }, p_student_ids: [...studentIds].sort(),
+        p_gift_card_ids: { ...giftCardIds }, p_manual_credit_ids: { ...manualCreditIds }
+    } });
+};
+
+export const createSessionBusinessIntent = (intent: SessionBusinessIntent): SessionIntent => {
+    if (!['approve_exception', 'cancel_reservation', 'waive_penalty'].includes(intent.operation)
+        || !intent.sessionId || !intent.studentId || !intent.requestKey
+        || !Number.isSafeInteger(intent.expectedRevision) || intent.expectedRevision < 0
+        || typeof intent.reason !== 'string' || !intent.reason.trim() || intent.reason.length > 2000) {
+        throw new Error('Operacion, identidades, revision y motivo verificable requeridos.');
+    }
+    if (intent.operation === 'approve_exception' ? !['membership_override', 'no_credit'].includes(intent.kind || '') : intent.kind !== undefined) {
+        throw new Error('Tipo de excepcion incompatible con la operacion.');
+    }
+    return freeze({ operation: intent.operation, sessionId: intent.sessionId, requestKey: intent.requestKey,
+        input: canonical(intent), args: { p_session_id: intent.sessionId, p_student_id: intent.studentId,
+            p_request_key: intent.requestKey, p_expected_revision: intent.expectedRevision, p_reason: intent.reason,
+            ...(intent.operation === 'approve_exception' ? { p_kind: intent.kind } : {}) } });
+};
 
 export const reservationInput = (updates: SessionUpdates) => {
     const { revision: _revision, ...input } = updates;
@@ -134,7 +170,13 @@ export const createSessionOperations = (dependencies: {
                 intent = create();
                 dependencies.store.set(key, intent); // Persist BEFORE the only write.
             }
-            const response = await dependencies.rpc(`save_session_${intent.operation}`, intent.args);
+            const names: Record<SessionIntent['operation'], string> = {
+                attendance: 'save_session_attendance', reservation: 'save_session_reservation',
+                approve_exception: 'approve_session_exception', cancel_reservation: 'cancel_session_reservation',
+                waive_penalty: 'waive_session_penalty'
+            };
+            if (!Object.hasOwn(names, intent.operation)) throw new Error('Operacion de sesion no permitida.');
+            const response = await dependencies.rpc(names[intent.operation], intent.args);
             if (response.error) {
                 const code = response.error.code;
                 // A SQL rejection proves rollback. Transport errors do not.
