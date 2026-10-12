@@ -47,7 +47,7 @@ const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studen
     <div className={`flex items-center gap-3 rounded-xl border p-3 ${palette.card}`}>
       <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-bold ${palette.icon}`}>{palette.symbol}</div>
        <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-neutral-textMain">{alert.name}</p><p className={`truncate text-[12px] font-medium ${palette.text}`}>{alert.reason}</p></div>
-       {alert.id && <button type="button" onClick={() => onOpenStudentProfile(alert.id)} className="min-h-[36px] w-12 shrink-0 rounded-lg bg-white/70 px-1 text-center text-[12px] font-semibold leading-[1.1] whitespace-normal text-neutral-textMain transition-colors hover:bg-white hover:text-brand sm:w-auto sm:px-2.5">Ver ficha</button>}
+       {alert.id && <button type="button" onClick={() => onOpenStudentProfile(alert.id)} className="min-h-[36px] w-12 shrink-0 rounded-lg bg-white/70 px-1 text-center text-[12px] font-semibold leading-[1.1] text-neutral-textMain transition-colors hover:bg-white hover:text-brand sm:w-auto sm:px-2.5"><span className="sm:hidden">Ver<br />ficha</span><span className="hidden sm:inline">Ver ficha</span></button>}
     </div>
   );
 };
