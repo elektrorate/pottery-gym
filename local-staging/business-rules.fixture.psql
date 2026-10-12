@@ -1,0 +1,220 @@
+-- Additive local bootstrap and per-run subjects. Never apply a migration here.
+-- Accounts are created ONLY by the owned setup Auth-admin flow, not by SQL.
+\set ON_ERROR_STOP on
+begin;
+set local row_security = on;
+set local timezone = 'UTC';
+
+create temporary table business_config on commit drop as
+select :'mode'::text as mode, jsonb_build_object('staff_id', :'staff_id'::uuid, 'other_id', :'other_id'::uuid,
+  'reader_id', :'reader_id'::uuid, 'employee_id', :'employee_id'::uuid, 'supervisor_id', :'supervisor_id'::uuid) as actors,
+  :'manifest'::jsonb as manifest;
+
+do $$
+declare
+  c record;
+  a record;
+  subject record;
+  st uuid;
+  period uuid;
+  starts date;
+  ends date;
+  payment text;
+  balance integer;
+  actor_role public.user_role;
+  tab text;
+  changed boolean;
+  protected_tables constant text[] := array['public.students','public.student_membership_periods',
+    'public.student_membership_class_adjustments','public.gift_cards','public.gift_card_movements',
+    'public.gift_card_operation_receipts','public.sessions','public.session_students','public.session_operation_receipts',
+    'public.session_credit_movements','public.session_business_exceptions','public.session_business_penalties',
+    'public.session_business_waivers','public.session_business_billing','public.session_business_events',
+    'public.sedes','public.sede_members','public.profiles','public.teachers','public.workshop_schedules',
+    'public.workshop_capacity_defaults','public.workshop_schedule_exceptions',
+    'private.domain_read_principals','private.domain_read_grants'];
+  today date := private.membership_today();
+  own_sede constant uuid := '30000000-0000-0000-0000-000000000001';
+  other_sede constant uuid := '30000000-0000-0000-0000-000000000002';
+begin
+  if current_setting('app.local_staging', true) is distinct from 'pottery-gym-local-staging'
+    or session_user <> 'postgres' or current_user <> 'postgres' or current_database() <> 'postgres'
+    or to_regclass('private.local_staging_setup') is null then
+    raise exception 'Refusing business fixtures outside genuine owned local postgres staging';
+  end if;
+  if not exists (select 1 from private.local_staging_setup where version = 1) then
+    raise exception 'Install existing seed first; business fixtures never replace it';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('pottery-gym-local-staging/business-actors/v1', 0));
+  select * into strict c from pg_temp.business_config;
+  if c.mode not in ('actors', 'fixtures') or jsonb_typeof(c.actors) <> 'object'
+    or (select count(*) from jsonb_object_keys(c.actors)) <> 5
+    or not (c.actors ?& array['staff_id','other_id','reader_id','employee_id','supervisor_id'])
+    or (select count(distinct value::uuid) from jsonb_each_text(c.actors)) <> 5 then
+    raise exception 'Five distinct explicitly named Auth users required';
+  end if;
+  for a in select * from (values ('staff_id','staff@pottery.local'), ('other_id','other@pottery.local'),
+    ('reader_id','reader@pottery.local'), ('employee_id','employee@pottery.local'),
+    ('supervisor_id','supervisor@pottery.local')) as expected(key,email) loop
+    if not exists (select 1 from auth.users where id = (c.actors->>a.key)::uuid and email = a.email) then
+      raise exception 'Setup must create actual synthetic Auth accounts before actor bootstrap';
+    end if;
+  end loop;
+  if not exists (select 1 from public.sedes where id = own_sede and slug = 'pottery-gym-local-staging'
+    and owner_id = (c.actors->>'staff_id')::uuid and is_active)
+    or not exists (select 1 from public.sedes where id = other_sede
+      and owner_id = (c.actors->>'other_id')::uuid and is_active)
+    or (select count(*) from public.profiles where role = 'tallerista' and id = any(array[
+      (c.actors->>'staff_id')::uuid, (c.actors->>'other_id')::uuid, (c.actors->>'reader_id')::uuid])) <> 3
+    or exists (select 1 from public.sedes where owner_id = (c.actors->>'reader_id')::uuid)
+    or exists (select 1 from public.sede_members where user_id = (c.actors->>'reader_id')::uuid)
+    or not exists (select 1 from private.domain_read_principals
+      where user_id = (c.actors->>'reader_id')::uuid and kind = 'integration') then
+    raise exception 'Existing owner/foreign-owner/dedicated-reader fixture identity changed';
+  end if;
+
+  if to_regclass('private.local_staging_business_actors') is null then
+    if c.mode <> 'actors' then raise exception 'Owned setup must call seedBusinessActors first'; end if;
+    create table private.local_staging_business_actors (
+      version integer primary key check (version = 1),
+      actors jsonb not null,
+      installed_at timestamptz not null default now()
+    );
+    alter table private.local_staging_business_actors enable row level security;
+    revoke all on private.local_staging_business_actors from public, anon, authenticated, service_role;
+
+    for a in select * from (values ('employee_id','employee@pottery.local','staff'),
+      ('supervisor_id','supervisor@pottery.local','super_admin')) as expected(key,email,role) loop
+      st := (c.actors->>a.key)::uuid;
+      actor_role := a.role::public.user_role;
+      if exists (select 1 from public.sedes where owner_id = st)
+        or exists (select 1 from public.sede_members where user_id = st)
+        or exists (select 1 from private.domain_read_principals where user_id = st) then
+        raise exception 'New employee/supervisor must not adopt existing authority';
+      end if;
+      -- Auth's shipped sign-up trigger may already have created the profile.
+      insert into public.profiles(id,email,full_name,role)
+        values (st,a.email,'Synthetic business actor',actor_role) on conflict (id) do nothing;
+      if not exists (select 1 from public.profiles where id = st and email = a.email
+        and role in ('tallerista',actor_role)) then raise exception 'Unexpected new actor profile'; end if;
+      update public.profiles set role = actor_role where id = st and role = 'tallerista';
+      insert into public.sede_members(sede_id,user_id,role) values (own_sede,st,actor_role);
+    end loop;
+    insert into private.local_staging_business_actors(version,actors) values (1,c.actors);
+  end if;
+
+  if not exists (select 1 from private.local_staging_business_actors where version = 1 and actors = c.actors) then
+    raise exception 'Persisted business actor UUIDs differ; never replace existing identities';
+  end if;
+  for a in select * from (values ('employee_id','employee@pottery.local','staff'),
+    ('supervisor_id','supervisor@pottery.local','super_admin')) as expected(key,email,role) loop
+    st := (c.actors->>a.key)::uuid;
+    if not exists (select 1 from public.profiles where id = st and email = a.email and role = a.role::public.user_role)
+      or not exists (select 1 from public.sede_members where user_id = st and sede_id = own_sede and role = a.role::public.user_role)
+      or (select count(*) from public.sede_members where user_id = st) <> 1
+      or exists (select 1 from public.sedes where owner_id = st)
+      or exists (select 1 from private.domain_read_principals where user_id = st) then
+      raise exception 'Business actor role or membership changed/revoked; refusing silent repair';
+    end if;
+  end loop;
+  if c.mode = 'actors' then return; end if;
+
+  if to_regclass('public.session_business_state') is null
+    or not exists (select 1 from supabase_migrations.schema_migrations where version = '20261011230000') then
+    raise exception 'Policy2 migration not applied; no controlled subjects were created';
+  end if;
+  -- Read-only boundary checks against the deployed helper; no public clock knob.
+  if private.session_madrid_instant('2026-07-20T18:00:00Z') <> '2026-07-20T16:00:00Z'::timestamptz
+    or private.session_madrid_instant('2026-01-20T18:00:00Z') <> '2026-01-20T17:00:00Z'::timestamptz
+    or not ('2026-07-20T08:00:00Z'::timestamptz <= private.session_madrid_instant('2026-07-20T18:00:00Z') - interval '8 hours')
+    or ('2026-07-20T08:00:00.001Z'::timestamptz <= private.session_madrid_instant('2026-07-20T18:00:00Z') - interval '8 hours')
+    or not ('2026-01-20T09:00:00Z'::timestamptz <= private.session_madrid_instant('2026-01-20T18:00:00Z') - interval '8 hours')
+    or ('2026-01-20T09:00:00.001Z'::timestamptz <= private.session_madrid_instant('2026-01-20T18:00:00Z') - interval '8 hours') then
+    raise exception 'Exact eight-hour Madrid summer/winter cutoff failed';
+  end if;
+  begin
+    perform private.session_madrid_instant('2026-03-29T02:30:00Z');
+    raise exception 'Spring DST gap unexpectedly accepted' using errcode = '22023';
+  exception when raise_exception then
+    if sqlerrm not like 'Nonexistent or ambiguous Madrid%' then raise; end if;
+  end;
+  begin
+    perform private.session_madrid_instant('2026-10-25T02:30:00Z');
+    raise exception 'Autumn DST overlap unexpectedly accepted' using errcode = '22023';
+  exception when raise_exception then
+    if sqlerrm not like 'Nonexistent or ambiguous Madrid%' then raise; end if;
+  end;
+  -- Read status only. Expired/revoked reader grants need explicit new authority.
+  if (select count(*) from private.domain_read_principals p join private.domain_read_grants g on g.user_id = p.user_id
+    where p.user_id = (c.actors->>'reader_id')::uuid and p.kind = 'integration'
+      and p.enabled and p.revoked_at is null and p.expires_at > now()
+      and g.sede_id = own_sede and g.student_id = '10000000-0000-0000-0000-000000000001'
+      and g.operation in ('student.summary.get','membership.status.get')
+      and g.enabled and g.revoked_at is null and g.expires_at > now()) <> 2 then
+    raise exception 'Existing reader grant expired/revoked; no grant is renewed by fixture preparation';
+  end if;
+  perform (c.manifest->>'runId')::uuid;
+  if jsonb_typeof(c.manifest->'subjects') <> 'object' then raise exception 'Fresh subjects manifest required'; end if;
+  -- Preserve ALL pre-existing rows, including previous QA runs and private
+  -- grants, not just demonstration IDs. Failure rolls back this whole addition.
+  create temporary table business_existing_rows(table_name text, row_data jsonb) on commit drop;
+  foreach tab in array protected_tables loop
+    execute format('insert into pg_temp.business_existing_rows select %L, to_jsonb(t) from %s t',tab,tab);
+  end loop;
+  for subject in select key, value from jsonb_each(c.manifest->'subjects') loop
+    st := (subject.value->>'studentId')::uuid;
+    period := (subject.value->>'periodId')::uuid;
+    if subject.value->>'kind' not in ('paid','pending','unknown','expired_grace','expired_beyond5','zero','queued')
+      or st is null or period is null then raise exception 'Unsupported controlled subject'; end if;
+    starts := today - 10; ends := today + 40; payment := 'paid'; balance := 4;
+    if subject.value->>'kind' = 'pending' then payment := 'pending'; end if;
+    if subject.value->>'kind' = 'unknown' then payment := null; end if;
+    if subject.value->>'kind' = 'zero' then balance := 0; end if;
+    if subject.value->>'kind' in ('expired_grace','expired_beyond5','queued') then
+      starts := today - 40;
+      ends := today - case when subject.value->>'kind' = 'expired_grace' then 5 else 6 end;
+    end if;
+
+    -- Initial temporal INSERT skips membership initialization without disabling
+    -- triggers. Only this fresh row is assembled, within this same transaction.
+    insert into public.students(id,sede_id,full_name,name,surname,email,student_category,class_type,status,
+      bonos_asignados,classes_remaining,payment_status) values (st,own_sede,
+      'Policy '||subject.key||' '||st,'Policy',subject.key||' '||st,
+      'policy-'||st||'@pottery.local','temporal','Modelado','active',4,balance,payment);
+    insert into public.student_membership_periods(id,student_id,sede_id,membership_tier,plan_price,allocated_classes,
+      starts_on,ends_on,payment_status,confirmed_at,confirmed_by,activated_at)
+      values (period,st,own_sede,'gold',120,4,starts,ends,payment,
+        case when payment = 'paid' then now() end,
+        case when payment = 'paid' then (c.actors->>'staff_id')::uuid end,now());
+    update public.students set student_category = 'membresia', membership_tier = 'gold',price = 120,
+      current_membership_period_id = period, membership_activated_at = starts,
+      expiry_date = private.membership_expiry_projection(ends,expiry_date) where id = st;
+    if subject.value->>'kind' = 'queued' then
+      insert into public.student_membership_periods(id,student_id,sede_id,predecessor_id,membership_tier,
+        plan_price,allocated_classes,starts_on,ends_on,payment_status)
+        values ((subject.value->>'successorId')::uuid,st,own_sede,period,'platinum',180,8,today,today+29,'paid');
+      insert into public.gift_cards(id,sede_id,code,buyer,recipient,recipient_student_id,num_classes,type,
+        sessions_used,payment_status,status,validity_months,activated_at)
+        values ((subject.value->>'cardId')::uuid,own_sede,'POLICY-'||(subject.value->>'cardId'),
+          'Policy '||(c.manifest->>'runId'),'Policy '||subject.key||' '||st,st,2,'modelado',0,'paid','active',3,today);
+    end if;
+    if (select count(*) from public.student_membership_periods where student_id = st) < 1
+      or not exists (select 1 from public.students where id = st and current_membership_period_id = period
+        and classes_remaining = balance and payment_status is not distinct from payment)
+      or exists (select 1 from public.sessions s join public.session_students e on e.session_id = s.id where e.student_id = st)
+      or exists (select 1 from public.student_membership_class_adjustments where student_id = st) then
+      raise exception 'Fresh controlled subject initialization failed';
+    end if;
+  end loop;
+  foreach tab in array protected_tables loop
+    execute format('select exists (select 1 from pg_temp.business_existing_rows b where b.table_name = %L
+      and not exists (select 1 from %s t where to_jsonb(t) = b.row_data))',tab,tab) into changed;
+    if changed then raise exception 'Pre-existing staging rows changed in %; refusing fixture commit',tab; end if;
+  end loop;
+end $$;
+
+-- Sole output is a public-safe manifest. No key, JWT, password or DB URL.
+select jsonb_build_object('version',1,'runId',manifest->>'runId','today',private.membership_today(),
+  'serverNow',clock_timestamp(),'clockChecks','exact_8h_madrid_dst','preservationChecks','existing_rows_unchanged',
+  'sedeId','30000000-0000-0000-0000-000000000001',
+  'actors',actors,'subjects',manifest->'subjects') from pg_temp.business_config where mode = 'fixtures';
+commit;

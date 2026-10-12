@@ -1,0 +1,193 @@
+-- Add fresh synthetic sources only. Never migrate, create Auth users, repair
+-- authority, disable triggers, reset, or remove existing QA history here.
+\set ON_ERROR_STOP on
+begin;
+set local row_security = on;
+set local timezone = 'UTC';
+
+create temporary table manual_config on commit drop as
+select jsonb_build_object('staff_id', :'staff_id'::uuid, 'other_id', :'other_id'::uuid,
+  'reader_id', :'reader_id'::uuid, 'employee_id', :'employee_id'::uuid,
+  'supervisor_id', :'supervisor_id'::uuid) as actors, :'manifest'::jsonb as manifest;
+
+do $$
+declare
+  c record;
+  a record;
+  subject record;
+  st uuid;
+  balance integer;
+  tab text;
+  changed boolean;
+  today date := private.membership_today();
+  own_sede constant uuid := '30000000-0000-0000-0000-000000000001';
+  foreign_sede constant uuid := '30000000-0000-0000-0000-000000000002';
+  protected_tables constant text[] := array['public.students','public.student_membership_periods',
+    'public.student_membership_class_adjustments','public.gift_cards','public.gift_card_movements',
+    'public.gift_card_operation_receipts','public.sessions','public.session_students','public.session_operation_receipts',
+    'public.session_credit_movements','public.session_business_exceptions','public.session_business_penalties',
+    'public.session_business_waivers','public.session_business_billing','public.session_business_events',
+    'public.student_manual_credit_entitlements','public.student_penalty_settlements',
+    'public.sedes','public.sede_members','public.profiles','public.teachers','public.workshop_schedules',
+    'public.workshop_capacity_defaults','public.workshop_schedule_exceptions',
+    'private.domain_read_principals','private.domain_read_grants','private.manual_legacy_gift_vetoes',
+    'private.local_staging_setup','private.local_staging_business_actors'];
+begin
+  if current_setting('app.local_staging', true) is distinct from 'pottery-gym-local-staging'
+    or session_user <> 'postgres' or current_user <> 'postgres' or current_database() <> 'postgres'
+    or to_regclass('private.local_staging_setup') is null
+    or to_regclass('private.local_staging_business_actors') is null then
+    raise exception 'Refusing manual fixtures outside existing owned local postgres staging';
+  end if;
+  if not exists (select 1 from private.local_staging_setup where version = 1)
+    or not exists (select 1 from supabase_migrations.schema_migrations where version = '20261012090000')
+    or to_regclass('public.student_credit_profile') is null
+    or to_regclass('public.manual_credit_entitlements_with_balance') is null
+    or to_regclass('public.session_pending_penalties') is null then
+    raise exception 'Manual-credit migration must already be approved and applied by owned setup';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('pottery-gym-local-staging/manual-fixtures/v1', 0));
+  select * into strict c from pg_temp.manual_config;
+  if jsonb_typeof(c.actors) <> 'object' or (select count(*) from jsonb_object_keys(c.actors)) <> 5
+    or not (c.actors ?& array['staff_id','other_id','reader_id','employee_id','supervisor_id'])
+    or (select count(distinct value::uuid) from jsonb_each_text(c.actors)) <> 5
+    or not exists (select 1 from private.local_staging_business_actors where version = 1 and actors = c.actors) then
+    raise exception 'Five persisted distinct actual business Auth identities required';
+  end if;
+  for a in select * from (values ('staff_id','staff@pottery.local','tallerista'),
+    ('other_id','other@pottery.local','tallerista'), ('reader_id','reader@pottery.local','tallerista'),
+    ('employee_id','employee@pottery.local','staff'), ('supervisor_id','supervisor@pottery.local','super_admin'))
+    as expected(key,email,role) loop
+    if not exists (select 1 from auth.users where id = (c.actors->>a.key)::uuid and email = a.email)
+      or not exists (select 1 from public.profiles where id = (c.actors->>a.key)::uuid
+        and email = a.email and role = a.role::public.user_role) then
+      raise exception 'Existing actual actor identity/profile changed; refusing repair';
+    end if;
+  end loop;
+  if not exists (select 1 from public.sedes where id = own_sede and slug = 'pottery-gym-local-staging'
+    and owner_id = (c.actors->>'staff_id')::uuid and is_active)
+    or not exists (select 1 from public.sedes where id = foreign_sede
+      and owner_id = (c.actors->>'other_id')::uuid and is_active) then
+    raise exception 'Existing workshop owners changed';
+  end if;
+  for a in select * from (values ('employee_id','staff'), ('supervisor_id','super_admin')) as expected(key,role) loop
+    st := (c.actors->>a.key)::uuid;
+    if not exists (select 1 from public.sede_members where user_id = st and sede_id = own_sede and role = a.role::public.user_role)
+      or (select count(*) from public.sede_members where user_id = st) <> 1
+      or exists (select 1 from public.sedes where owner_id = st)
+      or exists (select 1 from private.domain_read_principals where user_id = st) then
+      raise exception 'Nonowner employee/superadmin authority changed; refusing repair';
+    end if;
+  end loop;
+  if exists (select 1 from public.sedes where owner_id = (c.actors->>'reader_id')::uuid)
+    or exists (select 1 from public.sede_members where user_id = (c.actors->>'reader_id')::uuid)
+    or (select count(*) from private.domain_read_principals where user_id = (c.actors->>'reader_id')::uuid
+      and kind = 'integration' and enabled and revoked_at is null and expires_at > now()) <> 1
+    or (select count(*) from private.domain_read_grants where user_id = (c.actors->>'reader_id')::uuid
+      and sede_id = own_sede and student_id = '10000000-0000-0000-0000-000000000001'
+      and operation in ('student.summary.get','membership.status.get')
+      and enabled and revoked_at is null and expires_at > now()) <> 2
+    or exists (select 1 from private.domain_read_principals where kind = 'integration'
+      and user_id in ((c.actors->>'staff_id')::uuid,(c.actors->>'other_id')::uuid))
+    or exists (select 1 from public.sede_members where sede_id = own_sede and user_id = (c.actors->>'other_id')::uuid) then
+    raise exception 'Dedicated integration/foreign owner scope changed; no grants are renewed';
+  end if;
+  if not exists (select 1 from public.teachers where id = '70000000-0000-0000-0000-000000000001' and sede_id = own_sede) then
+    raise exception 'Existing local teacher required';
+  end if;
+  perform (c.manifest->>'runId')::uuid;
+  if c.manifest->>'runId' is null or jsonb_typeof(c.manifest->'subjects') is distinct from 'object'
+    or (select count(*) from jsonb_object_keys(c.manifest->'subjects')) <> 15
+    or not (c.manifest->'subjects' ?& array['known','unknown','manualAttendance','giftSettlement',
+      'blockedSuccessor','missingSource','approvalRecovery','settlementRecovery','waiverRecovery',
+      'approvalRefreshRecovery','settlementRefreshRecovery','waiverRefreshRecovery',
+      'approvalRejectedRefreshRecovery','settlementRejectedRefreshRecovery','waiverRejectedRefreshRecovery']) then
+    raise exception 'Exact fresh manual-credit scenario manifest required';
+  end if;
+  create temporary table manual_ids(id uuid primary key) on commit drop;
+  insert into pg_temp.manual_ids values ((c.manifest->>'runId')::uuid);
+  for subject in select key, value from jsonb_each(c.manifest->'subjects') loop
+    if subject.value->>'kind' is distinct from (case subject.key
+      when 'known' then 'known' when 'unknown' then 'unknown' when 'manualAttendance' then 'zero'
+      when 'giftSettlement' then 'gift' when 'blockedSuccessor' then 'queued' when 'missingSource' then 'zero'
+      when 'approvalRecovery' then 'known' when 'settlementRecovery' then 'gift' when 'waiverRecovery' then 'gift'
+      when 'approvalRefreshRecovery' then 'known' when 'settlementRefreshRecovery' then 'gift' when 'waiverRefreshRecovery' then 'gift'
+      when 'approvalRejectedRefreshRecovery' then 'known' when 'settlementRejectedRefreshRecovery' then 'gift'
+      when 'waiverRejectedRefreshRecovery' then 'gift' end)
+      or subject.value->>'studentId' is null then raise exception 'Invalid controlled manual subject'; end if;
+    insert into pg_temp.manual_ids values ((subject.value->>'studentId')::uuid);
+    if subject.value->>'kind' in ('gift','queued') then
+      insert into pg_temp.manual_ids values ((subject.value->>'cardId')::uuid), ((subject.value->>'alternativeCardId')::uuid);
+    end if;
+    if subject.value->>'kind' = 'queued' then
+      insert into pg_temp.manual_ids values ((subject.value->>'periodId')::uuid), ((subject.value->>'successorId')::uuid);
+    end if;
+  end loop;
+  -- The full pre-existing multiset stays inside this transaction, never in a
+  -- manifest/log. EXCEPT ALL also detects removal of duplicate observations.
+  create temporary table manual_existing_rows(table_name text, row_data jsonb) on commit drop;
+  foreach tab in array protected_tables loop
+    execute format('insert into pg_temp.manual_existing_rows select %L, to_jsonb(t) from %s t',tab,tab);
+  end loop;
+  for subject in select key, value from jsonb_each(c.manifest->'subjects') loop
+    st := (subject.value->>'studentId')::uuid;
+    balance := case subject.value->>'kind' when 'known' then 3 when 'unknown' then null when 'queued' then 4 else 0 end;
+    -- UUID-qualified names must not match historical generic gift labels.
+    insert into public.students(id,sede_id,full_name,name,surname,email,student_category,class_type,status,
+      bonos_asignados,classes_remaining,payment_status)
+      values (st,own_sede,'Manual '||subject.key||' '||st,'Manual '||subject.key||' '||st,null,
+        'manual-'||st||'@pottery.local','temporal','Modelado','active',balance,balance,'pending');
+    if subject.value->>'kind' = 'queued' then
+      insert into public.student_membership_periods(id,student_id,sede_id,membership_tier,plan_price,allocated_classes,
+        starts_on,ends_on,payment_status,confirmed_at,confirmed_by,activated_at)
+        values ((subject.value->>'periodId')::uuid,st,own_sede,'gold',120,4,today-40,today-6,
+          'paid',now(),(c.actors->>'staff_id')::uuid,now());
+      update public.students set student_category = 'membresia',membership_tier = 'gold',price = 120,
+        payment_status = 'paid',current_membership_period_id = (subject.value->>'periodId')::uuid,
+        membership_activated_at = today-40,expiry_date = private.membership_expiry_projection(today-6,expiry_date) where id = st;
+      insert into public.student_membership_periods(id,student_id,sede_id,predecessor_id,membership_tier,
+        plan_price,allocated_classes,starts_on,ends_on,payment_status)
+        values ((subject.value->>'successorId')::uuid,st,own_sede,(subject.value->>'periodId')::uuid,
+          'platinum',180,8,today,today+29,'paid');
+    end if;
+    if subject.value->>'kind' in ('gift','queued') then
+      insert into public.gift_cards(id,sede_id,code,buyer,recipient,recipient_student_id,num_classes,type,
+        sessions_used,payment_status,status,validity_months,activated_at)
+        values ((subject.value->>'cardId')::uuid,own_sede,'MANUAL-'||(subject.value->>'cardId'),
+          'Manual '||(c.manifest->>'runId'),'Manual '||subject.key||' '||st,st,2,'modelado',0,
+          case when subject.value->>'kind' = 'gift' then 'pending' else 'paid' end,
+          case when subject.value->>'kind' = 'gift' then 'pending' else 'active' end,3,today),
+          ((subject.value->>'alternativeCardId')::uuid,own_sede,'MANUAL-'||(subject.value->>'alternativeCardId'),
+          'Manual '||(c.manifest->>'runId'),'Manual '||subject.key||' '||st,st,3,'modelado',0,'paid','active',3,today);
+    end if;
+    if not exists (select 1 from public.students where id = st and classes_remaining is not distinct from balance
+      and student_category = case when subject.value->>'kind' = 'queued' then 'membresia' else 'temporal' end
+      and payment_status = case when subject.value->>'kind' = 'queued' then 'paid' else 'pending' end)
+      or (select count(*) from public.student_membership_periods where student_id = st) <>
+        (case when subject.value->>'kind' = 'queued' then 2 else 0 end)
+      or (select count(*) from public.gift_cards where recipient_student_id = st) <>
+        (case when subject.value->>'kind' in ('gift','queued') then 2 else 0 end)
+      or exists (select 1 from public.session_students where student_id = st)
+      or exists (select 1 from public.student_membership_class_adjustments where student_id = st)
+      or exists (select 1 from public.student_manual_credit_entitlements where student_id = st)
+      or exists (select 1 from public.gift_card_movements where student_id = st) then
+      raise exception 'Fresh manual source initialization changed raw observations or created history';
+    end if;
+  end loop;
+  foreach tab in array protected_tables loop
+    execute format('select exists (select row_data from pg_temp.manual_existing_rows where table_name = %L
+      except all select to_jsonb(t) from %s t)',tab,tab) into changed;
+    if changed then raise exception 'Pre-existing staging rows changed in %; refusing fixture commit',tab; end if;
+  end loop;
+end $$;
+
+-- Sole output: public synthetic IDs/observations. No Auth admin, JWT, key or DB URL.
+select jsonb_build_object('version',1,'projectId','pottery-gym-local-staging','runId',manifest->>'runId',
+  'today',private.membership_today(),'serverNow',clock_timestamp(),'preservationChecks','existing_rows_unchanged',
+  'sedeId','30000000-0000-0000-0000-000000000001','actors',actors,'subjects',manifest->'subjects',
+  'initial', (select jsonb_object_agg(e.key,jsonb_build_object(
+    'student',(select to_jsonb(st) from public.students st where st.id = (e.value->>'studentId')::uuid),
+    'periods',(select coalesce(jsonb_agg(to_jsonb(p) order by p.id),'[]') from public.student_membership_periods p where p.student_id = (e.value->>'studentId')::uuid),
+    'cards',(select coalesce(jsonb_agg(to_jsonb(g) order by g.id),'[]') from public.gift_cards g where g.recipient_student_id = (e.value->>'studentId')::uuid)))
+    from jsonb_each(manifest->'subjects') e)) from pg_temp.manual_config;
+commit;

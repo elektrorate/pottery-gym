@@ -1,0 +1,64 @@
+POTTERY GYM - ENTREGA DE LA FASE INMEDIATA
+
+Rama: feat/session-policy-integration
+Base: main en 8dd8315; se conservaron los cambios visuales/navegacion previos.
+No se modifico main ni se ejecutaron comandos de migracion/despliegue remoto.
+Estos ajustes siguen locales y requieren revision/commit; no se publico un PR nuevo.
+
+Implementacion
+- Tipos de politica, proyecciones por IDs/sede/version y carga de estado de negocio.
+- RPCs exactos con intenciones durables y reintentos observacionales.
+- Guardar provisional/finalizar; excepciones individuales; cancelacion a ocho horas.
+- Incidencias sin saldo negativo ni cobros al periodo sucesor.
+- Exenciones por propietario real, no por rol o hint del cliente.
+- Cancelaciones liberan plazas y no se confunden con faltas en la ficha.
+- Recuperacion del intento exacto tras respuesta perdida, fallo de recarga o remontaje.
+- Scroll en DIV, fieldset para deshabilitar controles; pie de modal no intercepta filas.
+- Ajustes genericos deshabilitados para no evitar una penalizacion por otra ruta.
+
+Solo LOCAL
+La politica se aplico a pottery-gym-local-staging (55321/55322), no al stack
+anterior ni al proyecto productivo. Las filas previas se compararon con
+fingerprints y las versiones de sesion se verificaron sin cambios. Se guardo
+un pg_dump cifrado AES-GCM con clave DPAPI fuera de Git y descifrado comprobado.
+Esto no es un ensayo completo de restauracion.
+
+Migraciones de seguimiento aplicadas solo al staging local
+- 20261011230000_session_business_policy.sql
+- 20261011233000_session_policy_validation_volatility.sql
+- 20261011234000_session_policy_validation_stable.sql
+Las dos ultimas corrigen la declaracion de volatilidad sin editar SQL ya aplicado.
+
+Evidencia de la fase previa, anterior al bloque manual
+- npm run test:local: 160/160.
+- npm run test:unit: 37/37.
+- npm run staging:test: 29/29, con cinco identidades reales y sin reintentos de tests.
+- npm run test:sql:policy: 275 aserciones, 105 denegaciones esperadas, cinco carreras
+  concurrentes, y cadena completa/seed en una base desechable sin red.
+- TypeScript y build aprobados; warnings conocidos de chunks permanecen.
+- Lint del staging sin errores/warnings y pgTAP 3/3, con rollback; no se uso produccion.
+- La cadena fria de las 23 migraciones del workspace y el seed aprobado pasaron.
+
+Problemas resueltos durante la fase
+La validacion de archivos detecto LF/CRLF tras cambios de rama: ahora normaliza
+solo finales de linea y valida antes de parar servicios. Un arranque parcial
+fue recuperado desde el snapshot propio, sin reset. Se usa el CLI nativo Windows.
+Una ejecucion de UI concurrente fallo al cargar login; se separaron caches Vite.
+Otro ciclo recibio 401/PGRST303 al autenticar tras reinicio; nuevos logins y las
+29 pruebas pasaron. No se ocultaron fallos mediante reintentos de escritura.
+Se detectaron y corrigieron el bypass de autoasignacion de propietario, la
+recuperacion tras desmontaje, el bloqueo de reaprobar y el scroll del modal.
+
+Seguimiento manual completado SOLO LOCALMENTE
+20261012090000_manual_credit_reconciliation_settlement.sql aplicado con
+respaldo cifrado y conservacion de todas las filas/versiones previas.
+Creditos manuales atribuibles, conciliacion y liquidacion de fuente original
+conectados a la ficha; solo propietario. No hay compensacion automatica ni
+ajustes genericos. 45/45 pruebas reales, 370/370 regresiones, 37/37 unitarias,
+837 aserciones SQL aisladas, lint local y pgTAP 3/3 aprobados.
+Ver docs/manual-credit-phase.txt para detalle, incidencias y limites reales.
+
+Pendientes, sin inventar reglas
+La activacion y el tratamiento de reservas/avisos historicos en produccion
+siguen pendientes de decision. API completa, MCP real, restauracion ensayada
+y las restantes decisiones de #8 no estan terminadas; no cerrar todas las issues.

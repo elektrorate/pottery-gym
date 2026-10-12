@@ -5,6 +5,7 @@ export const attachAttendanceHistory = (students: Student[], sessions: ClassSess
   const history: Record<string, AssignedClass[]> = {};
   for (const session of sessions) {
     for (const studentId of session.studentIds || []) {
+      if (session.attendancePolicyVersion === 2 && session.businessStateByStudentId?.[studentId]?.reservationState === 'cancelled') continue;
       const status = session.attendanceByStudentId?.[studentId];
       if (!studentId || (status !== 'present' && status !== 'absent')) continue;
       (history[studentId] ||= []).push({ date: session.date, startTime: session.startTime, endTime: session.endTime, status });

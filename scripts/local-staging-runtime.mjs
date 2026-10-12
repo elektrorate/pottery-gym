@@ -11,7 +11,7 @@ export const apiUrl = 'http://127.0.0.1:55321';
 export const frontendUrl = 'http://127.0.0.1:3017';
 export const dbContainer = `supabase_db_${projectId}`;
 export const testPassword = 'LocalStaging2026!';
-export const testEmails = ['staff@pottery.local', 'other@pottery.local', 'reader@pottery.local'];
+export const testEmails = ['staff@pottery.local', 'other@pottery.local', 'reader@pottery.local', 'employee@pottery.local', 'supervisor@pottery.local'];
 
 export const redact = text => String(text || '')
   .replace(/("[^"\r\n]*(?:secret|service[_-]?role|password|access[_-]?(?:token|key))[^"\r\n]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted credential]"')
@@ -36,9 +36,10 @@ export const pipeRedactedLines = (stream, output) => {
 
 export const cliCommand = args => {
   if (process.platform !== 'win32') return { file: 'supabase', args };
-  const entry = path.join(process.env.APPDATA || '', 'npm', 'node_modules', 'supabase', 'dist', 'supabase.js');
-  if (!existsSync(entry)) throw new Error('Installed Supabase CLI entry not found; no shell fallback is used.');
-  return { file: process.execPath, args: [entry, ...args] };
+  const binary = path.join(process.env.APPDATA || '', 'npm', 'node_modules', 'supabase', 'node_modules',
+    `@supabase/cli-windows-${process.arch}`, 'bin', 'supabase.exe');
+  if (!existsSync(binary)) throw new Error('Installed native Supabase CLI not found; no shell or descendant shim is used.');
+  return { file: binary, args };
 };
 
 export const cli = (args, timeout = 900_000) => {

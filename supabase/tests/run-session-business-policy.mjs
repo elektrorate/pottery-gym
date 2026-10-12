@@ -3,13 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 
 // Dedicated ephemeral, socket-only database; never use an existing DB or pull.
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const docker = (...args) => execFileSync('docker', args, { cwd: root, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 const exec = promisify(execFile);
 let container;
+let sqlChecks = 0;
+let deniedCalls = 0;
 try {
+  assert.match(docker('context', 'inspect', '--format', '{{.Endpoints.docker.Host}}').trim(), /^(npipe:|unix:)/,
+    'Refusing a remote Docker context');
+  if (process.env.DOCKER_HOST) assert.match(process.env.DOCKER_HOST, /^(npipe:|unix:)/, 'Refusing a remote DOCKER_HOST');
   const image = docker('image', 'inspect', 'postgres:17', '--format', '{{.Id}}').trim();
   assert.match(image, /^sha256:/);
   container = docker('run', '-d', '--pull=never', '--network=none', '--name', `session-business-${randomUUID()}`,
@@ -34,15 +40,20 @@ try {
     ['supabase/migrations/20261011230000_session_business_policy.sql', 'business-policy.sql'],
     ['supabase/tests/session_business_policy.fixture.psql', 'business-fixture.psql']
   ]) docker('cp', fileURLToPath(new URL(`../../${source}`, import.meta.url)), `${container}:/tmp/${target}`);
-  const psql = ['exec', container, 'psql', '-X', '-w', '-U', 'postgres', '-h', '/var/run/postgresql', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1'];
-  const run = async args => {
-    const result = await exec('docker', [...psql, ...args], { cwd: root, maxBuffer: 8 * 1024 * 1024 });
+  const psql = ['exec', container, 'psql', '-X', '-w', '-q', '-A', '-t', '-U', 'postgres', '-h', '/var/run/postgresql', '-v', 'ON_ERROR_STOP=1'];
+  const run = async (args, database = 'postgres') => {
+    const result = await exec('docker', [...psql, '-d', database, ...args], { cwd: root, maxBuffer: 8 * 1024 * 1024 });
+    sqlChecks += (result.stderr.match(/NOTICE:\s+PASS:/g) ?? []).length;
+    deniedCalls += (result.stderr.match(/NOTICE:\s+PASS: reject:/g) ?? []).length;
     process.stdout.write(result.stdout); process.stdout.write(result.stderr);
     return result;
   };
-  await run(['-f', '/tmp/business-fixture.psql']);
+  const fixture = await run(['-f', '/tmp/business-fixture.psql']);
+  const legacyChecks = (fixture.stderr.match(/psql:\/tmp\/atomic-fixture\.psql:\d+: NOTICE:\s+PASS:/g) ?? []).length;
+  const businessChecks = sqlChecks - legacyChecks;
   const query = sql => run(['-c', sql]);
-  const auth = `set local role authenticated; set local request.jwt.claim.sub='00000000-0000-0000-0000-000000000001';`;
+  const auth = `set local role authenticated; set local request.jwt.claim.sub='00000000-0000-0000-0000-000000000001';
+    set local request.jwt.claim.role='authenticated';`;
   const reservation = (session, student, key) => `begin; ${auth}
     select public.save_session_reservation(public.business_id(2,${session}),public.business_id(6,${key}),0,
       public.business_id(3,1),public.business_metadata(20,12,1),array[public.business_id(1,${student})],'{}');
@@ -84,10 +95,41 @@ try {
       where session_id in(public.business_id(2,45),public.business_id(2,46));
     select public.atomic_assert(classes_remaining=4,'gift race never falls back to available membership credit')
       from public.students where id=public.business_id(1,25);`);
-  console.log('PASS: policy2 business rules, unchanged v1 receipts, authorization, rollback, DST and concurrent claims');
+  console.log(`PASS: ${sqlChecks} SQL assertions (${legacyChecks} legacy, ${businessChecks} business, ${sqlChecks - legacyChecks - businessChecks} race assertions; ${deniedCalls} expected denials), plus 5 concurrent scenarios`);
+
+  // A separate cold database in this same disposable, networkless container
+  // catches migration-order and real seed drift hidden by the focused fixture.
+  const migrations = readdirSync(fileURLToPath(new URL('../../supabase/migrations/', import.meta.url)))
+    .filter(name => /^\d+_.*\.sql$/.test(name)).map(name => `supabase/migrations/${name}`).sort();
+  assert.ok(migrations.includes('supabase/migrations/20261011230000_session_business_policy.sql'));
+  for (const source of migrations) docker('cp', fileURLToPath(new URL(`../../${source}`, import.meta.url)), `${container}:/tmp/cold-${source.split('/').at(-1)}`);
+  docker('cp', fileURLToPath(new URL('../../local-staging/seed.psql', import.meta.url)), `${container}:/tmp/cold-seed.psql`);
+  await query('create database business_cold;');
+  await run(['-c', `create schema auth;
+    create table auth.users(id uuid primary key, email text, raw_user_meta_data jsonb);
+    create function auth.uid() returns uuid language sql stable as $$
+      select coalesce(nullif(current_setting('request.jwt.claim.sub',true),''),
+        nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid;
+    $$;
+    create function auth.role() returns text language sql stable as $$
+      select coalesce(nullif(current_setting('request.jwt.claim.role',true),''),
+        nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'role');
+    $$;
+    grant usage on schema auth to anon,authenticated,service_role;`], 'business_cold');
+  await run(migrations.flatMap(source => ['-f', `/tmp/cold-${source.split('/').at(-1)}`]), 'business_cold');
+  console.log(`PASS: cold full chain applied ${migrations.length} workspace migrations in a second disposable database`);
+  await run(['-c', `insert into auth.users(id,email) values
+    ('00000000-0000-0000-0000-000000000001','staff@pottery.local'),
+    ('00000000-0000-0000-0000-000000000002','other@pottery.local'),
+    ('00000000-0000-0000-0000-000000000003','reader@pottery.local');`,
+    '-v', 'staff_id=00000000-0000-0000-0000-000000000001', '-v', 'other_id=00000000-0000-0000-0000-000000000002',
+    '-v', 'reader_id=00000000-0000-0000-0000-000000000003',
+    '-c', "set app.local_staging = 'pottery-gym-local-staging'", '-f', '/tmp/cold-seed.psql'], 'business_cold');
+  console.log('PASS: unchanged local-staging seed and its authorization assertions on the cold full migration chain');
 } catch (error) {
   if (error.stdout) process.stderr.write(error.stdout);
   if (error.stderr) process.stderr.write(error.stderr);
+  else process.stderr.write(`${error.message}\n`);
   throw new Error('Session business policy test failed; database output is shown above.');
 } finally {
   if (container) docker('rm', '-f', container);

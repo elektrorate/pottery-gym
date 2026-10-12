@@ -96,6 +96,7 @@ export const assertOrdinaryStudentUpdate = (student: Student, updates: Partial<S
 // Shared SELECT/INSERT mapping; never mix submitted defaults with server projections.
 export const mapStudentRowToModel = (row: any): Student => ({
   id: row.id, name: row.name || row.full_name || '', surname: row.surname || undefined,
+  sedeId: row.sede_id ?? undefined, legacyManualBalance: row.classes_remaining ?? null,
   email: row.email || undefined, phone: row.phone || '', phoneCountry: row.phone_country || undefined,
   birthDay: row.birth_day ? String(row.birth_day) : undefined,
   birthMonth: row.birth_month ? String(row.birth_month) : undefined,

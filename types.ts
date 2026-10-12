@@ -61,8 +61,137 @@ export interface ClassAdjustmentIntent {
   readonly delta: number;
 }
 
+export interface ManualCreditIntent {
+  readonly studentId: string;
+  readonly requestKey: string;
+  readonly mode: 'reconcile_legacy' | 'new_manual';
+  readonly quantity: number;
+  readonly expectedLegacyBalance: number | null;
+  readonly activity: CapacityActivity;
+  readonly startsOn: string;
+  readonly endsOn: string;
+  readonly reason: string;
+  readonly evidence: string;
+}
+
+export interface PenaltySettlementIntent {
+  readonly penaltyId: string;
+  readonly studentId: string;
+  readonly requestKey: string;
+  readonly expectedRevision: number;
+  readonly reason: string;
+}
+
+export interface PendingStudentCreditOperation {
+  readonly operation: 'approve_manual' | 'settle_penalty' | 'waive_penalty';
+  readonly studentId: string;
+  readonly requestKey: string;
+  readonly penaltyId?: string;
+  readonly sessionId?: string;
+  readonly reason: string;
+}
+
+export interface ManualCreditEntitlement {
+  id: string;
+  studentId: string;
+  sedeId: string;
+  mode: ManualCreditIntent['mode'];
+  activity: CapacityActivity;
+  allocatedClasses: number;
+  remainingClasses: number;
+  startsOn: string;
+  endsOn: string;
+  reason: string;
+  evidence: string;
+  approvedBy: string;
+  approvedAt: string;
+}
+
+export interface PendingStudentPenalty {
+  id: string;
+  studentId: string;
+  sedeId: string;
+  sessionId: string;
+  sessionDate: string;
+  sessionStart: string;
+  sessionRevision?: number;
+  kind: 'no_show' | 'late_cancellation';
+  state: 'pending' | 'charged' | 'waived';
+  originalPeriodId?: string;
+  originalGiftCardId?: string;
+  originalManualCreditId?: string;
+  reason: string;
+  canSettle?: boolean;
+  blockedReason?: string;
+  settlementId?: string;
+  settlementReason?: string;
+  settledBy?: string;
+  settledAt?: string;
+}
+
+export interface SessionBusinessIntent {
+  readonly operation: 'approve_exception' | 'cancel_reservation' | 'waive_penalty';
+  readonly sessionId: string;
+  readonly studentId: string;
+  readonly requestKey: string;
+  readonly expectedRevision: number;
+  readonly reason: string;
+  readonly kind?: 'membership_override' | 'no_credit';
+}
+
+export interface PendingSessionOperation {
+  readonly operation: 'attendance' | 'reservation' | SessionBusinessIntent['operation'];
+  readonly sessionId: string;
+  readonly requestKey: string;
+  readonly expectedRevision: number;
+  readonly isNewSession: boolean;
+  readonly studentId?: string;
+  readonly reason?: string;
+}
+
+export interface SessionBusinessState {
+  reservationState: 'reserved' | 'cancelled';
+  cancelledAt?: string;
+  cancellationKind?: 'timely' | 'late';
+  cancellationReason?: string;
+  cancelledBy?: string;
+  exceptionId?: string;
+  exceptionKind?: 'membership_override' | 'no_credit';
+  exceptionPeriodId?: string;
+  exceptionGiftCardId?: string;
+  exceptionReason?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  billingState: 'unfinalized' | 'charged' | 'no_charge' | 'incident' | 'waived';
+  billingKind?: 'attendance' | 'no_show' | 'late_cancellation' | 'timely_cancellation' | 'courtesy';
+  billingDebitId?: string;
+  fundingPeriodId?: string;
+  fundingGiftCardId?: string;
+  fundingManualCreditId?: string;
+  exceptionManualCreditId?: string;
+  penaltyManualCreditId?: string;
+  settlementId?: string;
+  settlementDebitId?: string;
+  settlementReason?: string;
+  settledBy?: string;
+  settledAt?: string;
+  settlementRevision?: number;
+  finalizedRevision?: number;
+  penaltyId?: string;
+  penaltyState?: 'charged' | 'pending' | 'waived';
+  penaltyReason?: string;
+  waiverReason?: string;
+  waivedBy?: string;
+  waivedAt?: string;
+}
+
 export interface Student {
   id: string;
+  sedeId?: string;
+  legacyManualBalance?: number | null;
+  manualCredits?: ManualCreditEntitlement[];
+  pendingPenalties?: PendingStudentPenalty[];
+  canReconcileLegacy?: boolean;
   name: string;
   surname?: string;
   email?: string;
@@ -96,26 +225,39 @@ export interface Student {
 
 export interface ClassSession {
   id: string;
+  sedeId?: string;
   revision?: number; // Server revision required for atomic writes.
+  attendancePolicyVersion?: 1 | 2;
+  businessStateByStudentId?: Record<string, SessionBusinessState>;
   date: string; // ISO format
   startTime: string;
   endTime: string;
-  classType: 'mesa' | 'torno' | 'coworking' | 'workshop' | 'privada' | 'feriado';
+  classType: 'mesa' | 'torno' | 'mixto' | 'coworking' | 'workshop' | 'privada' | 'feriado';
   capacity?: number;
   students: string[]; // List of student names
   attendance?: Record<string, 'present' | 'absent'>; // Record key is student name or ID
   studentIds?: string[];
   attendanceByStudentId?: Record<string, 'present' | 'absent' | 'pending'>;
   giftCardIdByStudentId?: Record<string, string>;
+  manualCreditIdByStudentId?: Record<string, string>;
   teacherId?: string;
   teacherSubstituteId?: string;
   completedAt?: string;
   workshopName?: string;
   privateReason?: string;
   sessionAudience?: 'membresia' | 'temporal' | 'ambos'; // Audiencia: membresía (permanentes), temporal, o ambos
+  activityBlocks?: SessionActivityBlock[];
 }
 
-export type CapacityActivity = Exclude<ClassSession['classType'], 'feriado'>;
+export interface SessionActivityBlock {
+  id?: string;
+  activityType: Exclude<ClassSession['classType'], 'feriado'>;
+  teacherId?: string;
+  capacity: number;
+  studentIds: string[];
+}
+
+export type CapacityActivity = Exclude<ClassSession['classType'], 'feriado' | 'mixto'>;
 export type CapacityDefaults = Partial<Record<CapacityActivity, number>>;
 
 export const DEFAULT_CAPACITY_BY_ACTIVITY: Record<CapacityActivity, number> = {
@@ -180,6 +322,7 @@ export interface CeramicPiece {
 
 export interface GiftCard {
   id: string;
+  sedeId?: string;
   code?: string;
   buyer: string;
   buyerPhone?: string;

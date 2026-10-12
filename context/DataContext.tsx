@@ -3,7 +3,8 @@ import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import {
     Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement,
-    InventoryItem, InventoryMovement, Teacher, MembershipTier, RenewalIntent, ClassAdjustmentIntent,
+    InventoryItem, InventoryMovement, Teacher, MembershipTier, RenewalIntent, ClassAdjustmentIntent, SessionBusinessIntent, PendingSessionOperation,
+    ManualCreditIntent, PenaltySettlementIntent, PendingStudentCreditOperation,
     WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, CapacityActivity,
     DEFAULT_CAPACITY_BY_ACTIVITY, getDefaultSessionCapacity
 } from '../types';
@@ -12,6 +13,8 @@ import { showError } from './toast';
 // Import modular operations
 import { extractTime, withTimeout, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, joinStudentMemberships } from './data/shared';
 import { createMembershipOperations } from './data/membershipOps';
+import { createStudentCreditOperations, StudentCreditIntentStore } from './data/studentCreditOps';
+import { readAllRows } from './data/readAllRows';
 import * as studentOps from './data/studentOps';
 import * as sessionOps from './data/sessionOps';
 import * as teacherOps from './data/teacherOps';
@@ -19,6 +22,8 @@ import * as pieceOps from './data/pieceOps';
 import * as giftCardOps from './data/giftCardOps';
 import * as inventoryOps from './data/inventoryOps';
 import { attachAttendanceHistory } from '../utils/attendanceHistory';
+import { attachSessionBusinessState } from '../utils/sessionBusiness';
+import { attachStudentCreditProfiles } from '../utils/studentCredits';
 
 const normalizeAttendanceStatus = (value: unknown): 'present' | 'absent' | undefined => {
     const status = String(value || '').trim().toLowerCase();
@@ -49,12 +54,27 @@ interface DataContextType {
     renewStudent: (intent: RenewalIntent) => Promise<void>;
     confirmMembershipPayment: (studentId: string, periodId: string) => Promise<void>;
     activateMembership: (studentId: string) => Promise<void>;
+    initializeLegacyMemberships: () => Promise<{ initialized: number; failed: number }>;
     adjustMembershipClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
+    approveStudentManualCredit: (intent: ManualCreditIntent) => Promise<void>;
+    settlePendingStudentPenalty: (intent: PenaltySettlementIntent) => Promise<void>;
+    waiveStudentPenalty: (intent: SessionBusinessIntent) => Promise<void>;
+    canManageStudentCredits: (student: Student) => boolean;
+    getPendingStudentCreditOperation: (studentId: string) => PendingStudentCreditOperation | null;
+    retryPendingStudentCreditOperation: (studentId: string) => Promise<void>;
 
     // Session CRUD
     addSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
     updateSession: (id: string, updates: Partial<ClassSession>) => Promise<boolean>;
     deleteSession: (id: string) => Promise<void>;
+    approveSessionException: (intent: SessionBusinessIntent) => Promise<void>;
+    cancelSessionReservation: (intent: SessionBusinessIntent) => Promise<void>;
+    waiveSessionPenalty: (intent: SessionBusinessIntent) => Promise<void>;
+    isCurrentSedeOwner: boolean;
+    canWaiveSessionPenalty: (session: ClassSession) => boolean;
+    canAdjustMembershipClasses: boolean;
+    getPendingSessionOperation: (id?: string) => PendingSessionOperation | null;
+    retryPendingSessionOperation: (id?: string) => Promise<void>;
 
     // Teacher CRUD
     addTeacher: (teacher: Omit<Teacher, 'id'>) => Promise<void>;
@@ -120,9 +140,11 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     );
     const [isLoadingData, setIsLoadingData] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [ownedSedeIds, setOwnedSedeIds] = useState<string[]>([]);
     const hasLoadedOnceRef = useRef(false);
     const operationLockRef = useRef(false);
     const loadGenerationRef = useRef(0);
+    const studentCreditStoreRef = useRef<StudentCreditIntentStore | null>(null);
 
     // ==================== DATA LOADING ====================
     const loadAllData = useCallback(async () => {
@@ -135,10 +157,19 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
         try {
             const buildQuery = (table: string, limit?: number) => {
-                let query = supabase.from(table).select('*');
-                if (!isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
-                if (limit !== undefined) query = query.limit(limit);
-                return withTimeout(`${table}.select`, query, RELOAD_TIMEOUT_MS);
+                const select = () => {
+                    let query = supabase.from(table).select('*', { count: 'exact' });
+                    if (!isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
+                    return query;
+                };
+                if (limit !== undefined) return withTimeout(`${table}.select`, select().limit(limit), RELOAD_TIMEOUT_MS);
+                const keys = table === 'session_business_state' ? ['session_id', 'student_id']
+                    : ['students_effective_membership', 'student_credit_profile'].includes(table) ? ['student_id'] : ['id'];
+                return readAllRows((offset, size) => {
+                    let query = select();
+                    for (const key of keys) query = query.order(key, { ascending: true });
+                    return withTimeout(`${table}.select`, query.range(offset, offset + size - 1), RELOAD_TIMEOUT_MS);
+                });
             };
 
             const isMissingOptionalTable = (error: any) => {
@@ -146,7 +177,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 return error?.code === '42P01' || error?.code === 'PGRST205' || message.includes('does not exist') || message.includes('could not find the table');
             };
 
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes] = await Promise.all([
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes, businessRes, ownerRes, creditProfileRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
                 buildQuery('session_students'),
                 buildQuery('pieces'), Promise.resolve(buildQuery('gift_cards')).catch(error => ({ data: [], error })),
@@ -155,13 +186,22 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 Promise.resolve(buildQuery('workshop_capacity_defaults')).catch(error => ({ data: [], error })),
                 Promise.resolve(buildQuery('workshop_schedule_exceptions')).catch(error => ({ data: [], error })),
                 buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
-                buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0)
+                buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
+                buildQuery('session_business_state'), readAllRows((offset, size) => withTimeout('sedes.owner.select',
+                    supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session.user.id).eq('is_active', true)
+                        .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
+                buildQuery('student_credit_profile'),
+                Promise.resolve(buildQuery('session_activity_blocks')).catch(error => ({ data: [], error })),
+                Promise.resolve(buildQuery('session_activity_block_students')).catch(error => ({ data: [], error }))
             ]);
 
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
             if (studentsRes.error) throw studentsRes.error;
             if (effectiveRes.error) throw effectiveRes.error;
             if (periodsRes.error) throw periodsRes.error;
+            if (businessRes.error) throw new Error('El backend no tiene la politica de sesiones requerida. Actualiza solo el entorno autorizado.');
+            if (ownerRes.error) throw ownerRes.error;
+            if (creditProfileRes.error) throw new Error('El backend no tiene los contratos de creditos manuales e incidencias. Actualiza solo el entorno autorizado.');
             // Never mix new identity/atomic consumers with older writable projections.
             if (sessionContractRes.error || giftContractRes.error) {
                 throw new Error('El backend no tiene los contratos de bonos y asistencia atómica. Requiere una actualización coordinada autorizada.');
@@ -189,6 +229,14 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 if (!sessionStudentsMap[row.session_id]) sessionStudentsMap[row.session_id] = [];
                 sessionStudentsMap[row.session_id].push(row);
             });
+            const activityBlockStudentsMap: Record<string, any[]> = {};
+            (activityBlockStudentsRes.data || []).forEach((row: any) => {
+                (activityBlockStudentsMap[row.block_id] ||= []).push(row);
+            });
+            const activityBlocksMap: Record<string, any[]> = {};
+            (activityBlocksRes.data || []).forEach((row: any) => {
+                (activityBlocksMap[row.session_id] ||= []).push(row);
+            });
 
             const loadedCapacityDefaults = (capacityDefaultsRes.error ? [] : (capacityDefaultsRes.data || []))
                 .filter((row: any) => row.class_type !== 'feriado')
@@ -197,6 +245,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 ? loadedCapacityDefaults.reduce<Record<string, number>>((result, item) => ({ ...result, [item.classType]: item.capacity }), {})
                 : DEFAULT_CAPACITY_BY_ACTIVITY;
 
+            const businessBySession: Record<string, any[]> = {};
+            (businessRes.data || []).forEach((row: any) => { (businessBySession[row.session_id] ||= []).push(row); });
             const normalizedSessions: ClassSession[] = (sessionsRes.data || []).map((row: any) => {
                 const linked = sessionStudentsMap[row.id] || [];
                 const attendance: Record<string, 'present' | 'absent'> = {};
@@ -206,8 +256,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                         attendance[item.student_name] = status;
                     }
                 });
-                return {
+                const mapped: ClassSession = {
                     id: row.id, date: String(row.date).split('T')[0],
+                    sedeId: row.sede_id,
+                    attendancePolicyVersion: row.attendance_policy_version,
                     revision: Number.isSafeInteger(Number(row.revision)) && row.revision != null ? Number(row.revision) : undefined,
                     startTime: extractTime(row.start_time), endTime: extractTime(row.end_time),
                     classType: row.class_type,
@@ -226,6 +278,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                         if (item.student_id && item.gift_card_id) result[item.student_id] = item.gift_card_id;
                         return result;
                     }, {}),
+                    manualCreditIdByStudentId: linked.reduce((result: Record<string, string>, item: any) => {
+                        if (item.student_id && item.manual_credit_id) result[item.student_id] = item.manual_credit_id;
+                        return result;
+                    }, {}),
                     teacherId: row.teacher_id || undefined,
                     teacherSubstituteId: row.teacher_substitute_id || undefined,
                     completedAt: row.completed_at || undefined,
@@ -233,6 +289,14 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     privateReason: row.private_reason || undefined,
                     sessionAudience: row.session_audience || undefined
                 };
+                mapped.activityBlocks = (activityBlocksMap[row.id] || []).map((block: any) => ({
+                    id: block.id,
+                    activityType: block.activity_type,
+                    teacherId: block.teacher_id || undefined,
+                    capacity: Number(block.capacity),
+                    studentIds: (activityBlockStudentsMap[block.id] || []).map((item: any) => item.student_id)
+                }));
+                return attachSessionBusinessState(mapped, businessBySession[row.id] || []);
             });
 
             const studentsWithAttendance = attachAttendanceHistory(normalizedStudents, normalizedSessions);
@@ -257,13 +321,15 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 ...mapGiftCardRowToModel(row), movements: movementsByGiftCard[row.id] || []
             }));
 
-            setStudents(studentsWithAttendance);
+            setStudents(attachStudentCreditProfiles(studentsWithAttendance, creditProfileRes.data || [],
+                normalizedSessions, normalizedGiftCards));
 
             // Lifecycle is derived from the payment due date. Loading data must
             // never renew unpaid memberships or persist automatic archival.
 
             setTeachers((teachersRes.data || []) as Teacher[]);
             setSessions(normalizedSessions);
+            setOwnedSedeIds((ownerRes.data || []).map((row: any) => row.id));
             setPieces(normalizedPieces);
             setGiftCards(normalizedGiftCards);
             setInventoryItems((inventoryRes.data || []) as InventoryItem[]);
@@ -315,6 +381,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         if (!session) {
             ++loadGenerationRef.current;
             setStudents([]); setSessions([]); setPieces([]);
+            setOwnedSedeIds([]);
             setGiftCards([]); setInventoryItems([]); setInventoryMovements([]); setTeachers([]);
             setWorkshopSchedule([]);
             setWorkshopScheduleExceptions([]);
@@ -359,17 +426,91 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     });
     const renewStudent = async (intent: RenewalIntent) => { await membership.renew(intent); };
     const activateMembership = async (id: string) => { await membership.activate(id); };
+    const initializeLegacyMemberships = async () => {
+        const legacyMemberships = studentsRef.current.filter(student =>
+            (student.studentCategory || 'membresia') === 'membresia'
+            && !student.effectivePeriodId
+            && !student.materializedPeriodId
+            && !student.membershipPeriods?.length
+        );
+        let initialized = 0;
+        let failed = 0;
+        for (const student of legacyMemberships) {
+            try {
+                const result = await withTimeout('activate_student_membership', supabase.rpc('activate_student_membership', { student_id: student.id }));
+                if (result.error || !result.data) failed++;
+                else initialized++;
+            } catch {
+                failed++;
+            }
+        }
+        if (legacyMemberships.length > 0) await safeReload();
+        return { initialized, failed };
+    };
     const confirmMembershipPayment = async (id: string, periodId: string) => {
         if (!studentsRef.current.find(student => student.id === id)?.membershipPeriods?.some(period => period.id === periodId)) {
             throw new Error('Selecciona un período del alumno. Inicializa primero el registro legado si es necesario.');
         }
         await membership.confirm(periodId);
     };
-    const adjustMembershipClasses = async (intent: ClassAdjustmentIntent) => { await membership.adjust(intent); };
+    const adjustMembershipClasses = async (_intent: ClassAdjustmentIntent) => {
+        throw new Error('Los ajustes genericos estan bloqueados para no eludir penalizaciones. Usa la exencion del propietario para una penalizacion registrada.');
+    };
+
+    const studentCreditOperations = () => {
+        if (!session?.user.id) throw new Error('Inicia sesion antes de gestionar creditos.');
+        studentCreditStoreRef.current ??= new StudentCreditIntentStore();
+        return createStudentCreditOperations({ actorId: session.user.id, store: studentCreditStoreRef.current,
+            rpc: (name, args) => withTimeout(name, supabase.rpc(name, args)), refresh: safeReload });
+    };
+    const canManageStudentCredits = (student: Student) => !!student.sedeId && ownedSedeIds.includes(student.sedeId);
+    const requireCreditStudent = (id: string) => {
+        const student = studentsRef.current.find(item => item.id === id);
+        if (!student || !canManageStudentCredits(student)) throw new Error('Solo el propietario de la sede del alumno puede gestionar sus creditos.');
+        return student;
+    };
+    const approveStudentManualCredit = async (intent: ManualCreditIntent) => {
+        requireCreditStudent(intent.studentId);
+        await studentCreditOperations().approve(intent);
+    };
+    const settlePendingStudentPenalty = async (intent: PenaltySettlementIntent) => {
+        const student = requireCreditStudent(intent.studentId);
+        const penalty = student.pendingPenalties?.find(item => item.id === intent.penaltyId);
+        if (!penalty || penalty.studentId !== student.id || penalty.sedeId !== student.sedeId) throw new Error('Recarga la incidencia original del alumno antes de liquidarla.');
+        if (sessionOps.getPendingSessionOperation(getOpsContext(), penalty.sessionId)) throw new Error('Recupera primero la operacion pendiente de esta sesion.');
+        await studentCreditOperations().settle(intent, penalty.sessionId);
+    };
+    const waiveStudentPenalty = async (intent: SessionBusinessIntent) => {
+        const student = requireCreditStudent(intent.studentId);
+        const penalty = student.pendingPenalties?.find(item => item.sessionId === intent.sessionId);
+        if (!penalty || penalty.studentId !== student.id || penalty.sedeId !== student.sedeId) throw new Error('Recarga la penalizacion original antes de eximirla.');
+        if (sessionOps.getPendingSessionOperation(getOpsContext(), penalty.sessionId)) throw new Error('Recupera primero la operacion pendiente de esta sesion.');
+        await studentCreditOperations().waive(intent, penalty.id);
+    };
+    const getPendingStudentCreditOperation = (studentId: string) => session?.user.id
+        ? studentCreditOperations().getPending(studentId) : null;
+    const retryPendingStudentCreditOperation = async (studentId: string) => {
+        // Recovery uses stored arguments, even when a commit changed the loaded incident.
+        await studentCreditOperations().retry(studentId);
+    };
 
     const addSession = async (s: Omit<ClassSession, 'id'>) => sessionOps.addSession(getOpsContext(), s);
     const updateSession = async (id: string, u: Partial<ClassSession>) => sessionOps.updateSession(getOpsContext(), id, u);
     const deleteSession = async (id: string) => sessionOps.deleteSession(getOpsContext(), id);
+    const getPendingSessionOperation = (id?: string) => sessionOps.getPendingSessionOperation(getOpsContext(), id);
+    const retryPendingSessionOperation = async (id?: string) => sessionOps.retryPendingSessionOperation(getOpsContext(), id);
+    const approveSessionException = async (intent: SessionBusinessIntent) => {
+        if (intent.operation !== 'approve_exception') throw new Error('Operacion incompatible con la aprobacion.');
+        await sessionOps.applySessionBusinessOperation(getOpsContext(), intent);
+    };
+    const cancelSessionReservation = async (intent: SessionBusinessIntent) => {
+        if (intent.operation !== 'cancel_reservation') throw new Error('Operacion incompatible con la cancelacion.');
+        await sessionOps.applySessionBusinessOperation(getOpsContext(), intent);
+    };
+    const waiveSessionPenalty = async (intent: SessionBusinessIntent) => {
+        if (intent.operation !== 'waive_penalty') throw new Error('Operacion incompatible con la exencion.');
+        await sessionOps.applySessionBusinessOperation(getOpsContext(), intent);
+    };
 
     const addTeacher = async (t: Omit<Teacher, 'id'>) => teacherOps.addTeacher(getOpsContext(), t);
     const updateTeacher = async (id: string, u: Partial<Teacher>) => teacherOps.updateTeacher(getOpsContext(), id, u);
@@ -501,8 +642,14 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
     const value: DataContextType = {
         students, sessions, pieces, giftCards, inventoryItems, inventoryMovements, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults, isLoadingData, loadError,
-        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
+        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, initializeLegacyMemberships, adjustMembershipClasses,
+        approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
+        getPendingStudentCreditOperation, retryPendingStudentCreditOperation,
         addSession, updateSession, deleteSession,
+        approveSessionException, cancelSessionReservation, waiveSessionPenalty,
+        getPendingSessionOperation, retryPendingSessionOperation,
+        isCurrentSedeOwner: !!sedeId && ownedSedeIds.includes(sedeId), canAdjustMembershipClasses: false,
+        canWaiveSessionPenalty: (session: ClassSession) => !!session.sedeId && ownedSedeIds.includes(session.sedeId),
         addTeacher, updateTeacher, deleteTeacher,
         addPiece, updatePiece, deletePiece,
         addGiftCard, updateGiftCard, deleteGiftCard, consumeGiftCard, cancelGiftCard, confirmGiftCardPayment,

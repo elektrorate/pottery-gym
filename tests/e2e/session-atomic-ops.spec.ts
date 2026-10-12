@@ -146,7 +146,7 @@ test('reservation intent freezes IDs and explicit funding with a separate RPC co
         { capacity: 2 }, ['two', 'one'], { two: 'explicit-card' }, 'input', 'key'));
     expect(calls).toEqual([{ name: 'save_session_reservation', args: { p_session_id: 'session', p_request_key: 'key',
         p_expected_revision: 0, p_sede_id: 'tenant', p_metadata: { capacity: 2 },
-        p_student_ids: ['one', 'two'], p_gift_card_ids: { two: 'explicit-card' } } }]);
+        p_student_ids: ['one', 'two'], p_gift_card_ids: { two: 'explicit-card' }, p_manual_credit_ids: {} } }]);
 });
 
 test('reservation retry ignores refreshed revision but never rebuilds its frozen metadata or key', async () => {

@@ -216,8 +216,11 @@ begin
   end if;
   if (select count(*) from public.sessions where sede_id in (own_sede, other_sede)
       and revision = 1 and completed_at is null) <> 4
-    or (select count(*) from public.session_students where sede_id in (own_sede, other_sede)
-      and attendance = 'pending' and membership_period_id is null) <> 5
+     or (select count(*) from public.session_students e join public.sessions s on s.id = e.session_id
+       join public.students st on st.id = e.student_id
+       where e.sede_id in (own_sede, other_sede) and e.attendance = 'pending'
+       and e.membership_period_id is not distinct from
+         (case when s.attendance_policy_version = 2 and e.gift_card_id is null then st.current_membership_period_id end)) <> 5
     or (select count(*) from public.session_operation_receipts receipts where sede_id in (own_sede, other_sede)
       and receipts.operation = 'reservation') <> 4
     or not exists (select 1 from public.session_students where

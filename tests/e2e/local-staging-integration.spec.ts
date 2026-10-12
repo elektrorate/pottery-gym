@@ -15,7 +15,7 @@ type Row = Record<string, any>;
 type Fixture = {
   member: string; temporary: string; period: string; card: string; memberCard: string;
   session: string; reservationKey: string; date: string; buyer: string; code: string;
-  reservation: Row;
+  reservation: Row; name: string;
 };
 let owner: Actor;
 let other: Actor;
@@ -131,7 +131,14 @@ async function seedSnapshot() {
     receipts: rows(owner, 'session_operation_receipts', `session_id=${ids(seedSessions)}`, '*', 'session_id,request_key'),
     credits: rows(owner, 'session_credit_movements', `session_id=${ids(seedSessions)}`, '*', 'id'),
     gifts: rows(owner, 'gift_card_movements', `gift_card_id=${ids(seedCards)}`, '*', 'id'),
+    giftReceipts: rows(owner, 'gift_card_operation_receipts', `gift_card_id=${ids(seedCards)}`, '*', 'request_key'),
     adjustments: rows(owner, 'student_membership_class_adjustments', `student_id=${ids(seedStudents)}`, '*', 'id'),
+    businessState: rows(owner, 'session_business_state', `session_id=${ids(seedSessions)}`, '*', 'session_id,student_id'),
+    exceptions: rows(owner, 'session_business_exceptions', `session_id=${ids(seedSessions)}`, '*', 'id'),
+    penalties: rows(owner, 'session_business_penalties', `session_id=${ids(seedSessions)}`, '*', 'id'),
+    waivers: rows(owner, 'session_business_waivers', `session_id=${ids(seedSessions)}`, '*', 'penalty_id'),
+    billing: rows(owner, 'session_business_billing', `session_id=${ids(seedSessions)}`, '*', 'session_id,student_id'),
+    events: rows(owner, 'session_business_events', `session_id=${ids(seedSessions)}`, '*', 'id'),
     schedule: rows(owner, 'workshop_schedules', `sede_id=eq.${ownSede}`, '*', 'id')
   };
   return Object.fromEntries(await Promise.all(Object.entries(requests).map(async ([key, value]) => [key, await value])));
@@ -165,16 +172,19 @@ test.afterAll(async () => {
 
 async function fixture(tag: string, reserve = true): Promise<Fixture> {
   const f = { member: randomUUID(), temporary: randomUUID(), card: randomUUID(), memberCard: randomUUID(),
-    session: randomUUID(), reservationKey: randomUUID(), date: '', period: '', buyer: '', code: '', reservation: {} } as Fixture;
+    session: randomUUID(), reservationKey: randomUUID(), date: '', period: '', buyer: '', code: '', reservation: {}, name: '' } as Fixture;
   f.date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   f.buyer = `Local E2E ${tag} ${f.session}`;
+  f.name = tag === 'recipients' ? 'Alex Perez' : `Local ${tag} ${f.session}`;
   f.code = `E2E-${f.card}`.toUpperCase();
   const members = await ok(owner, '/rest/v1/students', 'POST', {
-    id: f.member, sede_id: ownSede, full_name: 'Alex Perez', name: 'Alex', surname: 'Perez',
+    id: f.member, sede_id: ownSede, full_name: f.name, name: tag === 'recipients' ? 'Alex' : 'Local',
+    surname: tag === 'recipients' ? 'Perez' : `${tag} ${f.session}`,
     email: `e2e-${f.member}@pottery.local`, student_category: 'membresia', membership_tier: 'gold', class_type: 'Modelado', status: 'active'
   });
   const temporaries = await ok(owner, '/rest/v1/students', 'POST', {
-    id: f.temporary, sede_id: ownSede, full_name: 'Alex Perez', name: 'Alex', surname: 'Perez',
+    id: f.temporary, sede_id: ownSede, full_name: tag === 'recipients' ? f.name : `Local ${tag} temporary ${f.session}`,
+    name: tag === 'recipients' ? 'Alex' : 'Local', surname: tag === 'recipients' ? 'Perez' : `${tag} temporary ${f.session}`,
     email: `e2e-${f.temporary}@pottery.local`, student_category: 'temporal', class_type: 'Modelado', status: 'new',
     bonos_asignados: 1, classes_remaining: 1, payment_status: 'paid'
   });
@@ -199,7 +209,8 @@ async function fixture(tag: string, reserve = true): Promise<Fixture> {
     { id: f.card, recipient_student_id: f.temporary, code: f.code },
     { id: f.memberCard, recipient_student_id: f.member, code: `E2E-${f.memberCard}`.toUpperCase() }
   ].map(card => ({ ...card, sede_id: ownSede, buyer: f.buyer, buyer_phone: '+34600000000', buyer_email: 'e2e@pottery.local',
-    recipient: 'Alex Perez', num_classes: 2, type: 'modelado', sessions_used: 0, payment_status: 'paid',
+    recipient: card.recipient_student_id === f.temporary && tag !== 'recipients' ? `Local ${tag} temporary ${f.session}` : f.name,
+    num_classes: 2, type: 'modelado', sessions_used: 0, payment_status: 'paid',
     status: 'active', validity_months: 3, activated_at: f.date })));
   expect(cards).toHaveLength(2);
   for (const card of cards) expect(card).toMatchObject({ sessions_used: 0, payment_status: 'paid', status: 'active', consumed_at: null });
@@ -227,7 +238,10 @@ async function snapshot(f: Fixture): Promise<Row> {
     receipts: rows(owner, 'session_operation_receipts', `session_id=eq.${f.session}`, '*', 'created_at,request_key'),
     credits: rows(owner, 'session_credit_movements', `session_id=eq.${f.session}`, '*', 'revision,student_id'),
     gifts: rows(owner, 'gift_card_movements', `gift_card_id=${ids([f.card, f.memberCard])}`, '*', 'created_at,id'),
-    adjustments: rows(owner, 'student_membership_class_adjustments', `student_id=eq.${f.member}`, '*', 'adjusted_at,id')
+    adjustments: rows(owner, 'student_membership_class_adjustments', `student_id=eq.${f.member}`, '*', 'adjusted_at,id'),
+    businessState: rows(owner, 'session_business_state', `session_id=eq.${f.session}`, '*', 'student_id'),
+    penalties: rows(owner, 'session_business_penalties', `session_id=eq.${f.session}`, '*', 'student_id'),
+    waivers: rows(owner, 'session_business_waivers', `session_id=eq.${f.session}`, '*', 'student_id')
   };
   return Object.fromEntries(await Promise.all(Object.entries(queries).map(async ([key, value]) => [key, await value])));
 }
@@ -247,13 +261,14 @@ function assertState(f: Fixture, s: Row, revision: number, attendance: string, b
     sessions_used: used, num_classes: 2, status: 'active', consumed_at: null });
   expect(s.cards.find((row: Row) => row.id === f.memberCard)).toMatchObject({ recipient_student_id: f.member, sessions_used: 0, status: 'active' });
   expect(s.sessions).toHaveLength(1);
-  expect(s.sessions[0]).toMatchObject({ id: f.session, sede_id: ownSede, revision, class_type: 'mesa', date: f.date, teacher_id: teacher });
+  expect(s.sessions[0]).toMatchObject({ id: f.session, sede_id: ownSede, revision, class_type: 'mesa', date: f.date,
+    teacher_id: teacher, attendance_policy_version: 2 });
   expect(s.roster).toHaveLength(2);
   expect(s.roster.map((row: Row) => row.student_id)).toEqual([f.member, f.temporary].sort());
   for (const row of s.roster) {
     expect(row).toMatchObject({ session_id: f.session, sede_id: ownSede, attendance,
       gift_card_id: row.student_id === f.temporary ? f.card : null,
-      membership_period_id: row.student_id === f.member && creditCount ? f.period : null });
+      membership_period_id: row.student_id === f.member ? f.period : null });
   }
   expect(s.receipts).toHaveLength(receiptCount);
   expect(s.receipts.filter((row: Row) => row.operation === 'reservation')).toHaveLength(1);
@@ -288,8 +303,27 @@ async function loginBrowser(page: Page, email = 'staff@pottery.local') {
 
 const dialog = (page: Page) => page.getByRole('dialog', { name: 'Control de asistencia', exact: true });
 const attendanceRow = (page: Page, id: string) => dialog(page).locator(`[data-student-id="${id}"]`);
-const mark = (page: Page, id: string, present: boolean) => attendanceRow(page, id)
-  .getByRole('button', { name: present ? /^Marcar asistencia de / : /^Marcar falta de / }).click();
+async function mark(page: Page, id: string, present: boolean) {
+  const button = attendanceRow(page, id).getByRole('button', { name: present ? /^Marcar asistencia de / : /^Marcar falta de / });
+  try { await button.click(); } catch (error) {
+    const geometry = await button.evaluate(element => {
+      const fieldset = element.closest('fieldset');
+      const footer = element.closest('[role="dialog"]')?.querySelector('footer');
+      const bounds = (node: Element | null | undefined) => {
+        if (!node) return null;
+        const { x, y, width, height } = node.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      const rect = element.getBoundingClientRect();
+      return { button: bounds(element), fieldset: bounds(fieldset), footer: bounds(footer),
+        scrollTop: fieldset?.scrollTop, scrollHeight: fieldset?.scrollHeight, clientHeight: fieldset?.clientHeight,
+        overflowY: fieldset && getComputedStyle(fieldset).overflowY,
+        centerInterceptedByFooter: !!document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('footer') };
+    }).catch(() => null);
+    console.log(`Attendance click geometry (no page content, credentials or artifacts): ${JSON.stringify(geometry)}`);
+    throw error;
+  }
+}
 async function openAttendance(page: Page, f: Fixture) {
   await page.goto(`/calendar?date=${f.date}&sessionId=${f.session}&attendance=1`);
   await expect(dialog(page)).toBeVisible();
@@ -298,7 +332,7 @@ async function openAttendance(page: Page, f: Fixture) {
 }
 const cardForm = (page: Page) => page.locator('form').filter({ has: page.getByRole('heading', { name: /^(Nuevo|Editar) bono temporal$/ }) });
 
-test('1: real UI finalization, absent correction and present restoration preserve atomic funding and active gift history', async ({ page }) => {
+test('1: real policy2 UI corrections retain the original debit and active gift history; only explicit owner waiver refunds', async ({ page }) => {
   const f = await fixture('correction');
   await loginBrowser(page);
   await openAttendance(page, f);
@@ -320,9 +354,12 @@ test('1: real UI finalization, absent correction and present restoration preserv
   await dialog(page).getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await expect(dialog(page)).toHaveCount(0);
   const corrected = await snapshot(f);
-  assertState(f, corrected, 3, 'absent', 4, 0, 4, 2, 2, 3);
+  assertState(f, corrected, 3, 'absent', 3, 1, 2, 1, 1, 3);
   expect(corrected.sessions[0].completed_at).toBe(completed);
-  expect(corrected.credits.filter((row: Row) => row.revision === 3).map((row: Row) => row.delta)).toEqual([1, 1]);
+  expect(corrected.credits).toEqual(finalized.credits);
+  expect(corrected.businessState).toEqual([f.member, f.temporary].sort().map(student_id => expect.objectContaining({
+    student_id, policy_version: 2, billing_kind: 'no_show', penalty_state: 'charged', billing_state: 'charged'
+  })));
   for (const credit of finalized.credits) expect(corrected.credits).toContainEqual(credit);
   for (const receipt of finalized.receipts) expect(corrected.receipts).toContainEqual(receipt);
 
@@ -333,12 +370,13 @@ test('1: real UI finalization, absent correction and present restoration preserv
   await dialog(page).getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await expect(dialog(page)).toHaveCount(0);
   const restored = await snapshot(f);
-  assertState(f, restored, 4, 'present', 3, 1, 6, 3, 3, 4);
+  assertState(f, restored, 4, 'present', 3, 1, 2, 1, 1, 4);
   expect(restored.sessions[0].completed_at).toBe(completed);
-  expect(restored.credits.filter((row: Row) => row.revision === 4).map((row: Row) => row.delta)).toEqual([-1, -1]);
+  expect(restored.credits).toEqual(finalized.credits);
+  expect(restored.penalties).toEqual(corrected.penalties);
   expect(restored.receipts.filter((row: Row) => row.operation === 'attendance').map((row: Row) => row.intent.expected_revision)).toEqual([1, 2, 3]);
-  expect(restored.gifts.filter((row: Row) => row.movement_type === 'redeem')).toHaveLength(2);
-  expect(restored.gifts.filter((row: Row) => row.movement_type === 'reverse')).toHaveLength(1);
+  expect(restored.gifts.filter((row: Row) => row.movement_type === 'redeem')).toHaveLength(1);
+  expect(restored.gifts.filter((row: Row) => row.movement_type === 'reverse')).toHaveLength(0);
   for (const credit of corrected.credits) expect(restored.credits).toContainEqual(credit);
   for (const gift of corrected.gifts) expect(restored.gifts).toContainEqual(gift);
   for (const adjustment of corrected.adjustments) expect(restored.adjustments).toContainEqual(adjustment);
@@ -353,11 +391,30 @@ test('1: real UI finalization, absent correction and present restoration preserv
   await card.click();
   await expect(cardForm(page).getByLabel('Estado del bono', { exact: true })).toHaveValue('active');
   await expect(cardForm(page).getByLabel('Sesiones utilizadas', { exact: true })).toHaveValue('1');
-  await expect(cardForm(page).getByText('Asistencia validada', { exact: true })).toHaveCount(2);
-  await expect(cardForm(page).getByText('Asistencia corregida', { exact: true })).toHaveCount(1);
+  await expect(cardForm(page).getByText('Asistencia validada', { exact: true })).toHaveCount(1);
+  await expect(cardForm(page).getByText('Asistencia corregida', { exact: true })).toHaveCount(0);
+
+  await openAttendance(page, f);
+  for (const [index, studentId] of [f.member, f.temporary].entries()) {
+    const row = attendanceRow(page, studentId);
+    await row.getByLabel(/Motivo de exenci\u00f3n/).fill(`Owner documented waiver ${studentId}`);
+    await row.getByRole('button', { name: 'Eximir penalizaci\u00f3n (propietario)', exact: true }).click();
+    await expect(dialog(page)).toHaveAttribute('data-revision', String(5 + index));
+    await expect(row).toHaveAttribute('data-billing-state', 'waived');
+  }
+  const waived = await snapshot(f);
+  assertState(f, waived, 6, 'present', 4, 0, 4, 2, 2, 6);
+  expect(waived.penalties).toEqual(restored.penalties);
+  expect(waived.waivers).toHaveLength(2);
+  expect(waived.gifts.filter((row: Row) => row.movement_type === 'redeem')).toHaveLength(1);
+  expect(waived.gifts.filter((row: Row) => row.movement_type === 'reverse')).toHaveLength(1);
+  for (const reversal of waived.credits.filter((row: Row) => row.delta === 1)) {
+    expect(restored.credits).toContainEqual(expect.objectContaining({ id: reversal.reverses_id,
+      student_id: reversal.student_id, period_id: reversal.period_id, gift_card_id: reversal.gift_card_id }));
+  }
 });
 
-test('2: a lost real committed response retries the identical key and body without another debit or revision', async ({ page, context }) => {
+test('2: a lost real committed response survives browser reload and retries the identical key and body without another debit or revision', async ({ page, context }) => {
   const f = await fixture('lost-response');
   await loginBrowser(page);
   await openAttendance(page, f);
@@ -399,14 +456,27 @@ test('2: a lost real committed response retries the identical key and body witho
   await expect(attendanceRow(page, f.member).getByRole('button', { name: /^Marcar falta de / })).toBeDisabled();
   await expect(page.getByLabel('Reemplazo', { exact: true })).toBeDisabled();
   const storageKey = `atomic-session-intent:${ownSede}:${f.session}`;
-  const retained = await page.evaluate(key => JSON.parse(sessionStorage.getItem(key) || 'null'), storageKey);
+  const retainedRaw = await page.evaluate(key => sessionStorage.getItem(key), storageKey);
+  const retained = JSON.parse(retainedRaw || 'null');
   expect(retained.args).toEqual(intent);
+  expect(retained.operation).toBe('attendance');
+  expect(committed!.completed_at).toBe(beforeRetry.sessions[0].completed_at);
+
+  await page.reload();
+  await expect(dialog(page)).toBeVisible();
+  await expect(dialog(page).getByTestId('pending-session-operation')).toHaveAttribute('data-operation', 'attendance');
+  await expect(dialog(page).getByRole('button', { name: 'Cerrar modal', exact: true })).toBeDisabled();
+  await expect(attendanceRow(page, f.member).getByRole('button', { name: /^Marcar falta de / })).toBeDisabled();
+  await expect(page.getByLabel('Reemplazo', { exact: true })).toBeDisabled();
+  expect(bodies).toHaveLength(1);
+  expect(await page.evaluate(key => sessionStorage.getItem(key), storageKey)).toBe(retainedRaw);
+  expect(await snapshot(f), 'Reload must be read-only, including after an already committed attendance write').toEqual(beforeRetry);
   const replayResponse = page.waitForResponse(response => response.url() === `${apiUrl}/rest/v1/rpc/save_session_attendance`
     && response.request().method() === 'POST' && response.request().postDataJSON().p_session_id === f.session);
   await dialog(page).getByRole('button', { name: 'Reintentar guardado', exact: true }).click();
   const replay = await replayResponse;
   expect(replay.status()).toBe(200);
-  expect(await replay.json()).toMatchObject({ session_id: f.session, request_key: intent.p_request_key, revision: 2, replayed: true });
+  expect(await replay.json()).toEqual({ ...committed, replayed: true });
   await expect(dialog(page)).toHaveCount(0);
   expect(bodies).toHaveLength(2);
   expect(bodies[1]).toBe(bodies[0]);

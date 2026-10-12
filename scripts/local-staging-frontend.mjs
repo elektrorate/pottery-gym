@@ -1,13 +1,14 @@
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { localStatus, root, runtime, projectId, apiUrl, frontendUrl, cliCommand, redact, pipeRedactedLines } from './local-staging-runtime.mjs';
 
 const status = localStatus();
 process.env.VITE_SUPABASE_URL = apiUrl;
 process.env.VITE_SUPABASE_ANON_KEY = status.ANON_KEY;
 if (Object.keys(process.env).some(key => /^VITE_.*(?:SERVICE_ROLE|SECRET_KEY)/i.test(key))) throw new Error('Privileged VITE variable rejected.');
-const server = await createServer({ root, configFile: false, envDir: false, plugins: [react(), {
+const server = await createServer({ root, cacheDir: path.join(runtime, 'vite-cache'), configFile: false, envDir: false, plugins: [react(), {
   name: 'local-staging-identity',
   configureServer(server) {
     server.middlewares.use('/__local-staging', (req, res) => {

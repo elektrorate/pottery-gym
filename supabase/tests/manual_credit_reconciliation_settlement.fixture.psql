@@ -1,0 +1,990 @@
+\set ON_ERROR_STOP on
+\o /dev/null
+\if :{?manual_legacy_seed}
+-- Loaded by the cold-chain runner BEFORE gift integrity, with the real old trigger active.
+insert into auth.users(id,email) values('09000000-0000-0000-0000-000000000001','legacy-manual-owner@example.invalid');
+insert into public.profiles(id,email,role) values('09000000-0000-0000-0000-000000000001','legacy-manual-owner@example.invalid','tallerista');
+insert into public.sedes(id,name,slug,owner_id) values
+  ('39000000-0000-0000-0000-000000000001','Legacy mirror tests','manual-legacy-mirrors','09000000-0000-0000-0000-000000000001');
+create table public.manual_legacy_gift_cases as
+  select n, ('49000000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid gift_id,
+    null::uuid student_id from generate_series(1,12) n where n<>10;
+insert into public.gift_cards(id,sede_id,recipient,num_classes,type,activated_at,expiry_date,payment_status,status,sessions_used)
+  select gift_id,'39000000-0000-0000-0000-000000000001','LegacyMirror'||n||' Person',4,'modelado',private.membership_today()-10,
+    case when n=5 then private.membership_today()-1 else private.membership_today()+60 end,'paid',
+    case n when 3 then 'exhausted' when 4 then 'cancelled' when 5 then 'expired' when 11 then 'consumed' else 'active' end,
+    case n when 2 then 2 when 3 then 4 when 4 then 1 when 5 then 1 when 11 then 4 else 0 end
+  from public.manual_legacy_gift_cases;
+update public.manual_legacy_gift_cases c set student_id=g.recipient_student_id from public.gift_cards g where g.id=c.gift_id;
+-- These are the trigger-created people, not synthetic scalar copies.
+do $$ begin
+  if exists(select 1 from public.manual_legacy_gift_cases c left join public.students st on st.id=c.student_id
+    where st.id is null or st.classes_remaining<>4 or st.student_category<>'temporal'
+      or st.notes not like 'Creado automaticamente%') then raise exception 'Real pre-integrity gift trigger did not create scalar mirrors'; end if;
+  raise notice 'PASS: real pre-integrity gift trigger creates eleven stale positive scalar mirrors';
+end $$;
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining)
+  values('19000000-0000-0000-0000-000000000012','39000000-0000-0000-0000-000000000001','Pre-rollout Reassignment Target','Pre-rollout Target','temporal',0);
+-- Genuine old reassignment: A's scalar survives, the current ID is B, and the label still names A.
+update public.gift_cards set recipient_student_id='19000000-0000-0000-0000-000000000012'
+  where id='49000000-0000-0000-0000-000000000012';
+update public.students st set email='legacy-'||c.n||'@example.invalid' from public.manual_legacy_gift_cases c where st.id=c.student_id and c.n in(8,9);
+update public.gift_cards g set recipient=case c.n
+  when 6 then '  '||lower(replace(g.recipient,' ',E'\t  '))||'  '
+  when 7 then lower(split_part(g.recipient,' ',1))
+  when 8 then 'Unrelated display name'
+  when 9 then ' LEGACY-9@EXAMPLE.INVALID ' else g.recipient end,
+  recipient_email=case when c.n=8 then ' LEGACY-8@EXAMPLE.INVALID ' else g.recipient_email end
+  from public.manual_legacy_gift_cases c where g.id=c.gift_id and c.n in(6,7,8,9);
+-- Old trigger explicitly preserves an unchanged recipient when its FK is cleared.
+update public.gift_cards g set recipient_student_id=null from public.manual_legacy_gift_cases c where g.id=c.gift_id and c.n in(6,7,8,9);
+create table public.manual_legacy_gift_before as select g.id,to_jsonb(g) raw from public.gift_cards g join public.manual_legacy_gift_cases c on c.gift_id=g.id;
+create table public.manual_legacy_student_before as select st.id,to_jsonb(st) raw from public.students st join public.manual_legacy_gift_cases c on c.student_id=st.id;
+insert into public.gift_cards(id,sede_id,recipient,num_classes,type,activated_at,expiry_date,payment_status,status)
+  values('49000000-0000-0000-0000-000000000010','39000000-0000-0000-0000-000000000001','LegacyUnknownActivation Person',4,
+    'modelado',null,private.membership_today()+60,'paid','active');
+create table public.manual_legacy_null_before as select g.id,g.recipient_student_id student_id,to_jsonb(g) gift_raw,to_jsonb(st) student_raw
+  from public.gift_cards g join public.students st on st.id=g.recipient_student_id where g.id='49000000-0000-0000-0000-000000000010';
+grant select on public.manual_legacy_gift_cases,public.manual_legacy_gift_before,public.manual_legacy_student_before to authenticated;
+grant select on public.manual_legacy_null_before to authenticated;
+\elif :{?manual_legacy_verify}
+create function public.atomic_assert(ok boolean,label text) returns void language plpgsql as $$
+begin
+  if ok is distinct from true then raise exception 'FAIL: %',label; end if;
+  raise notice 'PASS: %',label;
+end $$;
+create function public.atomic_reject(statement text,expected text,code text default 'P0001') returns void language plpgsql as $$
+declare rejected boolean := false;
+begin
+  begin execute statement;
+  exception when others then
+    if sqlstate<>code or sqlerrm not like expected then raise; end if;
+    rejected:=true;
+  end;
+  perform public.atomic_assert(rejected,'reject: '||expected);
+end $$;
+set request.jwt.claim.sub = '09000000-0000-0000-0000-000000000001';
+set request.jwt.claim.role = 'authenticated';
+set role authenticated;
+select public.atomic_assert(count(*)=11 and bool_and(to_jsonb(st)=b.raw),'full cold chain preserves every real gift-created raw student mirror')
+  from public.students st join public.manual_legacy_student_before b using(id);
+select public.atomic_assert(count(*)=11 and bool_and(to_jsonb(g)=b.raw),'full cold chain preserves unused, partial, exhausted, consumed, cancelled, expired, reassigned and unassigned gifts')
+  from public.gift_cards g join public.manual_legacy_gift_before b using(id);
+select public.atomic_reject(format($q$select public.approve_student_manual_credit(%L::uuid,gen_random_uuid(),'reconcile_legacy',4,4,
+  'mesa',private.membership_today()-1,private.membership_today()+30,'Do not duplicate a gift mirror','Legacy gift evidence')$q$,student_id),
+  'Legacy balance may mirror a historical gift card; reconciliation is forbidden') from public.manual_legacy_gift_cases order by n;
+select public.atomic_assert(count(*)=11 and bool_and(can_approve_manual_credit and not can_reconcile_legacy),
+  'UI reconciliation veto uses the same all-state direct/name/email ambiguity criterion')
+  from public.student_credit_profile v join public.manual_legacy_gift_cases c on c.student_id=v.student_id;
+select public.approve_student_manual_credit(student_id,gen_random_uuid(),'new_manual',1,4,'mesa',private.membership_today()-1,
+  private.membership_today()+30,'Independent additional grant, not a gift mirror','Signed separate class grant')
+  from public.manual_legacy_gift_cases order by n;
+select public.atomic_assert(count(*)=11 and bool_and(mode='new_manual' and quantity=1 and remaining_classes=1),
+  'independent evidence-backed new_manual remains possible for every gift ambiguity')
+  from public.manual_credit_entitlements_with_balance v join public.manual_legacy_gift_cases c on c.student_id=v.student_id;
+select public.atomic_assert(count(*)=11 and bool_and(to_jsonb(st)=b.raw),'denied reconciliation and independent grants never rewrite raw gift-created balances/categories/payments')
+  from public.students st join public.manual_legacy_student_before b using(id);
+select public.atomic_assert(count(*)=11 and bool_and(to_jsonb(g)=b.raw),'ambiguity veto and independent grants never auto-link or change any historical gift source')
+  from public.gift_cards g join public.manual_legacy_gift_before b using(id);
+select public.atomic_assert(count(*)=4 and bool_and(g.recipient_student_id is null),
+  'normalized full-name, first-name, recipient-email and recipient-as-email matches remain unassigned')
+  from public.gift_cards g join public.manual_legacy_gift_cases c on c.gift_id=g.id where c.n in(6,7,8,9);
+-- Assigned-other homonyms are conservative denial candidates, never financial owners.
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining) values
+  ('19000000-0000-0000-0000-000000000001','39000000-0000-0000-0000-000000000001','LegacyMirror1 Person','LegacyMirror1','temporal',4),
+  ('19000000-0000-0000-0000-000000000006','39000000-0000-0000-0000-000000000001','LegacyMirror6 Person','LegacyMirror6','temporal',4);
+select public.atomic_assert(not can_reconcile_legacy,'assigned-other homonym is conservatively blocked without asserting gift ownership')
+  from public.student_credit_profile where student_id='19000000-0000-0000-0000-000000000001';
+select public.atomic_assert(not can_reconcile_legacy,'unassigned name ambiguity vetoes all homonyms without choosing an identity')
+  from public.student_credit_profile where student_id='19000000-0000-0000-0000-000000000006';
+select public.atomic_reject($q$select public.approve_student_manual_credit('19000000-0000-0000-0000-000000000006',gen_random_uuid(),
+  'reconcile_legacy',4,4,'mesa',private.membership_today()-1,private.membership_today()+30,'Homonym is ambiguous','Evidence')$q$,
+  'Legacy balance may mirror a historical gift card; reconciliation is forbidden');
+select public.atomic_reject($q$select public.approve_student_manual_credit('19000000-0000-0000-0000-000000000001',gen_random_uuid(),'reconcile_legacy',4,4,
+  'mesa',private.membership_today()-1,private.membership_today()+30,'Homonym does not establish ownership','Separate evidence')$q$,
+  'Legacy balance may mirror a historical gift card; reconciliation is forbidden');
+select public.approve_student_manual_credit('19000000-0000-0000-0000-000000000001',gen_random_uuid(),'new_manual',1,4,
+  'mesa',private.membership_today()-1,private.membership_today()+30,'Separate additional grant despite conservative homonym veto','Independent signed evidence');
+select public.atomic_assert(recipient_student_id=c.student_id,'homonym veto never reassigns the actual gift UUID recipient')
+  from public.gift_cards g join public.manual_legacy_gift_cases c on c.gift_id=g.id where c.n=1;
+reset role;
+create table public.manual_veto_history_before as select to_jsonb(v) raw from private.manual_legacy_gift_vetoes v;
+select public.atomic_assert(count(*)=11 and bool_and(v.observation='rollout' and v.observed_balance=4
+  and v.student_snapshot=b.raw and v.gift_snapshot=g.raw and v.recorded_by is null),
+  'rollout denial records preserve original UUIDs and complete source/student observations without choosing ownership')
+  from private.manual_legacy_gift_vetoes v join public.manual_legacy_gift_cases c on c.student_id=v.student_id and c.gift_id=v.gift_card_id
+  join public.manual_legacy_student_before b on b.id=v.student_id join public.manual_legacy_gift_before g on g.id=v.gift_card_id;
+select public.atomic_assert(match_basis='normalized_label_or_email'
+  and gift_snapshot->>'recipient_student_id'='19000000-0000-0000-0000-000000000012',
+  'pre-rollout A-to-B reassignment retains a denial for A from the old label, not a guessed ownership link')
+  from private.manual_legacy_gift_vetoes where gift_card_id='49000000-0000-0000-0000-000000000012'
+    and student_id=(select student_id from public.manual_legacy_gift_cases where n=12);
+insert into auth.users(id,email) values('09000000-0000-0000-0000-000000000002','legacy-metadata-employee@example.invalid');
+insert into public.profiles(id,email,role) values('09000000-0000-0000-0000-000000000002','legacy-metadata-employee@example.invalid','staff');
+insert into public.sede_members(sede_id,user_id,role) values('39000000-0000-0000-0000-000000000001','09000000-0000-0000-0000-000000000002','staff');
+set role authenticated;
+set request.jwt.claim.sub = '09000000-0000-0000-0000-000000000002';
+update public.gift_cards set recipient_student_id='19000000-0000-0000-0000-000000000012',
+  recipient='Changed Gift Recipient',recipient_email='changed-gift@example.invalid'
+  where id='49000000-0000-0000-0000-000000000001';
+-- Clearing the only surviving label/email evidence must not erase earlier roll-out observations.
+update public.gift_cards set recipient_student_id='19000000-0000-0000-0000-000000000012',
+  recipient='Changed Historical Recipient',recipient_email='changed-history@example.invalid'
+  where id in('49000000-0000-0000-0000-000000000006','49000000-0000-0000-0000-000000000008','49000000-0000-0000-0000-000000000009',
+    '49000000-0000-0000-0000-000000000012');
+select public.atomic_reject($q$select * from private.manual_legacy_gift_vetoes$q$,'permission denied%','42501');
+select public.atomic_reject($q$insert into private.manual_legacy_gift_vetoes default values$q$,'permission denied%','42501');
+select public.atomic_reject($q$select private.record_manual_gift_veto(null::public.gift_cards,null::public.students,'gift_write')$q$,'permission denied%','42501');
+set request.jwt.claim.sub = '09000000-0000-0000-0000-000000000001';
+select public.atomic_reject(format($q$select public.approve_student_manual_credit(%L::uuid,gen_random_uuid(),'reconcile_legacy',4,4,
+  'mesa',private.membership_today()-1,private.membership_today()+30,'Metadata changes cannot free a mirrored scalar','Evidence')$q$,student_id),
+  'Legacy balance may mirror a historical gift card; reconciliation is forbidden') from public.manual_legacy_gift_cases where n in(1,6,8,9,12) order by n;
+select public.atomic_assert(count(*)=11 and bool_and(not can_reconcile_legacy),
+  'RPC and UI capability remain blocked after ordinary authenticated recipient/name/email changes')
+  from public.student_credit_profile v join public.manual_legacy_gift_cases c on c.student_id=v.student_id;
+select public.atomic_assert(count(*)=11 and bool_and(to_jsonb(st)=b.raw),'authenticated gift reassignment never modifies A raw scalar, category, dates or payment')
+  from public.students st join public.manual_legacy_student_before b using(id);
+select public.atomic_assert(count(*)=11 and bool_and((to_jsonb(g)-array['recipient_student_id','recipient','recipient_email'])=
+  (b.raw-array['recipient_student_id','recipient','recipient_email'])),'only the explicitly requested gift identity/labels changed; no finance or term rewrite')
+  from public.gift_cards g join public.manual_legacy_gift_before b using(id);
+select public.atomic_assert(recipient_student_id='19000000-0000-0000-0000-000000000012' and sessions_used=0 and num_classes=4,
+  'unused reassigned gift stays B gift, never a substitute or auto-linked A source') from public.gift_cards where id='49000000-0000-0000-0000-000000000001';
+select public.atomic_assert(count(*)=0,'reassignment never creates a reconciled or automatic manual allocation')
+  from public.student_manual_credit_entitlements where mode='reconcile_legacy';
+select public.approve_student_manual_credit(student_id,gen_random_uuid(),'new_manual',1,4,'mesa',private.membership_today()-1,
+  private.membership_today()+30,'Separate approved addition after gift reassignment','Independent evidence, not old gift funds')
+  from public.manual_legacy_gift_cases where n=1;
+select public.atomic_assert(count(*)=2 and bool_and(mode='new_manual' and quantity=1),
+  'durable denial never blocks a separately explicit new_manual grant') from public.student_manual_credit_entitlements
+  where student_id=(select student_id from public.manual_legacy_gift_cases where n=1);
+begin;
+update public.students set full_name='Changed Student Label',name='Changed Student',email='changed-student@example.invalid'
+  where id=(select student_id from public.manual_legacy_gift_cases where n=1);
+select public.atomic_assert(not can_reconcile_legacy,'student label/email changes also cannot erase the durable veto')
+  from public.student_credit_profile where student_id=(select student_id from public.manual_legacy_gift_cases where n=1);
+select public.atomic_reject(format($q$select public.approve_student_manual_credit(%L::uuid,gen_random_uuid(),'reconcile_legacy',4,4,
+  'mesa',private.membership_today()-1,private.membership_today()+30,'Renaming does not clear old observations','Evidence')$q$,student_id),
+  'Legacy balance may mirror a historical gift card; reconciliation is forbidden') from public.manual_legacy_gift_cases where n=1;
+rollback;
+-- A future association must leave a sticky denial even after every live match disappears.
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining) values
+  ('19000000-0000-0000-0000-000000000101','39000000-0000-0000-0000-000000000001','Future Veto Original','Future Veto','temporal',4),
+  ('19000000-0000-0000-0000-000000000102','39000000-0000-0000-0000-000000000001','Future Veto Target','Future Target','temporal',0),
+  ('19000000-0000-0000-0000-000000000103','39000000-0000-0000-0000-000000000001','Later Positive Original','Later Positive','temporal',0);
+select public.atomic_assert(can_reconcile_legacy,'positive independent observation has no veto before a gift association')
+  from public.student_credit_profile where student_id='19000000-0000-0000-0000-000000000101';
+set request.jwt.claim.sub = '09000000-0000-0000-0000-000000000002';
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,payment_status) values
+  ('49000000-0000-0000-0000-000000000101','39000000-0000-0000-0000-000000000001','Unrelated Initial Gift Label','19000000-0000-0000-0000-000000000101',4,'modelado',private.membership_today(),'paid'),
+  ('49000000-0000-0000-0000-000000000103','39000000-0000-0000-0000-000000000001','Unrelated Later Gift Label','19000000-0000-0000-0000-000000000103',4,'modelado',private.membership_today(),'paid');
+update public.students set classes_remaining=4 where id='19000000-0000-0000-0000-000000000103';
+update public.gift_cards set recipient_student_id='19000000-0000-0000-0000-000000000102',
+  recipient='Completely Changed Gift Label',recipient_email='different-gift@example.invalid'
+  where id in('49000000-0000-0000-0000-000000000101','49000000-0000-0000-0000-000000000103');
+update public.students set full_name='Completely Changed Student Label',name='Changed',email='different-student@example.invalid'
+  where id in('19000000-0000-0000-0000-000000000101','19000000-0000-0000-0000-000000000103');
+set request.jwt.claim.sub = '09000000-0000-0000-0000-000000000001';
+select public.atomic_assert(count(*)=2 and bool_and(not can_reconcile_legacy and legacy_observed_balance=4),
+  'gift first-link and later-positive student observers retain vetoes after recipient and all labels/emails change')
+  from public.student_credit_profile where student_id in('19000000-0000-0000-0000-000000000101','19000000-0000-0000-0000-000000000103');
+select public.atomic_reject(format($q$select public.approve_student_manual_credit(%L::uuid,gen_random_uuid(),'reconcile_legacy',4,4,
+  'mesa',private.membership_today()-1,private.membership_today()+30,'Future association must remain denied','Evidence')$q$,student_id),
+  'Legacy balance may mirror a historical gift card; reconciliation is forbidden')
+  from public.student_credit_profile where student_id in('19000000-0000-0000-0000-000000000101','19000000-0000-0000-0000-000000000103');
+select public.atomic_reject($q$update public.students set id='19000000-0000-0000-0000-000000000104'
+  where id='19000000-0000-0000-0000-000000000101'$q$, 'Observed legacy student identity is immutable');
+reset role;
+select public.atomic_assert(count(*)=2 and bool_and(recorded_by='09000000-0000-0000-0000-000000000002' and observed_balance=4
+  and match_basis='recipient_id' and student_snapshot->>'classes_remaining'='4'
+  and gift_snapshot->>'recipient_student_id'=student_id::text
+  and observation=case when student_id='19000000-0000-0000-0000-000000000101' then 'gift_write' else 'student_write' end),
+  'private trigger records only denial snapshots with the legitimate employee actor, never financial ownership or allocation')
+  from private.manual_legacy_gift_vetoes where student_id in('19000000-0000-0000-0000-000000000101','19000000-0000-0000-0000-000000000103');
+select public.atomic_assert(not exists(select 1 from public.student_manual_credit_entitlements where student_id in
+  ('19000000-0000-0000-0000-000000000101','19000000-0000-0000-0000-000000000103'))
+  and not exists(select 1 from public.gift_card_movements where gift_card_id in
+  ('49000000-0000-0000-0000-000000000101','49000000-0000-0000-0000-000000000103')),
+  'future denial observations do not create manual entitlements or financial movements');
+select public.atomic_assert(not exists(select 1 from public.manual_veto_history_before b where not exists (
+  select 1 from private.manual_legacy_gift_vetoes v where to_jsonb(v)=b.raw)),
+  'all first-observation UUIDs, snapshots, actors and timestamps survive reassignment and label/email edits unchanged');
+select public.atomic_assert(not private.manual_gift_veto_match(g,st) and private.manual_legacy_gift_ambiguous(st.id),
+  'no live matching gift is needed once the conservative denial has been observed')
+  from public.manual_legacy_gift_cases c join public.students st on st.id=c.student_id join public.gift_cards g on g.id=c.gift_id where c.n=1;
+select public.atomic_reject($q$update private.manual_legacy_gift_vetoes set observed_balance=999$q$,'Session history is append-only','42501');
+select public.atomic_reject($q$delete from private.manual_legacy_gift_vetoes$q$,'Session history is append-only','42501');
+set role service_role;
+select public.atomic_reject($q$select * from private.manual_legacy_gift_vetoes$q$,'permission denied%','42501');
+select public.atomic_reject($q$truncate private.manual_legacy_gift_vetoes$q$,'permission denied%','42501');
+set role authenticated;
+set request.jwt.claim.sub = '09000000-0000-0000-0000-000000000001';
+select public.save_session_reservation('29000000-0000-0000-0000-000000000010',gen_random_uuid(),0,'39000000-0000-0000-0000-000000000001',
+  jsonb_build_object('date',(private.membership_today()+5)::text,'start_time',(private.membership_today()+5)::text||'T12:00:00Z',
+    'end_time',(private.membership_today()+5)::text||'T13:00:00Z','class_type','mesa','capacity',1),array[student_id],
+  jsonb_build_object(student_id::text,id)) from public.manual_legacy_null_before;
+select public.atomic_reject(format($q$select public.save_session_attendance('29000000-0000-0000-0000-000000000010',gen_random_uuid(),1,
+  %L::jsonb,true,null)$q$,jsonb_build_array(jsonb_build_object('student_id',student_id,'status','present'))),
+  'Presence requires valid original credit%') from public.manual_legacy_null_before;
+select public.atomic_reject(format($q$select public.approve_session_exception('29000000-0000-0000-0000-000000000010',%L::uuid,
+  gen_random_uuid(),1,'no_credit','Unknown activation does not mean no allocation')$q$,student_id),
+  'No-credit exception cannot bypass available credit%') from public.manual_legacy_null_before;
+select public.save_session_attendance('29000000-0000-0000-0000-000000000010',gen_random_uuid(),1,
+  jsonb_build_array(jsonb_build_object('student_id',student_id,'status','absent')),true,null) from public.manual_legacy_null_before;
+select public.atomic_assert(is_pending and original_gift_card_id='49000000-0000-0000-0000-000000000010',
+  'null legacy activation fails closed to an original-source pending no-show') from public.session_pending_penalties where session_id='29000000-0000-0000-0000-000000000010';
+select public.atomic_assert(to_jsonb(g)=b.gift_raw and to_jsonb(st)=b.student_raw and g.activated_at is null
+  and not exists(select 1 from public.gift_card_movements where gift_card_id=g.id)
+  and not exists(select 1 from public.gift_card_operation_receipts where gift_card_id=g.id)
+  and not exists(select 1 from public.session_credit_movements where session_id='29000000-0000-0000-0000-000000000010'),
+  'unknown activation leaves raw historical source/student and all finance ledgers untouched')
+  from public.manual_legacy_null_before b join public.gift_cards g on g.id=b.id join public.students st on st.id=b.student_id;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_assert(not private.manual_legacy_gift_ambiguous(student_id),'ambiguity helper never exposes another sede student through its authenticated view grant')
+  from public.manual_legacy_gift_cases order by n;
+reset role;
+\else
+reset role;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+set request.jwt.claim.role = 'authenticated';
+set timezone = 'UTC';
+-- Genuine old policy2 receipt with a numeric 32-digit gift UUID, before strict validation.
+set role authenticated;
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining)
+  values(public.business_id(1,170),public.business_id(3,1),'Numeric Receipt Student','Numeric Receipt','temporal',0);
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,payment_status)
+  values('41000000-0000-0000-0000-000000000170',public.business_id(3,1),'Numeric Receipt Student',public.business_id(1,170),2,'modelado',private.membership_today(),'paid');
+select public.save_session_reservation(public.business_id(2,170),public.business_id(6,170),0,public.business_id(3,1),
+  public.business_metadata(25,12),array[public.business_id(1,170)],jsonb_build_object(public.business_id(1,170)::text,41000000000000000000000000000170::numeric));
+reset role;
+create table public.manual_numeric_receipt_before as select to_jsonb(r) raw from public.session_operation_receipts r where session_id=public.business_id(2,170);
+grant select on public.manual_numeric_receipt_before to authenticated;
+create table public.manual_preservation_before as
+  select 'students' kind, to_jsonb(t) raw from public.students t
+  union all select 'sessions', to_jsonb(t) from public.sessions t
+  union all select 'roster', to_jsonb(t) from public.session_students t
+  union all select 'credits', to_jsonb(t) from public.session_credit_movements t
+  union all select 'receipts', to_jsonb(t) from public.session_operation_receipts t
+  union all select 'penalties', to_jsonb(t) from public.session_business_penalties t
+  union all select 'exceptions', to_jsonb(t) from public.session_business_exceptions t
+  union all select 'periods', to_jsonb(t) from public.student_membership_periods t
+  union all select 'gifts', to_jsonb(t) from public.gift_cards t
+   union all select 'gift_movements', to_jsonb(t) from public.gift_card_movements t
+   union all select 'gift_receipts', to_jsonb(t) from public.gift_card_operation_receipts t
+   union all select 'adjustments', to_jsonb(t) from public.student_membership_class_adjustments t
+  union all select 'waivers', to_jsonb(t) from public.session_business_waivers t
+  union all select 'billing', to_jsonb(t) from public.session_business_billing t
+  union all select 'events', to_jsonb(t) from public.session_business_events t;
+create table public.manual_view_before as select to_jsonb(v) raw from public.session_business_state v;
+create table public.manual_columns_before as select attname::text name, attnum from pg_attribute
+  where attrelid = 'public.session_business_state'::regclass and attnum > 0 and not attisdropped;
+\i /tmp/manual-policy.sql
+select public.atomic_assert(not exists (select kind,raw from public.manual_preservation_before except (
+  select 'students',to_jsonb(t) from public.students t
+  union all select 'sessions',to_jsonb(t) from public.sessions t
+  union all select 'roster',to_jsonb(t)-'manual_credit_id' from public.session_students t
+  union all select 'credits',to_jsonb(t)-'manual_credit_id' from public.session_credit_movements t
+  union all select 'receipts',to_jsonb(t) from public.session_operation_receipts t
+  union all select 'penalties',to_jsonb(t)-'manual_credit_id' from public.session_business_penalties t
+  union all select 'exceptions',to_jsonb(t)-'manual_credit_id' from public.session_business_exceptions t
+  union all select 'periods',to_jsonb(t) from public.student_membership_periods t
+  union all select 'gifts',to_jsonb(t) from public.gift_cards t
+   union all select 'gift_movements',to_jsonb(t) from public.gift_card_movements t
+   union all select 'gift_receipts',to_jsonb(t) from public.gift_card_operation_receipts t
+   union all select 'adjustments',to_jsonb(t) from public.student_membership_class_adjustments t
+  union all select 'waivers',to_jsonb(t) from public.session_business_waivers t
+  union all select 'billing',to_jsonb(t) from public.session_business_billing t
+  union all select 'events',to_jsonb(t) from public.session_business_events t)), 'manual migration preserves every historical row and receipt');
+select public.atomic_assert(not exists (select 1 from public.manual_view_before b where not exists (
+  select 1 from public.session_business_state v where to_jsonb(v)-array['funding_manual_credit_id','exception_manual_credit_id',
+    'penalty_manual_credit_id','settlement_id','settlement_debit_id','settlement_reason','settled_by','settled_at','settlement_revision']=b.raw)),
+  'existing business view values unchanged; only nine appended columns');
+select public.atomic_assert(not exists (select 1 from public.manual_columns_before b join pg_attribute a on a.attnum=b.attnum
+  and a.attrelid='public.session_business_state'::regclass where a.attname<>b.name), 'existing view column ordinals stable');
+select public.atomic_assert(count(*)=1 and bool_and(pronargs=8 and pronargdefaults=2), 'single PostgREST reservation signature with two defaults')
+  from pg_proc where pronamespace='public'::regnamespace and proname='save_session_reservation';
+select public.atomic_assert(proargnames=array['p_student_id','p_request_key','p_mode','p_quantity','p_expected_legacy_balance',
+  'p_activity','p_starts_on','p_ends_on','p_reason','p_evidence'] and prorettype='jsonb'::regtype,
+  'manual approval exact named RPC contract') from pg_proc where oid='public.approve_student_manual_credit(uuid,uuid,text,integer,integer,text,date,date,text,text)'::regprocedure;
+select public.atomic_assert(proargnames=array['p_penalty_id','p_request_key','p_expected_revision','p_reason'] and prorettype='jsonb'::regtype,
+  'settlement RPC has no source selector') from pg_proc where oid='public.settle_student_penalty(uuid,uuid,bigint,text)'::regprocedure;
+
+create function public.manual_approve(n integer, key integer, mode text, qty integer, expected integer) returns jsonb
+language sql security invoker as $$
+  select public.approve_student_manual_credit(public.business_id(1,n), public.business_id(6,key), mode, qty, expected,
+    'mesa',private.membership_today()-10,private.membership_today()+90,'Owner-approved class entitlement','Original signed credit evidence');
+$$;
+create function public.manual_entitlement(n integer, key integer) returns uuid language sql as $$
+  select id from public.student_manual_credit_entitlements where student_id=public.business_id(1,n) and request_key=public.business_id(6,key);
+$$;
+create function public.manual_reserve(session integer, student integer, key integer, days integer default 0, hour integer default 18) returns jsonb
+language sql security invoker as $$
+  select public.save_session_reservation(public.business_id(2,session),public.business_id(6,session),0,public.business_id(3,1),
+    public.business_metadata(days,hour),array[public.business_id(1,student)],'{}',
+    jsonb_build_object(public.business_id(1,student)::text,public.manual_entitlement(student,key)));
+$$;
+create function public.manual_settle(session integer, key integer, revision bigint, reason text default 'Owner resolves original-source incident') returns jsonb
+language sql security invoker as $$
+  select public.settle_student_penalty((select id from public.session_business_penalties where session_id=public.business_id(2,session)),
+    public.business_id(6,key),revision,reason);
+$$;
+-- Test-only failure injection proves the whole RPC rolls back even AFTER a debit.
+create function public.manual_test_reject_settlement() returns trigger language plpgsql as $$
+begin
+  if current_setting('app.manual_test_reject_settlement',true)='on' then
+    raise exception 'Injected settlement persistence failure';
+  end if;
+  return new;
+end $$;
+create trigger manual_test_reject_settlement before insert on public.student_penalty_settlements
+  for each row execute function public.manual_test_reject_settlement();
+-- Test-only definer includes the otherwise unreadable private denial history in rollback checks.
+create function public.manual_financial_fingerprint() returns text language sql stable security definer set search_path = '' as $$
+  select md5(string_agg(kind||raw::text,E'\n' order by kind,raw::text)) from (
+    select 'students' kind,to_jsonb(t) raw from public.students t
+    union all select 'sessions',to_jsonb(t) from public.sessions t
+    union all select 'roster',to_jsonb(t) from public.session_students t
+    union all select 'credits',to_jsonb(t) from public.session_credit_movements t
+    union all select 'receipts',to_jsonb(t) from public.session_operation_receipts t
+    union all select 'periods',to_jsonb(t) from public.student_membership_periods t
+    union all select 'adjustments',to_jsonb(t) from public.student_membership_class_adjustments t
+    union all select 'gifts',to_jsonb(t) from public.gift_cards t
+    union all select 'gift_movements',to_jsonb(t) from public.gift_card_movements t
+    union all select 'gift_receipts',to_jsonb(t) from public.gift_card_operation_receipts t
+    union all select 'penalties',to_jsonb(t) from public.session_business_penalties t
+    union all select 'exceptions',to_jsonb(t) from public.session_business_exceptions t
+    union all select 'waivers',to_jsonb(t) from public.session_business_waivers t
+    union all select 'billing',to_jsonb(t) from public.session_business_billing t
+    union all select 'events',to_jsonb(t) from public.session_business_events t
+    union all select 'entitlements',to_jsonb(t) from public.student_manual_credit_entitlements t
+    union all select 'settlements',to_jsonb(t) from public.student_penalty_settlements t
+    union all select 'gift_vetoes',to_jsonb(t) from private.manual_legacy_gift_vetoes t
+  ) history;
+$$;
+create function public.manual_assert_settlement_rollback(session integer,key integer,revision bigint) returns void
+language plpgsql security invoker as $$
+declare before text := public.manual_financial_fingerprint();
+begin
+  perform set_config('app.manual_test_reject_settlement','on',true);
+  perform public.atomic_reject(format('select public.manual_settle(%s,%s,%s)',session,key,revision),
+    'Injected settlement persistence failure');
+  perform set_config('app.manual_test_reject_settlement','off',true);
+  perform public.atomic_assert(before=public.manual_financial_fingerprint(),
+    'settlement post-debit failure preserves complete financial/history fingerprint: '||session);
+end $$;
+set role authenticated;
+select public.atomic_assert(public.save_session_reservation(public.business_id(2,170),public.business_id(6,170),0,public.business_id(3,1),
+  public.business_metadata(25,12),array[public.business_id(1,170)],jsonb_build_object(public.business_id(1,170)::text,41000000000000000000000000000170::numeric))-'replayed'
+  =(select (raw->'result')-'replayed' from public.manual_numeric_receipt_before), 'authorized exact numeric old policy2 receipt replays its original result');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,170),public.business_id(6,170),0,public.business_id(3,1),
+  public.business_metadata(25,12),array[public.business_id(1,170)],jsonb_build_object(public.business_id(1,170)::text,'41000000-0000-0000-0000-000000000170'))$q$,
+  'Idempotency key conflicts with original session intent');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,170),gen_random_uuid(),1,public.business_id(3,1),
+  '{}',array[public.business_id(1,170)],jsonb_build_object(public.business_id(1,170)::text,41000000000000000000000000000170::numeric))$q$,
+  'Funding links must identify roster students with UUID strings');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,171),gen_random_uuid(),0,public.business_id(3,1),
+  public.business_metadata(25,14),array[public.business_id(1,170)],jsonb_build_object(public.business_id(1,170)::text,41000000000000000000000000000170::numeric))$q$,
+  'Funding links must identify roster students with UUID strings');
+select public.atomic_assert(to_jsonb(r)=b.raw,'old numeric receipt remains byte-for-byte unchanged after replay, conflict and strict fresh rejection')
+  from public.session_operation_receipts r cross join public.manual_numeric_receipt_before b where r.session_id=public.business_id(2,170);
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,170),public.business_id(6,170),0,public.business_id(3,1),
+  public.business_metadata(25,12),array[public.business_id(1,170)],jsonb_build_object(public.business_id(1,170)::text,41000000000000000000000000000170::numeric))$q$,
+  'Session not accessible','42501');
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+insert into public.students(id,sede_id,full_name,name,surname,student_category,classes_remaining,payment_status)
+  select public.business_id(1,n),public.business_id(3,1),'Manual Student '||n,'Manual',n::text,'temporal',
+    case when n=101 then null when n in (100,102,103) then 3 when n=116 then 1 else 0 end,'pending'
+  from generate_series(100,160) n;
+reset role;
+update public.students set archived_at=private.membership_today()-1 where id=public.business_id(1,103);
+create table public.manual_students_before as select id,to_jsonb(st) raw from public.students st where id in
+  (select public.business_id(1,n) from generate_series(100,160) n);
+grant select on public.manual_students_before to authenticated;
+set role authenticated;
+
+-- Staff, non-owning superadmin, foreign owner and linked integration are not owners.
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000003';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000002';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(count(*)=0,'foreign owner has no credit profile rows') from public.student_credit_profile where student_id=public.business_id(1,100);
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(count(*)=0,'integration cannot read credit profiles') from public.student_credit_profile;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,2)$q$, 'Stale legacy balance observation','40001');
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',2,3)$q$, 'Known legacy reconciliation must allocate the exact positive observed balance');
+select public.atomic_reject($q$select public.manual_approve(104,104,'reconcile_legacy',1,0)$q$, 'Known legacy reconciliation must allocate the exact positive observed balance');
+select public.atomic_reject($q$select public.manual_approve(101,101,'reconcile_legacy',2,null)$q$, 'Known legacy reconciliation must allocate the exact positive observed balance');
+select public.atomic_assert(can_approve_manual_credit and not can_reconcile_legacy and legacy_observed_balance is null,
+  'UI must disable unknown legacy reconciliation but can offer separate evidence-backed new_manual')
+  from public.student_credit_profile where student_id=public.business_id(1,101);
+select public.atomic_assert(can_reconcile_legacy,'UI permits known positive unreconciled nonmembership balance')
+  from public.student_credit_profile where student_id=public.business_id(1,100);
+select public.atomic_reject($q$select public.manual_approve(17,100,'reconcile_legacy',4,4)$q$, 'Membership balance cannot be duplicated as manual credit');
+select public.atomic_reject($q$select public.approve_student_manual_credit(public.business_id(1,100),gen_random_uuid(),'new_manual',1,3,
+  'mesa',private.membership_today(),private.membership_today()+1,'reason',' ')$q$, 'Explicit mode, positive quantity, activity, finite dates, reason and evidence required');
+select public.atomic_reject($q$select public.approve_student_manual_credit(public.business_id(1,100),gen_random_uuid(),'new_manual',1,3,
+  'mesa','infinity','infinity','reason','evidence')$q$, 'Explicit mode, positive quantity, activity, finite dates, reason and evidence required');
+select public.manual_approve(100,100,'reconcile_legacy',3,3);
+select public.manual_approve(101,101,'new_manual',2,null);
+select public.manual_approve(102,102,'new_manual',1,3);
+select public.manual_approve(103,103,'reconcile_legacy',3,3);
+select public.atomic_assert(public.manual_approve(100,100,'reconcile_legacy',3,3)->>'replayed'='true','manual approval retries durable receipt');
+select public.atomic_reject($q$select public.manual_approve(100,100,'new_manual',3,3)$q$, 'Idempotency key conflicts with original manual credit intent');
+select public.atomic_reject($q$select public.manual_approve(100,199,'reconcile_legacy',3,3)$q$, 'Legacy balance is already reconciled');
+select public.atomic_assert(not can_reconcile_legacy,'UI disallows a second reconciliation of the same snapshot')
+  from public.student_credit_profile where student_id=public.business_id(1,100);
+begin;
+set local request.jwt.claim.role = '';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(count(*)=0,'missing authenticated claim cannot read manual credit profile') from public.student_credit_profile;
+rollback;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(not can_approve_manual_credit and not can_reconcile_legacy and jsonb_array_length(manual_credits)=1,
+  'employee can read approved credit but cannot approve or reconcile, including replay')
+  from public.student_credit_profile where student_id=public.business_id(1,100);
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000003';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000004';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(count(*)=0,'unlinked reader cannot read manual entitlements') from public.student_manual_credit_entitlements;
+select public.atomic_assert(count(*)=0,'unlinked reader cannot read manual balance view') from public.manual_credit_entitlements_with_balance;
+select public.atomic_assert(count(*)=0,'unlinked reader cannot read credit profiles') from public.student_credit_profile;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(count(*)=0,'linked integration cannot read manual entitlements') from public.student_manual_credit_entitlements;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000002';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_assert(count(*)=0,'foreign owner cannot read manual entitlements') from public.student_manual_credit_entitlements;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_assert(bool_and(to_jsonb(st)=b.raw),'approvals preserve full raw balance, payment, archive, category and period')
+  from public.students st join public.manual_students_before b using(id);
+select public.atomic_assert(bool_and(c.legacy_snapshot=b.raw),'entitlements retain the complete raw preapproval student state')
+  from public.student_manual_credit_entitlements c join public.manual_students_before b on b.id=c.student_id;
+select public.atomic_assert(legacy_observed_balance is null and manual_credits->0->>'remaining_classes'='2'
+  and legacy_raw_state->'payment_status'='"pending"'::jsonb,'unknown scalar remains unknown and manual ledger is separate')
+  from public.student_credit_profile where student_id=public.business_id(1,101);
+select public.atomic_assert(not exists(select 1 from public.student_membership_periods where student_id in
+  (select public.business_id(1,n) from generate_series(100,160) n)), 'reconciliation never manufactures membership periods');
+begin;
+update public.students set classes_remaining=999 where id=public.business_id(1,100);
+select public.atomic_assert(remaining_classes=3,'later scalar observation cannot change approved manual ledger balance')
+  from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(100,100);
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',999,999)$q$, 'Idempotency key conflicts with original manual credit intent');
+select public.atomic_reject($q$select public.manual_approve(100,200,'reconcile_legacy',999,999)$q$, 'Legacy balance is already reconciled');
+rollback;
+
+-- Even a real superadmin must be the actual current owner; integration ownership is insufficient.
+reset role;
+begin;
+update public.sedes set owner_id=public.business_id(0,3) where id=public.business_id(3,1);
+set local role authenticated;
+set local request.jwt.claim.sub = '01000000-0000-0000-0000-000000000003';
+select public.atomic_assert(public.manual_approve(104,104,'new_manual',1,0)->>'replayed'='false','actual owning superadmin can approve');
+rollback;
+begin;
+update public.sedes set owner_id=public.business_id(0,5) where id=public.business_id(3,1);
+set local role authenticated;
+set local request.jwt.claim.sub = '01000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.manual_approve(104,104,'new_manual',1,0)$q$, 'Only this workshop owner may approve manual credits','42501');
+rollback;
+begin;
+update public.sedes set owner_id=public.business_id(0,1) where id=public.business_id(3,1);
+set local role authenticated;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+rollback;
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+
+-- Explicit source, never newest/manual fallback; courtesy cannot bypass an unselected valid grant.
+select public.business_reserve(100,100,0,10);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,100),public.business_id(1,100),gen_random_uuid(),1,'no_credit','unselected manual')$q$,
+  'No-credit exception cannot bypass available credit%');
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,100),gen_random_uuid(),1,public.business_attendance(100,'present'),true,null)$q$,
+  'Presence requires valid original credit%');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,100),gen_random_uuid(),1,public.business_id(3,1),'{}',
+  array[public.business_id(1,100)],'{}',jsonb_build_object(public.business_id(1,100)::text,public.manual_entitlement(101,101)))$q$,
+  'Explicit manual credit must belong to its roster student and session sede');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,100),gen_random_uuid(),1,public.business_id(3,1),'{}',
+  array[public.business_id(1,100)],'{}',jsonb_build_object(public.business_id(1,101)::text,public.manual_entitlement(101,101)))$q$,
+  'Funding links must identify roster students with UUID strings');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,100),gen_random_uuid(),1,public.business_id(3,1),'{}',
+  array[public.business_id(1,100)],jsonb_build_object(public.business_id(1,100)::text,gen_random_uuid()),
+  jsonb_build_object(public.business_id(1,100)::text,public.manual_entitlement(100,100)))$q$, 'Ambiguous session funding');
+select public.manual_reserve(101,100,100,0,12);
+select public.save_session_attendance(public.business_id(2,101),public.business_id(6,501),1,public.business_attendance(100,'present'),false,null);
+select public.atomic_assert(remaining_classes=3,'manual provisional presence never consumes') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(100,100);
+select public.save_session_attendance(public.business_id(2,101),public.business_id(6,502),2,public.business_attendance(100,'present'),true,null);
+select public.atomic_assert(public.save_session_attendance(public.business_id(2,101),public.business_id(6,502),2,public.business_attendance(100,'present'),true,null)->>'replayed'='true','manual finalization receipt retry consumes once');
+select public.atomic_assert(remaining_classes=2,'manual present finalization consumes one') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(100,100);
+select public.save_session_attendance(public.business_id(2,101),gen_random_uuid(),3,public.business_attendance(100,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,101),gen_random_uuid(),4,public.business_attendance(100,'present'),true,null);
+select public.atomic_assert(remaining_classes=2,'manual present/absent/present corrections retain one original penalty debit') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(100,100);
+select public.waive_session_penalty(public.business_id(2,101),public.business_id(1,100),public.business_id(6,503),5,'Owner restores original manual credit');
+select public.atomic_assert(public.waive_session_penalty(public.business_id(2,101),public.business_id(1,100),public.business_id(6,503),5,'Owner restores original manual credit')->>'replayed'='true','manual waiver retry restores once');
+select public.save_session_attendance(public.business_id(2,101),gen_random_uuid(),6,public.business_attendance(100,'absent'),true,null);
+select public.atomic_assert(remaining_classes=3,'waived manual penalty is never silently rebilled') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(100,100);
+select public.atomic_assert(public.manual_reserve(101,100,100,0,12)->>'revision'='1','manual reservation replay preserves original receipt after corrections and waiver');
+select public.manual_reserve(102,101,101,2,12);
+select public.cancel_session_reservation(public.business_id(2,102),public.business_id(1,101),gen_random_uuid(),1,'Manual timely cancellation');
+select public.save_session_attendance(public.business_id(2,102),gen_random_uuid(),2,public.business_attendance(101,'pending'),true,null);
+select public.atomic_assert(remaining_classes=2,'timely manual cancellation does not consume') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(101,101);
+select public.manual_reserve(103,101,101,-1,12);
+select public.cancel_session_reservation(public.business_id(2,103),public.business_id(1,101),gen_random_uuid(),1,'Manual late cancellation');
+select public.save_session_attendance(public.business_id(2,103),gen_random_uuid(),2,public.business_attendance(101,'pending'),true,null);
+select public.atomic_assert(billing_kind='late_cancellation' and penalty_state='charged','late manual cancellation charged at finalization') from public.session_business_state where session_id=public.business_id(2,103);
+select public.atomic_assert(remaining_classes=1,'late manual cancellation consumes exactly one') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(101,101);
+select public.manual_reserve(104,103,103,0,12);
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,104),gen_random_uuid(),1,public.business_attendance(103,'present'),true,null)$q$,
+  'Presence requires valid original credit%');
+select public.atomic_assert(archived_at is not null,'manual approval does not reactivate archived student') from public.students where id=public.business_id(1,103);
+
+-- Depleted original manual incident cannot use a later approved grant. Restore original via its other penalty.
+select public.manual_approve(105,105,'new_manual',1,0);
+select public.manual_reserve(105,105,105,0,10);
+select public.manual_reserve(106,105,105,0,12);
+select public.save_session_attendance(public.business_id(2,105),gen_random_uuid(),1,public.business_attendance(105,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,106),gen_random_uuid(),1,public.business_attendance(105,'absent'),true,null);
+select public.manual_approve(105,205,'new_manual',4,0);
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'Original incident source is not usable:%');
+select public.atomic_assert(remaining_classes=4,'later manual grant cannot substitute for original pending incident') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(105,205);
+select public.waive_session_penalty(public.business_id(2,105),public.business_id(1,105),gen_random_uuid(),2,'Restore exhausted original entitlement');
+reset role;
+create table public.manual_pending_before as select id,to_jsonb(p) raw from public.session_business_penalties p where session_id=public.business_id(2,106);
+grant select on public.manual_pending_before to authenticated;
+set role authenticated;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'Only this workshop owner may settle penalties','42501');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000003';
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'Only this workshop owner may settle penalties','42501');
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_settle(106,506,1)$q$, 'Stale session revision','40001');
+select public.atomic_reject($q$select public.manual_settle(106,506,2,' ')$q$, 'Penalty, request key, revision and auditable reason required');
+select public.manual_assert_settlement_rollback(106,506,2);
+select public.manual_settle(106,506,2);
+select public.atomic_assert(public.manual_settle(106,506,2)->>'replayed'='true','manual settlement idempotent before stale revision');
+select public.atomic_reject($q$select public.manual_settle(106,506,2,'changed reason')$q$, 'Idempotency key conflicts with original session intent');
+select public.atomic_reject($q$select public.manual_settle(106,507,3)$q$, 'Penalty is already settled');
+select public.atomic_assert(remaining_classes=0,'settlement consumes only restored original manual source') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(105,105);
+select public.atomic_assert(remaining_classes=4,'alternate grant unchanged after successful settlement') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(105,205);
+select public.atomic_assert(p.state='pending' and to_jsonb(p)=b.raw,'settlement never rewrites immutable pending penalty') from public.session_business_penalties p join public.manual_pending_before b using(id);
+select public.atomic_assert(penalty_state='charged' and billing_state='charged' and settlement_id is not null,'business view projects settlement without rewriting original incident')
+  from public.session_business_state where session_id=public.business_id(2,106);
+select public.atomic_assert(not is_pending and not is_waived and original_penalty_state='pending','profile incident has settlement flags and original pending state')
+  from public.session_pending_penalties where session_id=public.business_id(2,106);
+select public.save_session_attendance(public.business_id(2,106),gen_random_uuid(),3,public.business_attendance(105,'present'),true,null);
+select public.waive_session_penalty(public.business_id(2,106),public.business_id(1,105),public.business_id(6,508),4,'Owner waives settled manual incident');
+select public.atomic_assert(public.waive_session_penalty(public.business_id(2,106),public.business_id(1,105),public.business_id(6,508),4,'Owner waives settled manual incident')->>'replayed'='true','post-settlement manual waiver durable retry');
+select public.atomic_assert(remaining_classes=1,'owner waiver finds settlement debit and restores original manual source') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(105,105);
+select public.save_session_attendance(public.business_id(2,106),gen_random_uuid(),5,public.business_attendance(105,'absent'),true,null);
+select public.atomic_assert(billing_state='waived' and penalty_state='waived' and settlement_id is not null,'waiver wins projection while settlement history remains') from public.session_business_state where session_id=public.business_id(2,106);
+select public.atomic_assert(public.manual_settle(106,506,2)->>'revision'='3','delayed settlement replay returns original receipt after waiver');
+select public.atomic_reject($q$select public.manual_reserve(106,105,205,0,12)$q$, 'Idempotency key conflicts with original session intent');
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'Only this workshop owner may settle penalties','42501');
+begin;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+set local request.jwt.claim.role = '';
+select public.atomic_reject($q$select public.settle_student_penalty((select id from public.manual_pending_before),public.business_id(6,506),2,
+  'Owner resolves original-source incident')$q$, 'Only this workshop owner may settle penalties','42501');
+select public.atomic_assert(count(*)=0,'missing authenticated claim cannot read settlement receipts') from public.student_penalty_settlements;
+rollback;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000004';
+select public.atomic_reject($q$select public.settle_student_penalty((select id from public.manual_pending_before),public.business_id(6,506),2,
+  'Owner resolves original-source incident')$q$, 'Session not accessible','42501');
+select public.atomic_assert(count(*)=0,'unlinked reader cannot read settlements') from public.student_penalty_settlements;
+select public.atomic_assert(count(*)=0,'unlinked reader cannot read incident view') from public.session_pending_penalties;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000005';
+select public.atomic_reject($q$select public.settle_student_penalty((select id from public.manual_pending_before),public.business_id(6,506),2,
+  'Owner resolves original-source incident')$q$, 'Only this workshop owner may settle penalties','42501');
+select public.atomic_assert(count(*)=0,'linked integration cannot read settlement receipts') from public.student_penalty_settlements;
+select public.atomic_assert(count(*)=0,'linked integration cannot read incident view') from public.session_pending_penalties;
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000002';
+select public.atomic_reject($q$select public.settle_student_penalty((select id from public.manual_pending_before),public.business_id(6,506),2,
+  'Owner resolves original-source incident')$q$, 'Session not accessible','42501');
+reset role;
+begin;
+update public.sedes set owner_id=public.business_id(0,1) where id=public.business_id(3,1);
+set local role authenticated;
+set local request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'Session not accessible','42501');
+rollback;
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+
+-- Real unlinked SuperAdmin gets global reads, not financial write or replay rights.
+reset role;
+begin;
+delete from public.sede_members where user_id=public.business_id(0,3);
+set local role authenticated;
+set local request.jwt.claim.sub = '01000000-0000-0000-0000-000000000003';
+select public.atomic_assert(count(*)=4,'unlinked real SuperAdmin reads all initial manual entitlements globally')
+  from public.student_manual_credit_entitlements where student_id in
+    (public.business_id(1,100),public.business_id(1,101),public.business_id(1,102),public.business_id(1,103));
+select public.atomic_assert(count(*)=1,'unlinked real SuperAdmin reads manual settlement globally')
+  from public.student_penalty_settlements where session_id=public.business_id(2,106);
+select public.atomic_assert(not can_approve_manual_credit and not can_reconcile_legacy and jsonb_array_length(penalty_incidents)>0,
+  'global read projection exposes history without financial capabilities')
+  from public.student_credit_profile where student_id=public.business_id(1,105);
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'Only this workshop owner may settle penalties','42501');
+rollback;
+set role authenticated;
+
+-- A genuine allowlisted read-only API principal still gets no finance capability.
+reset role;
+begin;
+insert into private.domain_read_principals(user_id,kind,enabled,expires_at)
+  values(public.business_id(0,4),'integration',true,now()+interval '1 day');
+insert into private.domain_read_grants(user_id,sede_id,student_id,operation,enabled,expires_at)
+  values(public.business_id(0,4),public.business_id(3,1),public.business_id(1,100),'student.summary.get',true,now()+interval '1 day');
+set local role authenticated;
+set local request.jwt.claim.sub = '01000000-0000-0000-0000-000000000004';
+select public.atomic_assert(public.domain_read_v1(jsonb_build_object('version',1,'operation','student.summary.get',
+  'sedeId',public.business_id(3,1),'studentId',public.business_id(1,100)))->'data'->>'studentId'=public.business_id(1,100)::text,
+  'explicitly scoped reader can use only its allowlisted summary API');
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'Only this workshop owner may approve manual credits','42501');
+select public.atomic_reject($q$select public.settle_student_penalty((select id from public.manual_pending_before),public.business_id(6,506),2,
+  'Owner resolves original-source incident')$q$, 'Session not accessible','42501');
+select public.atomic_assert(count(*)=0,'allowlisted reader cannot read full financial profiles') from public.student_credit_profile;
+select public.atomic_assert(count(*)=0,'allowlisted reader cannot read settlement audit rows') from public.student_penalty_settlements;
+rollback;
+set role authenticated;
+
+-- Unknown original IDs cannot be manufactured by approving/reconciling new manual credit.
+select public.business_reserve(107,106,0,12);
+select public.save_session_attendance(public.business_id(2,107),gen_random_uuid(),1,public.business_attendance(106,'absent'),true,null);
+select public.manual_approve(106,106,'new_manual',2,0);
+select public.atomic_reject($q$select public.manual_settle(107,509,2)$q$, 'Only the known original incident source may settle');
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,107),gen_random_uuid(),2,public.business_id(3,1),'{}',
+  array[public.business_id(1,106)],'{}',jsonb_build_object(public.business_id(1,106)::text,public.manual_entitlement(106,106)))$q$, 'Finalized roster and original funding are locked');
+
+-- Mixed transaction must roll back a valid first manual debit when second student fails.
+select public.manual_approve(107,107,'new_manual',1,0);
+select public.save_session_reservation(public.business_id(2,108),gen_random_uuid(),0,public.business_id(3,1),public.business_metadata(1,12),
+  array[public.business_id(1,107),public.business_id(1,108)],'{}',jsonb_build_object(public.business_id(1,107)::text,public.manual_entitlement(107,107)));
+select public.atomic_reject(format($q$select public.save_session_attendance(public.business_id(2,108),gen_random_uuid(),1,%L::jsonb,true,null)$q$,
+  public.business_attendance(107,'present')||public.business_attendance(108,'present')), 'Presence requires valid original credit%');
+select public.atomic_assert(remaining_classes=1,'mixed rollback restores manual ledger') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(107,107);
+select public.atomic_assert(count(*)=0,'mixed rollback creates no manual debit or partial billing') from public.session_credit_movements where session_id=public.business_id(2,108);
+select public.atomic_assert(revision=1 and completed_at is null,'mixed rollback preserves session revision') from public.sessions where id=public.business_id(2,108);
+
+-- Existing original membership can settle only if paid, current, valid and known positive.
+select public.atomic_reject($q$select public.manual_settle(10,510,3)$q$, 'Original incident source is not usable:%');
+select public.atomic_reject($q$select public.manual_settle(19,510,3)$q$, 'Penalty is already waived');
+select public.atomic_reject($q$select public.manual_settle(54,510,2)$q$, 'Only the known original incident source may settle');
+select public.manual_assert_settlement_rollback(7,510,3);
+select public.manual_settle(7,510,3);
+select public.atomic_assert(classes_remaining=3,'original valid membership settlement consumes one without rollover') from public.students where id=public.business_id(1,7);
+select public.waive_session_penalty(public.business_id(2,7),public.business_id(1,7),gen_random_uuid(),4,'Owner waives settled membership');
+select public.atomic_assert(classes_remaining=4,'settled membership waiver restores only original debit') from public.students where id=public.business_id(1,7);
+reset role;
+update public.students set classes_remaining=1 where id=public.business_id(1,6);
+set role authenticated;
+select public.manual_settle(6,517,4);
+select public.atomic_assert(classes_remaining=0,'pending penalty created by attendance correction can settle original period despite earlier billing revision') from public.students where id=public.business_id(1,6);
+select public.atomic_assert(finalized_revision=3 and settlement_revision=5,'settlement retains original first-finalization revision and records new resolution revision')
+  from public.session_business_state where session_id=public.business_id(2,6);
+select public.business_reserve(109,17,0,12);
+reset role;
+update public.students set classes_remaining=0 where id=public.business_id(1,17);
+set role authenticated;
+select public.save_session_attendance(public.business_id(2,109),gen_random_uuid(),1,public.business_attendance(17,'absent'),true,null);
+select public.atomic_reject($q$select public.manual_settle(109,511,2)$q$, 'Original incident source is not usable:%');
+reset role;
+update public.student_membership_periods set starts_on=private.membership_today()-30,ends_on=private.membership_today()-1 where student_id=public.business_id(1,17);
+set role authenticated;
+select public.schedule_student_membership(public.business_id(1,17),gen_random_uuid(),'platinum',8);
+select public.confirm_student_membership_payment(current_membership_period_id) from public.students where id=public.business_id(1,17);
+select public.atomic_reject($q$select public.manual_settle(109,511,2)$q$, 'Original incident source is not usable:%');
+select public.atomic_assert(classes_remaining=8,'later paid membership cannot substitute for pending original period') from public.students where id=public.business_id(1,17);
+
+-- A depleted original gift is restored by its charged penalty, not substituted by another valid card.
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+  values (public.business_id(4,100),public.business_id(3,1),'Manual Student 109',public.business_id(1,109),1,'modelado',private.membership_today(),3,'paid'),
+    (public.business_id(4,101),public.business_id(3,1),'Manual Student 109',public.business_id(1,109),2,'modelado',private.membership_today(),3,'paid');
+select public.business_reserve(110,109,0,10,100);
+select public.business_reserve(111,109,0,12,100);
+select public.save_session_attendance(public.business_id(2,110),gen_random_uuid(),1,public.business_attendance(109,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,111),gen_random_uuid(),1,public.business_attendance(109,'absent'),true,null);
+select public.atomic_reject($q$select public.manual_settle(111,512,2)$q$, 'Original incident source is not usable:%');
+select public.atomic_assert(sessions_used=0,'alternate valid gift cannot substitute') from public.gift_cards where id=public.business_id(4,101);
+select public.waive_session_penalty(public.business_id(2,110),public.business_id(1,109),gen_random_uuid(),2,'Restore original card');
+select public.manual_assert_settlement_rollback(111,512,2);
+select public.manual_settle(111,512,2);
+select public.atomic_assert(sessions_used=1,'gift settlement consumes original through existing gift ledger') from public.gift_cards where id=public.business_id(4,100);
+select public.waive_session_penalty(public.business_id(2,111),public.business_id(1,109),gen_random_uuid(),3,'Owner waives settled gift');
+select public.atomic_assert(sessions_used=0,'settled gift waiver reverses original shared ledger') from public.gift_cards where id=public.business_id(4,100);
+
+select public.save_session_reservation(public.business_id(2,130),gen_random_uuid(),0,public.business_id(3,1),public.business_metadata(6,10,4),
+  array[public.business_id(1,17),public.business_id(1,107),public.business_id(1,109),public.business_id(1,160)],
+  jsonb_build_object(public.business_id(1,109)::text,public.business_id(4,101)),
+  jsonb_build_object(public.business_id(1,107)::text,public.manual_entitlement(107,107)));
+select public.atomic_reject(format($q$select public.save_session_attendance(public.business_id(2,130),gen_random_uuid(),1,%L::jsonb,true,null)$q$,
+  public.business_attendance(17,'present')||public.business_attendance(107,'present')||public.business_attendance(109,'present')||public.business_attendance(160,'present')),
+  'Presence requires valid original credit%');
+select public.atomic_assert(classes_remaining=8,'four-student mixed rollback restores original membership adjustment') from public.students where id=public.business_id(1,17);
+select public.atomic_assert(remaining_classes=1,'four-student mixed rollback restores manual ledger') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(107,107);
+select public.atomic_assert(sessions_used=0,'four-student mixed rollback restores original gift ledger') from public.gift_cards where id=public.business_id(4,101);
+select public.atomic_assert(not exists(select 1 from public.session_credit_movements where session_id=public.business_id(2,130))
+  and not exists(select 1 from public.gift_card_operation_receipts where session_id=public.business_id(2,130))
+  and not exists(select 1 from public.session_business_billing where session_id=public.business_id(2,130)), 'mixed three-source failure leaves no financial receipts or billing');
+
+-- Unknown original payment requires an actual confirmation, never manual approval.
+reset role;
+update public.student_membership_periods set payment_status=null where student_id=public.business_id(1,18);
+set role authenticated;
+select public.business_reserve(131,18,6,12);
+select public.save_session_attendance(public.business_id(2,131),gen_random_uuid(),1,public.business_attendance(18,'absent'),true,null);
+select public.atomic_reject($q$select public.manual_settle(131,516,2)$q$, 'Original incident source is not usable:%');
+select public.manual_approve(18,218,'new_manual',1,4);
+select public.atomic_reject($q$select public.manual_settle(131,516,2)$q$, 'Original incident source is not usable:%');
+select public.atomic_assert(classes_remaining=4 and (select payment_status from public.student_membership_periods where id=st.current_membership_period_id) is null,
+  'deliberate manual grant to member neither duplicates scalar allocation nor confirms original payment') from public.students st where id=public.business_id(1,18);
+select public.confirm_student_membership_payment(current_membership_period_id) from public.students where id=public.business_id(1,18);
+select public.manual_settle(131,516,2);
+select public.atomic_assert(classes_remaining=3,'actual original payment confirmation permits original-source settlement') from public.students where id=public.business_id(1,18);
+select public.atomic_assert(remaining_classes=1,'original membership settlement ignores separately approved manual source') from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(18,218);
+reset role;
+update public.student_membership_periods set starts_on=private.membership_today()-30,ends_on=private.membership_today()-1
+  where student_id=public.business_id(1,18);
+set role authenticated;
+select public.schedule_student_membership(public.business_id(1,18),gen_random_uuid(),'platinum',8);
+reset role;
+create table public.manual_outgoing_before as select id,outgoing_snapshot from public.student_membership_periods where student_id=public.business_id(1,18);
+grant select on public.manual_outgoing_before to authenticated;
+set role authenticated;
+select public.waive_session_penalty(public.business_id(2,131),public.business_id(1,18),gen_random_uuid(),3,'Owner waives settlement after actual rollover');
+select public.atomic_assert(classes_remaining=8,'settled historical membership waiver never credits successor') from public.students where id=public.business_id(1,18);
+select public.atomic_assert(not exists(select 1 from public.manual_outgoing_before b join public.student_membership_periods p using(id)
+  where b.outgoing_snapshot is distinct from p.outgoing_snapshot), 'settled membership historical reversal preserves outgoing snapshots');
+
+select public.manual_approve(113,113,'new_manual',2,0);
+set request.jwt.claim.sub = '01000000-0000-0000-0000-000000000001';
+select public.manual_reserve(132,113,113,3,12);
+select public.save_session_attendance(public.business_id(2,132),gen_random_uuid(),1,public.business_attendance(113,'present'),false,null);
+select public.save_session_attendance(public.business_id(2,132),gen_random_uuid(),2,public.business_attendance(113,'present'),true,null);
+select public.save_session_attendance(public.business_id(2,132),gen_random_uuid(),3,public.business_attendance(113,'absent'),true,null);
+select public.atomic_reject($q$select public.waive_session_penalty(public.business_id(2,132),public.business_id(1,113),gen_random_uuid(),4,'Staff cannot waive manual charge')$q$,
+  'Only this workshop owner may waive penalties','42501');
+select public.atomic_assert(created_by=auth.uid() and manual_credit_id=public.manual_entitlement(113,113),'authorized employee can operate owner-approved manual funding; actual movement actor retained')
+  from public.session_credit_movements where session_id=public.business_id(2,132);
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+select public.waive_session_penalty(public.business_id(2,132),public.business_id(1,113),gen_random_uuid(),4,'Actual owner waives employee-recorded manual penalty');
+
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+  values (public.business_id(4,103),public.business_id(3,1),'Manual Student 114',public.business_id(1,114),2,'modelado',private.membership_today(),3,'pending'),
+    (public.business_id(4,104),public.business_id(3,1),'Manual Student 115',public.business_id(1,115),2,'modelado',private.membership_today()+2,3,'pending');
+select public.business_reserve(133,114,2,12,103);
+select public.save_session_attendance(public.business_id(2,133),gen_random_uuid(),1,public.business_attendance(114,'absent'),true,null);
+select public.confirm_gift_card_payment(public.business_id(4,103));
+reset role;
+begin;
+-- Synthetic inconsistent old ledger: the owner-only private helper is used only inside this disposable test transaction.
+select private.apply_gift_card_session(public.business_id(4,103),public.business_id(2,133),public.business_id(1,114),false,gen_random_uuid());
+set local role authenticated;
+select public.atomic_reject($q$select public.manual_settle(133,518,2)$q$, 'Pending incident gift ledger requires reconciliation');
+select public.atomic_assert(sessions_used=1,'rejected inconsistent gift settlement does not mutate existing source balance') from public.gift_cards where id=public.business_id(4,103);
+rollback;
+set role authenticated;
+select public.manual_settle(133,518,2);
+select public.atomic_assert(sessions_used=1,'consistent original gift incident settles normally') from public.gift_cards where id=public.business_id(4,103);
+select public.business_reserve(134,115,3,12,104);
+select public.confirm_gift_card_payment(public.business_id(4,104));
+select public.atomic_reject($q$select public.save_session_attendance(public.business_id(2,134),gen_random_uuid(),1,public.business_attendance(115,'present'),true,null)$q$,
+  'Presence requires valid original credit%');
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,134),public.business_id(1,115),gen_random_uuid(),1,'no_credit','Paid future allocation cannot be bypassed')$q$,
+  'No-credit exception cannot bypass available credit%');
+select public.atomic_assert(revision=1 and completed_at is null,'paid future activation rejects presence without partial completion/revision') from public.sessions where id=public.business_id(2,134);
+select public.save_session_attendance(public.business_id(2,134),gen_random_uuid(),1,public.business_attendance(115,'absent'),true,null);
+select public.atomic_assert(is_pending and original_gift_card_id=public.business_id(4,104),'paid future activation no-show stays pending even when activation covers future session date')
+  from public.session_pending_penalties where session_id=public.business_id(2,134);
+select public.business_reserve(172,115,-1,12,104);
+select public.cancel_session_reservation(public.business_id(2,172),public.business_id(1,115),gen_random_uuid(),1,'Paid future gift late cancellation');
+select public.save_session_attendance(public.business_id(2,172),gen_random_uuid(),2,public.business_attendance(115,'pending'),true,null);
+select public.atomic_assert(is_pending and kind='late_cancellation' and original_gift_card_id=public.business_id(4,104),
+  'actual late cancellation with paid future activation records a pending original-source incident') from public.session_pending_penalties where session_id=public.business_id(2,172);
+select public.business_reserve(174,115,0,14);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,174),public.business_id(1,115),gen_random_uuid(),1,'no_credit','Unselected paid future gift is still a known allocation')$q$,
+  'No-credit exception cannot bypass available credit%');
+select public.atomic_assert(not exists(select 1 from public.gift_card_movements where gift_card_id=public.business_id(4,104))
+  and not exists(select 1 from public.gift_card_operation_receipts where gift_card_id=public.business_id(4,104))
+  and not exists(select 1 from public.session_credit_movements where session_id in(public.business_id(2,134),public.business_id(2,172))),
+  'paid future present/no-show/late/courtesy attempts create no gift movements, gift receipts or credit debits');
+select public.atomic_reject($q$select public.manual_settle(134,519,2)$q$, 'Original incident source is not usable:%');
+select public.atomic_assert(sessions_used=0,'original gift with future activation cannot settle early even after explicit payment') from public.gift_cards where id=public.business_id(4,104);
+select public.business_reserve(175,114,3,12,103);
+select public.save_session_attendance(public.business_id(2,175),gen_random_uuid(),1,public.business_attendance(114,'present'),true,null);
+select public.atomic_assert(billing_state='charged' and funding_gift_card_id=public.business_id(4,103),
+  'paid gift activated today remains valid for a covered future session') from public.session_business_state where session_id=public.business_id(2,175);
+
+-- Expiry, future activation and activity are immutable entitlement terms, not owner bypasses.
+select public.approve_student_manual_credit(public.business_id(1,110),public.business_id(6,110),'new_manual',2,0,'mesa',
+  private.membership_today()-60,private.membership_today()-30,'Expired entitlement evidence','Signed expired grant');
+select public.manual_reserve(112,110,110,0,12);
+select public.save_session_attendance(public.business_id(2,112),gen_random_uuid(),1,public.business_attendance(110,'absent'),true,null);
+select public.atomic_reject($q$select public.manual_settle(112,513,2)$q$, 'Original incident source is not usable:%');
+select public.approve_student_manual_credit(public.business_id(1,111),public.business_id(6,111),'new_manual',2,0,'mesa',
+  private.membership_today()+1,private.membership_today()+60,'Future entitlement evidence','Signed future grant');
+select public.manual_reserve(113,111,111,1,12);
+select public.save_session_attendance(public.business_id(2,113),gen_random_uuid(),1,public.business_attendance(111,'absent'),true,null);
+select public.atomic_reject($q$select public.manual_settle(113,514,2)$q$, 'Original incident source is not usable:%');
+select public.approve_student_manual_credit(public.business_id(1,112),public.business_id(6,112),'new_manual',2,0,'torno',
+  private.membership_today()-1,private.membership_today()+60,'Torno-only entitlement','Signed torno grant');
+select public.manual_reserve(114,112,112,0,12);
+select public.save_session_attendance(public.business_id(2,114),gen_random_uuid(),1,public.business_attendance(112,'absent'),true,null);
+select public.atomic_reject($q$select public.manual_settle(114,515,2)$q$, 'Original incident source is not usable:%');
+select public.atomic_assert(bool_and(remaining_classes=2),'unusable original manual sources remain financially unchanged')
+  from public.manual_credit_entitlements_with_balance where student_id in(public.business_id(1,110),public.business_id(1,111),public.business_id(1,112));
+
+-- A reconciled observation is not a second allocation after its ledger reaches zero.
+select public.manual_approve(116,116,'reconcile_legacy',1,1);
+select public.manual_reserve(115,116,116,4,12);
+select public.save_session_attendance(public.business_id(2,115),gen_random_uuid(),1,public.business_attendance(116,'absent'),true,null);
+select public.manual_reserve(116,116,116,4,14);
+select public.approve_session_exception(public.business_id(2,116),public.business_id(1,116),gen_random_uuid(),1,'no_credit','Known exhausted manual courtesy');
+select public.save_session_attendance(public.business_id(2,116),gen_random_uuid(),2,public.business_attendance(116,'present'),true,null);
+select public.atomic_assert(billing_kind='courtesy' and billing_state='no_charge','known depleted reconciled ledger allows explicit courtesy without reusing scalar')
+  from public.session_business_state where session_id=public.business_id(2,116);
+insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_classes,type,activated_at,validity_months,payment_status)
+  values (public.business_id(4,102),public.business_id(3,1),'Manual Student 101',public.business_id(1,101),1,'modelado',private.membership_today(),3,'paid');
+select public.business_reserve(117,101,4,16);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,117),public.business_id(1,101),gen_random_uuid(),1,'no_credit','Reconciled does not bypass gift')$q$,
+  'No-credit exception cannot bypass available credit%');
+select public.manual_reserve(118,102,102,4,12);
+select public.save_session_attendance(public.business_id(2,118),gen_random_uuid(),1,public.business_attendance(102,'absent'),true,null);
+select public.manual_reserve(119,102,102,4,14);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,119),public.business_id(1,102),gen_random_uuid(),1,'no_credit','New grant does not reconcile old observation')$q$,
+  'No-credit exception cannot bypass available credit%');
+select public.manual_reserve(135,101,101,5,14);
+select public.save_session_attendance(public.business_id(2,135),gen_random_uuid(),1,public.business_attendance(101,'absent'),true,null);
+select public.manual_reserve(136,101,101,5,16);
+select public.atomic_reject($q$select public.approve_session_exception(public.business_id(2,136),public.business_id(1,101),gen_random_uuid(),1,'no_credit','Unknown legacy cannot become zero after new grant depletion')$q$,
+  'No-credit exception cannot bypass available credit%');
+select public.atomic_assert(legacy_observed_balance is null and not can_reconcile_legacy,
+  'depleted independent new_manual never resolves or initializes unknown legacy funds')
+  from public.student_credit_profile where student_id=public.business_id(1,101);
+
+-- Cancellation locks the source BEFORE an incident is finalized, not just afterwards.
+select public.manual_approve(117,117,'new_manual',2,0);
+select public.manual_reserve(137,117,117,-1,14);
+select public.cancel_session_reservation(public.business_id(2,137),public.business_id(1,117),gen_random_uuid(),1,'Original manual source locked on cancellation');
+select public.manual_approve(117,217,'new_manual',2,0);
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,137),gen_random_uuid(),2,public.business_id(3,1),'{}',
+  array[public.business_id(1,117)],'{}',jsonb_build_object(public.business_id(1,117)::text,public.manual_entitlement(117,217)))$q$,
+  'Cancellation and its original funding are immutable');
+select public.save_session_attendance(public.business_id(2,137),gen_random_uuid(),2,public.business_attendance(117,'pending'),true,null);
+select public.atomic_assert(original_manual_credit_id=public.manual_entitlement(117,117) and original_penalty_state='charged',
+  'late cancellation incident records only source locked before incident') from public.session_pending_penalties where session_id=public.business_id(2,137);
+select public.business_reserve(138,118,-1,14);
+select public.cancel_session_reservation(public.business_id(2,138),public.business_id(1,118),gen_random_uuid(),1,'Missing original source cancellation');
+select public.manual_approve(118,118,'new_manual',2,0);
+select public.atomic_reject($q$select public.save_session_reservation(public.business_id(2,138),gen_random_uuid(),2,public.business_id(3,1),'{}',
+  array[public.business_id(1,118)],'{}',jsonb_build_object(public.business_id(1,118)::text,public.manual_entitlement(118,118)))$q$,
+  'Cancellation and its original funding are immutable');
+select public.save_session_attendance(public.business_id(2,138),gen_random_uuid(),2,public.business_attendance(118,'pending'),true,null);
+select public.atomic_reject($q$select public.manual_settle(138,538,3)$q$, 'Only the known original incident source may settle');
+select public.atomic_assert(original_manual_credit_id is null and is_pending,'old missing-source cancellation cannot be rebound or settled with new manual evidence')
+  from public.session_pending_penalties where session_id=public.business_id(2,138);
+
+-- ACLs and append-only terms cannot be bypassed by authenticated or BYPASSRLS service role.
+select public.atomic_reject($q$update public.student_manual_credit_entitlements set quantity=99$q$, 'permission denied%','42501');
+select public.atomic_reject($q$delete from public.student_penalty_settlements$q$, 'permission denied%','42501');
+select public.atomic_reject($q$update public.session_credit_movements set manual_credit_id=null$q$, 'permission denied%','42501');
+select public.atomic_reject($q$select private.save_session_reservation_before_manual(public.business_id(2,100),gen_random_uuid(),1,
+  public.business_id(3,1),'{}',array[public.business_id(1,100)],'{}')$q$, 'permission denied%','42501');
+select public.atomic_reject($q$select private.session_business_action_before_manual(public.business_id(2,106),public.business_id(1,105),gen_random_uuid(),6,'waive_session_penalty',null,'bypass')$q$,
+  'permission denied%','42501');
+reset role;
+select public.atomic_reject($q$update public.student_manual_credit_entitlements set evidence='rewrite'$q$, 'Session history is append-only','42501');
+select public.atomic_reject($q$delete from public.student_penalty_settlements$q$, 'Session history is append-only','42501');
+select public.atomic_reject($q$update public.session_students set manual_credit_id=public.manual_entitlement(101,101)
+  where session_id=public.business_id(2,100)$q$, '%session_manual_owner_fk%','23503');
+select public.atomic_reject($q$update public.session_students set manual_credit_id=public.manual_entitlement(105,205)
+  where session_id=public.business_id(2,106)$q$, 'Original manual funding is immutable after cancellation or finalization');
+select public.atomic_reject($q$insert into public.session_credit_movements(session_id,student_id,sede_id,revision,manual_credit_id,
+  delta,disposition,created_by) values(public.business_id(2,101),public.business_id(1,100),public.business_id(3,1),8,
+  public.manual_entitlement(100,100),-1,'manual_credit',auth.uid())$q$, '%session_credit_manual_consumption_once%','23505');
+select public.atomic_reject($q$insert into public.session_credit_movements(session_id,student_id,sede_id,revision,manual_credit_id,
+  delta,reverses_id,disposition,created_by) values(public.business_id(2,106),public.business_id(1,105),public.business_id(3,1),8,
+  public.manual_entitlement(105,105),1,(select id from public.session_credit_movements where session_id=public.business_id(2,101) and delta=-1),
+  'manual_credit',auth.uid())$q$, 'Manual reversal must reference its exact original debit');
+set role service_role;
+select public.atomic_reject($q$select public.manual_approve(100,100,'reconcile_legacy',3,3)$q$, 'permission denied%','42501');
+select public.atomic_reject($q$select public.manual_settle(106,506,2)$q$, 'permission denied%','42501');
+select public.atomic_reject($q$update public.student_manual_credit_entitlements set quantity=99$q$, 'permission denied%','42501');
+select public.atomic_reject($q$insert into public.student_penalty_settlements default values$q$, 'permission denied%','42501');
+reset role;
+select public.atomic_assert(not has_function_privilege('anon','public.approve_student_manual_credit(uuid,uuid,text,integer,integer,text,date,date,text,text)','execute')
+  and not has_table_privilege('service_role','public.student_credit_profile','select'), 'no anonymous or service financial/read endpoint grants');
+select public.atomic_assert(bool_and(to_jsonb(st)=b.raw),'all temporal raw student state survives manual consumption, settlement and waivers')
+  from public.students st join public.manual_students_before b using(id);
+select public.atomic_assert(not exists(select 1 from public.session_credit_movements where num_nonnulls(period_id,gift_card_id,manual_credit_id)<>1), 'all movement receipts have one exclusive financial source');
+select public.atomic_assert(not exists(select 1 from public.manual_preservation_before b where b.kind in
+  ('receipts','credits','gift_movements','gift_receipts','adjustments','penalties','exceptions','events','waivers') and not exists (
+    select 1 from (
+      select 'receipts' kind,to_jsonb(t) raw from public.session_operation_receipts t
+      union all select 'credits',to_jsonb(t)-'manual_credit_id' from public.session_credit_movements t
+      union all select 'gift_movements',to_jsonb(t) from public.gift_card_movements t
+      union all select 'gift_receipts',to_jsonb(t) from public.gift_card_operation_receipts t
+      union all select 'adjustments',to_jsonb(t) from public.student_membership_class_adjustments t
+      union all select 'penalties',to_jsonb(t)-'manual_credit_id' from public.session_business_penalties t
+      union all select 'exceptions',to_jsonb(t)-'manual_credit_id' from public.session_business_exceptions t
+      union all select 'events',to_jsonb(t) from public.session_business_events t
+      union all select 'waivers',to_jsonb(t) from public.session_business_waivers t
+    ) history where history.kind=b.kind and history.raw=b.raw)),
+  'every pre-manual historical receipt, ledger movement, incident, evidence and audit ID survives all tests unchanged');
+
+-- Socket-only concurrent scenarios use these distinct students and sessions.
+set role authenticated;
+select public.manual_approve(120,120,'new_manual',1,0);
+select public.manual_reserve(120,120,120,10,10);
+select public.manual_reserve(121,120,120,10,12);
+select public.manual_approve(121,121,'new_manual',2,0);
+select public.manual_reserve(122,121,121,11,10);
+select public.manual_approve(122,122,'new_manual',1,0);
+select public.manual_reserve(123,122,122,12,10);
+select public.manual_reserve(124,122,122,12,12);
+select public.save_session_attendance(public.business_id(2,123),gen_random_uuid(),1,public.business_attendance(122,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,124),gen_random_uuid(),1,public.business_attendance(122,'absent'),true,null);
+select public.waive_session_penalty(public.business_id(2,123),public.business_id(1,122),gen_random_uuid(),2,'Restore for settlement race');
+select public.manual_approve(123,123,'new_manual',1,0);
+select public.manual_reserve(125,123,123,13,10);
+select public.manual_reserve(126,123,123,13,12);
+select public.save_session_attendance(public.business_id(2,125),gen_random_uuid(),1,public.business_attendance(123,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,126),gen_random_uuid(),1,public.business_attendance(123,'absent'),true,null);
+select public.waive_session_penalty(public.business_id(2,125),public.business_id(1,123),gen_random_uuid(),2,'Restore for distinct-key race');
+select public.manual_approve(124,124,'new_manual',1,0);
+select public.manual_reserve(127,124,124,14,10);
+select public.manual_reserve(128,124,124,14,12);
+select public.manual_reserve(129,124,124,14,14);
+select public.save_session_attendance(public.business_id(2,127),gen_random_uuid(),1,public.business_attendance(124,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,128),gen_random_uuid(),1,public.business_attendance(124,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,129),gen_random_uuid(),1,public.business_attendance(124,'absent'),true,null);
+select public.waive_session_penalty(public.business_id(2,127),public.business_id(1,124),gen_random_uuid(),2,'Restore one class for two incidents');
+reset role;
+update public.students set classes_remaining=3 where id=public.business_id(1,125);
+set role authenticated;
+select public.manual_approve(126,126,'new_manual',1,0);
+select public.manual_reserve(139,126,126,15,10);
+select public.manual_reserve(140,126,126,15,12);
+select public.save_session_attendance(public.business_id(2,139),gen_random_uuid(),1,public.business_attendance(126,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,140),gen_random_uuid(),1,public.business_attendance(126,'absent'),true,null);
+select public.waive_session_penalty(public.business_id(2,139),public.business_id(1,126),gen_random_uuid(),2,'Restore original for waiver-settlement race');
+select public.manual_approve(128,128,'new_manual',1,0);
+select public.manual_reserve(141,128,128,16,10);
+select public.manual_reserve(142,128,128,16,12);
+select public.save_session_attendance(public.business_id(2,141),gen_random_uuid(),1,public.business_attendance(128,'absent'),true,null);
+select public.save_session_attendance(public.business_id(2,142),gen_random_uuid(),1,public.business_attendance(128,'absent'),true,null);
+select public.waive_session_penalty(public.business_id(2,141),public.business_id(1,128),gen_random_uuid(),2,'Restore source for owner revocation while waiting');
+select public.manual_approve(129,129,'new_manual',2,0);
+select public.manual_reserve(143,129,129,17,10);
+reset role;
+\o
+\endif
+\o
