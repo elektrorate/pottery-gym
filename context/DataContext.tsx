@@ -156,17 +156,20 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         setLoadError(null);
 
         try {
-            // Initial navigation needs a bounded snapshot, not an exact count for
-            // every table. Exact-count pagination across all domains made the
-            // calendar wait for inventory/history queries before rendering.
-            const buildQuery = (table: string, limit = 500) => {
+            const buildQuery = (table: string, limit?: number) => {
                 const select = () => {
-                    let query = supabase.from(table).select('*');
+                    let query = supabase.from(table).select('*', { count: 'exact' });
                     if (!isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
                     return query;
                 };
-                return withTimeout(`${table}.select`, select().limit(limit), RELOAD_TIMEOUT_MS)
-                    .then(result => ({ data: result.data || [], error: result.error || null }));
+                if (limit !== undefined) return withTimeout(`${table}.select`, select().limit(limit), RELOAD_TIMEOUT_MS);
+                const keys = table === 'session_business_state' ? ['session_id', 'student_id']
+                    : ['students_effective_membership', 'student_credit_profile'].includes(table) ? ['student_id'] : ['id'];
+                return readAllRows((offset, size) => {
+                    let query = select();
+                    for (const key of keys) query = query.order(key, { ascending: true });
+                    return withTimeout(`${table}.select`, query.range(offset, offset + size - 1), RELOAD_TIMEOUT_MS);
+                });
             };
 
             const isMissingOptionalTable = (error: any) => {
