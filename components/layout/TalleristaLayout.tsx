@@ -22,6 +22,11 @@ const navItems = [
         )
     },
     {
+        path: '/agenda', label: 'Agenda', section: 'GESTIÓN', icon: (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 3v3m12-3v3M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1Zm3 8h3m-3 4h3m3-4h3m-3 4h3" /></svg>
+        )
+    },
+    {
         path: '/students', label: 'Alumnos', section: 'GESTIÓN', icon: (
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
         )
@@ -48,12 +53,13 @@ const navItems = [
     },
 ];
 
-const mobilePrimaryPaths = ['/dashboard', '/calendar', '/students', '/giftcards'];
+const mobilePrimaryPaths = ['/dashboard', '/calendar', '/students', '/giftcards', '/agenda'];
 const mobilePrimaryLabels: Record<string, string> = {
     '/dashboard': 'Dashboard',
     '/calendar': 'Calendario',
     '/students': 'Alumnos',
-    '/giftcards': 'Bonos de regalo'
+    '/giftcards': 'Bonos',
+    '/agenda': 'Agenda'
 };
 
 const menuConfig = [
@@ -61,6 +67,7 @@ const menuConfig = [
     {
         group: 'GESTIÓN', items: [
             { path: '/calendar', label: 'Calendario' },
+            { path: '/agenda', label: 'Agenda' },
             { path: '/students', label: 'Alumnos' },
             { path: '/history', label: 'Historial' }
         ]
@@ -78,6 +85,7 @@ const getViewTitle = (pathname: string) => {
             Estado del <span className="text-brand italic">taller hoy</span>
         </>;
         case '/calendar': return <>Gestión de <span className="text-brand italic">agenda</span></>;
+        case '/agenda': return <>Agenda de <span className="text-brand italic">actividades</span></>;
         case '/students': return <>Gestión de <span className="text-brand italic">alumnos</span></>;
         case '/teachers': return <>Gestión de <span className="text-brand italic">profesores</span></>;
         case '/pieces': return <>Control de <span className="text-brand italic">piezas</span></>;
@@ -233,10 +241,10 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
             {/* Mobile primary navigation: the four most-used destinations stay reachable at all times. */}
             <nav
                 aria-label="Navegación principal móvil"
-                className="fixed inset-x-3 bottom-3 z-[80] grid grid-cols-4 gap-1 rounded-[28px] border border-neutral-border bg-white/95 px-3 pb-2 pt-3 shadow-[0_14px_34px_rgba(17,17,17,0.14)] backdrop-blur-xl lg:hidden"
+                className="fixed inset-x-3 bottom-3 z-[80] grid grid-cols-5 gap-1 rounded-[28px] border border-neutral-border bg-white/95 px-3 pb-2 pt-3 shadow-[0_14px_34px_rgba(17,17,17,0.14)] backdrop-blur-xl lg:hidden"
                 style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}
             >
-                {navItems.filter(item => mobilePrimaryPaths.includes(item.path)).map(item => {
+                {mobilePrimaryPaths.map(path => navItems.find(item => item.path === path)).filter((item): item is typeof navItems[number] => !!item).map(item => {
                     const isActive = location.pathname === item.path;
                     return (
                         <button
@@ -313,3 +321,4 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
 };
 
 export default TalleristaLayout;
+
