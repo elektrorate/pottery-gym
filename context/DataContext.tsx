@@ -183,25 +183,16 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // Phase 1: only the data required to render the dashboard/calendar.
             // Secondary domains are intentionally loaded below so inventory and
             // gift-card history cannot delay the first useful paint.
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, effectiveRes, periodsRes, sessionContractRes, giftContractRes, businessRes, ownerRes, creditProfileRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
+            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, sessionContractRes, giftContractRes, activityBlocksRes, activityBlockStudentsRes] = await Promise.all([
                 buildQuery('students'), buildQuery('teachers'), buildQuery('sessions'),
-                buildQuery('session_students'), buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
+                buildQuery('session_students'),
                 buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
-                buildQuery('session_business_state'), readAllRows((offset, size) => withTimeout('sedes.owner.select',
-                    supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session.user.id).eq('is_active', true)
-                        .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
-                buildQuery('student_credit_profile'),
                 optionalQuery(buildQuery('session_activity_blocks'), { data: [], error: null }),
                 optionalQuery(buildQuery('session_activity_block_students'), { data: [], error: null })
             ]);
 
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
             if (studentsRes.error) throw studentsRes.error;
-            if (effectiveRes.error) throw effectiveRes.error;
-            if (periodsRes.error) throw periodsRes.error;
-            if (businessRes.error) throw new Error('El backend no tiene la politica de sesiones requerida. Actualiza solo el entorno autorizado.');
-            if (ownerRes.error) throw ownerRes.error;
-            if (creditProfileRes.error) throw new Error('El backend no tiene los contratos de creditos manuales e incidencias. Actualiza solo el entorno autorizado.');
             // Never mix new identity/atomic consumers with older writable projections.
             if (sessionContractRes.error || giftContractRes.error) {
                 throw new Error('El backend no tiene los contratos de bonos y asistencia atómica. Requiere una actualización coordinada autorizada.');
@@ -209,9 +200,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
-            const normalizedStudents = joinStudentMemberships(
-                studentsRes.data || [], effectiveRes.data || [], periodsRes.data || []
-            );
+            const normalizedStudents = joinStudentMemberships(studentsRes.data || [], [], []);
 
             // Normalize session students
             const sessionStudentsMap: Record<string, any[]> = {};
@@ -232,8 +221,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // first calendar render and replace them after the background load.
             const configuredCapacityDefaults = DEFAULT_CAPACITY_BY_ACTIVITY;
 
-            const businessBySession: Record<string, any[]> = {};
-            (businessRes.data || []).forEach((row: any) => { (businessBySession[row.session_id] ||= []).push(row); });
             const normalizedSessions: ClassSession[] = (sessionsRes.data || []).map((row: any) => {
                 const linked = sessionStudentsMap[row.id] || [];
                 const attendance: Record<string, 'present' | 'absent'> = {};
@@ -283,26 +270,33 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     capacity: Number(block.capacity),
                     studentIds: (activityBlockStudentsMap[block.id] || []).map((item: any) => item.student_id)
                 }));
-                return attachSessionBusinessState(mapped, businessBySession[row.id] || []);
+                return mapped;
             });
 
             const studentsWithAttendance = attachAttendanceHistory(normalizedStudents, normalizedSessions);
 
             // Publish the critical snapshot now. The calendar no longer waits
             // for inventory/gift-card/schedule tables.
-            setStudents(attachStudentCreditProfiles(studentsWithAttendance, creditProfileRes.data || [], normalizedSessions, []));
+            setStudents(attachStudentCreditProfiles(studentsWithAttendance, [], normalizedSessions, []));
 
             // Lifecycle is derived from the payment due date. Loading data must
             // never renew unpaid memberships or persist automatic archival.
 
             setTeachers((teachersRes.data || []) as Teacher[]);
             setSessions(normalizedSessions);
-            setOwnedSedeIds((ownerRes.data || []).map((row: any) => row.id));
+            setOwnedSedeIds([]);
             // Keep the first render independent from secondary domains.
             setLoadError(null);
 
             // Phase 2: secondary data is best-effort and updates its own slices.
             void Promise.all([
+                buildQuery('students_effective_membership'),
+                buildQuery('student_membership_periods'),
+                buildQuery('session_business_state'),
+                readAllRows((offset, size) => withTimeout('sedes.owner.select',
+                    supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session.user.id).eq('is_active', true)
+                        .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
+                buildQuery('student_credit_profile'),
                 optionalQuery(buildQuery('pieces'), { data: [], error: null }),
                 optionalQuery(buildQuery('gift_cards'), { data: [], error: null }),
                 optionalQuery(buildQuery('gift_card_movements'), { data: [], error: null }),
@@ -311,8 +305,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 optionalQuery(buildQuery('workshop_schedules'), { data: [], error: null }),
                 optionalQuery(buildQuery('workshop_capacity_defaults'), { data: [], error: null }),
                 optionalQuery(buildQuery('workshop_schedule_exceptions'), { data: [], error: null })
-            ]).then(([piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes]) => {
+            ]).then(([effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, piecesRes, giftRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes]) => {
                 if (generation !== loadGenerationRef.current) return;
+                if (effectiveRes.error || periodsRes.error || businessRes.error || ownerRes.error || creditProfileRes.error) {
+                    console.warn('Secondary membership/credit data load skipped');
+                    return;
+                }
                 const normalizedPieces: CeramicPiece[] = (piecesRes.data || []).map((row: any) => ({
                     id: row.id, owner: row.owner_name, description: row.description, status: row.status,
                     glazeType: row.glaze_type || undefined, deliveryDate: row.delivery_date || undefined,
@@ -329,6 +327,16 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 const normalizedGiftCards: GiftCard[] = (giftRes.data || []).map((row: any) => ({
                     ...mapGiftCardRowToModel(row), movements: movementsByGiftCard[row.id] || []
                 }));
+                const enhancedStudents = attachStudentCreditProfiles(
+                    attachAttendanceHistory(joinStudentMemberships(studentsRes.data || [], effectiveRes.data || [], periodsRes.data || []), normalizedSessions),
+                    creditProfileRes.data || [], normalizedSessions, normalizedGiftCards
+                );
+                const businessBySession: Record<string, any[]> = {};
+                (businessRes.data || []).forEach((row: any) => { (businessBySession[row.session_id] ||= []).push(row); });
+                const enhancedSessions = normalizedSessions.map(item => attachSessionBusinessState(item, businessBySession[item.id] || []));
+                setSessions(enhancedSessions);
+                setStudents(enhancedStudents);
+                setOwnedSedeIds((ownerRes.data || []).map((row: any) => row.id));
                 setPieces(normalizedPieces); setGiftCards(normalizedGiftCards);
                 setInventoryItems((inventoryRes.data || []) as InventoryItem[]);
                 setInventoryMovements((movementsRes.data || []) as InventoryMovement[]);
@@ -347,7 +355,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '', reason: row.reason || undefined
                 })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
                 // Re-attach gift-card state once the secondary domain arrives.
-                setStudents(current => attachStudentCreditProfiles(current, creditProfileRes.data || [], normalizedSessions, normalizedGiftCards));
             }).catch(error => console.warn('Secondary data load skipped:', error));
         } catch (error) {
             if (generation !== loadGenerationRef.current) throw error;
