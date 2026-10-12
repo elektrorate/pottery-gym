@@ -277,7 +277,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
             // Publish the critical snapshot now. The calendar no longer waits
             // for inventory/gift-card/schedule tables.
-            setStudents(attachStudentCreditProfiles(studentsWithAttendance, [], normalizedSessions, []));
+            // Credit projections are loaded in phase 2. The projection helper
+            // requires one row per student, so do not call it with an empty
+            // placeholder during the critical calendar render.
+            setStudents(studentsWithAttendance);
 
             // Lifecycle is derived from the payment due date. Loading data must
             // never renew unpaid memberships or persist automatic archival.
