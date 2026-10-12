@@ -28,6 +28,17 @@ interface DashboardViewProps {
 type DashboardAlert = { key?: string; id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' };
 type WorkshopActivity = { id: string; title: string; date: string; time: string; description: string };
 
+const MetricIcon: React.FC<{ type: 'members' | 'payments' | 'bonuses' | 'students' | 'sessions' }> = ({ type }) => {
+  const paths = {
+    members: 'M12 12a4 4 0 100-8 4 4 0 000 8zm-7 8a7 7 0 0114 0',
+    payments: 'M4 7h16M4 12h10M4 17h7',
+    bonuses: 'M12 3l2.6 5.3L20 9l-4 4 .9 5.7-4.9-2.6-4.9 2.6.9-5.7-4-4 5.4-.7L12 3z',
+    students: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm7-1a3 3 0 100-6m4 17v-2a4 4 0 00-3-3.9',
+    sessions: 'M4 5h16v14H4zM8 3v4m8-4v4M4 10h16'
+  } as const;
+  return <svg aria-hidden="true" className="h-4 w-4 text-neutral-textHelper md:h-5 md:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d={paths[type]} /></svg>;
+};
+
 const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studentId: string) => void }> = ({ alert, onOpenStudentProfile }) => {
   const palette = alert.type === 'critical'
     ? { card: 'bg-[#F8E1DA] border-[#EFC9BE]', icon: 'bg-[#9E3B2B] text-white', text: 'text-[#9E3B2B]', symbol: '!' }
@@ -111,7 +122,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
 
   const uniqueStudentsToday = useMemo(() => {
     const ids = new Set<string>();
-    todaySessions.forEach(s => s.students.forEach((_name, index) => ids.add(s.studentIds?.[index] || `${s.id}:${index}`)));
+    todaySessions.forEach(s => s.students.forEach((_name, index) => {
+      const id = s.studentIds?.[index];
+      if (id && s.attendancePolicyVersion === 2 && s.businessStateByStudentId?.[id]?.reservationState === 'cancelled') return;
+      ids.add(id || `${s.id}:${index}`);
+    }));
     return Array.from(ids);
   }, [todaySessions]);
 
@@ -256,28 +271,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
            <div className="group relative flex min-h-[7rem] cursor-pointer flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-soft md:min-h-[8rem] md:rounded-[26px] md:p-4"
              onClick={() => onNavigate(AppView.STUDENTS)}
              style={{ cursor: 'pointer' }}>
-             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="members" /></span>
              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Activos de membresía</p>
               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{globalStats.activeStudents}</span>
            </div>
              <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="payments" /></span>
              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Pendientes de pago</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{globalStats.pendingStudents}</span>
             </div>
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="bonuses" /></span>
              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Bonos agotándose</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{bonusAlerts.length}</span>
             </div>
            {/* Today's metrics */}
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="students" /></span>
              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Alumnos Hoy</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalAlumnos}</span>
             </div>
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 h-1.5 w-8 rounded-full bg-brand md:right-4 md:top-4" />
+             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="sessions" /></span>
              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Sesiones Hoy</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalSessions}</span>
            </div>
