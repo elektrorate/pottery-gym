@@ -253,10 +253,21 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 }
             };
 
+            // The roster is needed for the authoritative phase, but it is not
+            // required to paint the calendar shell. Start it in parallel so its
+            // RLS-heavy read cannot hold the first useful paint hostage.
+            const rosterPromise = traceSupabaseQuery('phase.critical.roster', Promise.all([
+                buildQuery('session_students', undefined, undefined, undefined, {
+                    columns: 'session_id,student_id,student_name,attendance,gift_card_id,manual_credit_id',
+                    exactCount: false
+                }),
+                buildQuery('session_activity_blocks'), buildQuery('session_activity_block_students')
+            ]));
+
             // Phase 1: only the data required to render the dashboard/calendar.
-            // Secondary domains are intentionally loaded below so inventory and
-            // gift-card history cannot delay the first useful paint.
-            const [membershipStudentsRes, temporalStudentsRes, teachersRes, sessionsRes, sessionStudentsRes, activityBlocksRes, activityBlockStudentsRes] = await traceSupabaseQuery(
+            // Secondary domains and the roster are intentionally loaded below so
+            // they cannot delay the first useful paint.
+            const [membershipStudentsRes, temporalStudentsRes, teachersRes, sessionsRes] = await traceSupabaseQuery(
                 'phase.critical.snapshot',
                 Promise.all([
                     // The first paint only needs a small, predictable page of
@@ -267,12 +278,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     // compared with the membership history.
                     buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'membresia' }),
                     buildQuery('students', undefined, undefined, undefined, { exactCount: false, studentCategory: 'temporal' }),
-                    buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
-                    buildQuery('session_students', undefined, undefined, undefined, {
-                        columns: 'session_id,student_id,student_name,attendance,gift_card_id,manual_credit_id',
-                        exactCount: false
-                    }),
-                    buildQuery('session_activity_blocks'), buildQuery('session_activity_block_students')
+                    buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange)
                 ])
             );
 
@@ -282,36 +288,17 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (temporalStudentsRes.error) throw temporalStudentsRes.error;
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
-            if (sessionStudentsRes.error) throw sessionStudentsRes.error;
-            if (activityBlocksRes.error) throw activityBlocksRes.error;
-            if (activityBlockStudentsRes.error) throw activityBlockStudentsRes.error;
-            // Membership projections are validated in phase 2. The calendar
-            // snapshot only needs the base student identity and roster data.
+            // Membership projections and roster data are validated in phase 2;
+            // the first paint only needs base student identity and sessions.
             const normalizedStudents: Student[] = [...(membershipStudentsRes.data || []), ...(temporalStudentsRes.data || [])]
                 .map(mapStudentRowToModel);
 
-            // Normalize session students
-            const sessionStudentsMap: Record<string, any[]> = {};
-            (sessionStudentsRes.data || []).forEach((row: any) => {
-                if (!sessionStudentsMap[row.session_id]) sessionStudentsMap[row.session_id] = [];
-                sessionStudentsMap[row.session_id].push(row);
-            });
-            const activityBlockStudentsMap: Record<string, any[]> = {};
-            const activityBlocksById = new Map((activityBlocksRes.data || []).map((row: any) => [row.id, row] as const));
-            const sessionsById = new Map((sessionsRes.data || []).map((row: any) => [row.id, row] as const));
-            (activityBlockStudentsRes.data || []).forEach((row: any) => {
-                const block = activityBlocksById.get(row.block_id);
-                const session = sessionsById.get(row.session_id);
-                if (!block || block.session_id !== row.session_id || (session && block.sede_id !== session.sede_id)
-                    || !sessionStudentsMap[row.session_id]?.some(item => item.student_id === row.student_id)) {
-                    throw new Error('El roster de actividades no coincide con el bloque, la sede o el alumno de la sesion. Recarga los datos.');
-                }
-                (activityBlockStudentsMap[row.block_id] ||= []).push(row);
-            });
-            const activityBlocksMap: Record<string, any[]> = {};
-            (activityBlocksRes.data || []).forEach((row: any) => {
-                (activityBlocksMap[row.session_id] ||= []).push(row);
-            });
+            // These maps are filled by the parallel roster promise before phase 2
+            // builds the authoritative sessions. The shell intentionally starts
+            // with empty rosters and receives the enriched sessions later.
+            let sessionStudentsMap: Record<string, any[]> = {};
+            let activityBlockStudentsMap: Record<string, any[]> = {};
+            let activityBlocksMap: Record<string, any[]> = {};
 
             // Capacity configuration is secondary; use stable defaults for the
             // first calendar render and replace them after the background load.
@@ -442,7 +429,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // usable first paint or show the global "no data" error.
             try {
                 // Phase 2 is authoritative: full history, business state, funding and owner identity.
-                const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes] = await Promise.all([
+                const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes, rosterRes] = await Promise.all([
                 buildQuery('students'), buildQuery('sessions'), buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
                 buildQuery('session_activity_business_state', undefined, undefined, undefined, {
@@ -451,16 +438,38 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 readAllRows((offset, size) => withTimeout('sedes.owner.select',
                     supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session!.user.id).eq('is_active', true)
                         .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
-                buildQuery('student_credit_profile'), buildQuery('gift_cards')
+                buildQuery('student_credit_profile'), buildQuery('gift_cards'), rosterPromise
             ]);
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud mas reciente.');
             requireScope();
             if (sessionContractRes.error || giftContractRes.error) {
                 throw new Error('El backend no tiene los contratos de bonos y asistencia atomica. Requiere una actualizacion coordinada autorizada.');
             }
-            for (const result of [fullStudentsRes, fullSessionsRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes]) {
+            for (const result of [fullStudentsRes, fullSessionsRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes,
+                ...(rosterRes || [])]) {
                 if (result.error) throw result.error;
             }
+            const [rosterStudentsRes, activityBlocksRes, activityBlockStudentsRes] = rosterRes;
+            sessionStudentsMap = {};
+            (rosterStudentsRes.data || []).forEach((row: any) => {
+                (sessionStudentsMap[row.session_id] ||= []).push(row);
+            });
+            activityBlockStudentsMap = {};
+            activityBlocksMap = {};
+            const activityBlocksById = new Map((activityBlocksRes.data || []).map((row: any) => [row.id, row] as const));
+            const sessionsById = new Map((fullSessionsRes.data || []).map((row: any) => [row.id, row] as const));
+            (activityBlockStudentsRes.data || []).forEach((row: any) => {
+                const block = activityBlocksById.get(row.block_id);
+                const session = sessionsById.get(row.session_id);
+                if (!block || block.session_id !== row.session_id || (session && block.sede_id !== session.sede_id)
+                    || !sessionStudentsMap[row.session_id]?.some(item => item.student_id === row.student_id)) {
+                    throw new Error('El roster de actividades no coincide con el bloque, la sede o el alumno de la sesion. Recarga los datos.');
+                }
+                (activityBlockStudentsMap[row.block_id] ||= []).push(row);
+            });
+            (activityBlocksRes.data || []).forEach((row: any) => {
+                (activityBlocksMap[row.session_id] ||= []).push(row);
+            });
             const fullSessions = (fullSessionsRes.data || []).map(mapSession);
             const sessionIds = new Set(fullSessions.map(item => item.id));
             const businessBySession: Record<string, any[]> = {};
