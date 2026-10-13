@@ -463,7 +463,7 @@ Reglas:
 
 ### Tipo de alumno y actividad
 
-## Estado de este subpunto: APROBADO
+## Estado de este subpunto: CERRADO / APROBADO
 
 **APROBADO:** existen tres tipos de alumno:
 
