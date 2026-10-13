@@ -56,7 +56,6 @@ interface DataContextType {
     renewStudent: (intent: RenewalIntent) => Promise<void>;
     confirmMembershipPayment: (studentId: string, periodId: string) => Promise<void>;
     activateMembership: (studentId: string) => Promise<void>;
-    initializeLegacyMemberships: () => Promise<{ initialized: number; failed: number }>;
     adjustMembershipClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
     approveStudentManualCredit: (intent: ManualCreditIntent) => Promise<void>;
     settlePendingStudentPenalty: (intent: PenaltySettlementIntent) => Promise<void>;
@@ -571,29 +570,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     });
     const renewStudent = async (intent: RenewalIntent) => { await membership.renew(intent); };
     const activateMembership = async (id: string) => { await membership.activate(id); };
-    const initializeLegacyMemberships = async () => {
-        requireBusinessData();
-        const legacyMemberships = studentsRef.current.filter(student =>
-            (student.studentCategory || 'membresia') === 'membresia'
-            && !student.effectivePeriodId
-            && !student.materializedPeriodId
-            && !student.membershipPeriods?.length
-        );
-        let initialized = 0;
-        let failed = 0;
-        for (const student of legacyMemberships) {
-            try {
-                requireBusinessData();
-                const result = await withTimeout('activate_student_membership', supabase.rpc('activate_student_membership', { student_id: student.id }));
-                if (result.error || !result.data) failed++;
-                else initialized++;
-            } catch {
-                failed++;
-            }
-        }
-        if (legacyMemberships.length > 0) await safeReload();
-        return { initialized, failed };
-    };
     const confirmMembershipPayment = async (id: string, periodId: string) => {
         requireBusinessData();
         if (!studentsRef.current.find(student => student.id === id)?.membershipPeriods?.some(period => period.id === periodId)) {
@@ -807,7 +783,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         workshopScheduleExceptions: loadedScope === scope ? workshopScheduleExceptions : [],
         capacityDefaults: loadedScope === scope ? capacityDefaults : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })),
         isLoadingData: loadedScope !== scope || isLoadingData, businessDataReady: loadedScope === scope && businessDataReady, loadError: loadedScope === scope ? loadError : null,
-        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, initializeLegacyMemberships, adjustMembershipClasses,
+        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
         approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
         getPendingStudentCreditOperation, retryPendingStudentCreditOperation,
         addSession, updateSession, deleteSession,

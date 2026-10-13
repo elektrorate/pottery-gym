@@ -12,7 +12,7 @@ const StudentsPage: React.FC = () => {
         addStudent,
         updateStudent,
         deleteStudent,
-        renewStudent, confirmMembershipPayment, activateMembership, initializeLegacyMemberships, adjustMembershipClasses, canAdjustMembershipClasses,
+        renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses, canAdjustMembershipClasses,
         approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
         getPendingStudentCreditOperation, retryPendingStudentCreditOperation, loadAllData, loadError,
         isLoadingData, businessDataReady
@@ -52,7 +52,6 @@ const StudentsPage: React.FC = () => {
             onRenew={renewStudent}
             onConfirmPayment={confirmMembershipPayment}
             onActivateMembership={activateMembership}
-            onInitializeLegacyMemberships={initializeLegacyMemberships}
             onAdjustClasses={adjustMembershipClasses}
             canAdjustClasses={canAdjustMembershipClasses}
             onApproveManualCredit={approveStudentManualCredit}

@@ -14,7 +14,6 @@ interface StudentListProps {
   onRenew: (intent: RenewalIntent) => Promise<void>;
   onConfirmPayment: (studentId: string, periodId: string) => Promise<void>;
   onActivateMembership: (studentId: string) => Promise<void>;
-  onInitializeLegacyMemberships?: () => Promise<{ initialized: number; failed: number }>;
   onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
   canAdjustClasses?: boolean;
   onUpdate: (id: string, updates: Partial<Student>) => Promise<void>;
@@ -244,7 +243,7 @@ const StudentList: React.FC<StudentListProps> = ({
   detailsLoading = false,
   onAddStudent,
   onRenew,
-  onConfirmPayment, onActivateMembership, onInitializeLegacyMemberships, onAdjustClasses, canAdjustClasses = true,
+  onConfirmPayment, onActivateMembership, onAdjustClasses, canAdjustClasses = true,
   onUpdate,
   onDeleteStudent,
   selectedStudentId,
@@ -258,8 +257,6 @@ const StudentList: React.FC<StudentListProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('membresia');
   const [visibleLimit, setVisibleLimit] = useState(50);
   const [membershipTierFilter, setMembershipTierFilter] = useState<MembershipTierFilter>('todos');
-  const [showLegacyInitialization, setShowLegacyInitialization] = useState(false);
-  const [initializingLegacy, setInitializingLegacy] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showPersonalInfo, setShowPersonalInfo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -548,11 +545,6 @@ const StudentList: React.FC<StudentListProps> = ({
     });
     return counts;
   }, [students, today]);
-  const legacyMembershipCount = useMemo(() => students.filter(student =>
-    (student.studentCategory || 'membresia') === 'membresia'
-    && !student.effectivePeriodId && !student.materializedPeriodId && !student.membershipPeriods?.length
-  ).length, [students]);
-
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[#F7F3EF] text-neutral-textMain" style={{ fontFamily: "'Outfit', sans-serif" }}>
       <div className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-6 lg:px-10 pt-5 sm:pt-7 pb-24">
@@ -594,11 +586,6 @@ const StudentList: React.FC<StudentListProps> = ({
               </div>
             </div>
           </section>
-
-          {legacyMembershipCount > 0 && onInitializeLegacyMemberships && <div className="mb-4 flex flex-col gap-2 rounded-lg border border-[#E8CABB] bg-[#FBF1EC] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[13px] text-[#7B3F22]">Hay {legacyMembershipCount} membresías antiguas sin período inicializado.</p>
-            <button type="button" onClick={() => setShowLegacyInitialization(true)} className="min-h-10 shrink-0 rounded-md bg-[#7B3F22] px-3 py-2 text-[12px] font-bold text-white hover:bg-[#63321C]">Inicializar períodos</button>
-          </div>}
 
            <div className="bg-white border border-[#DDBFA4] rounded-xl overflow-hidden">
              <div className="hidden md:grid grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-4 px-5 py-3 border-b border-[#EDE2D8] text-[12px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E]"><span>Alumno</span><span>Actividad</span><span>Bonos</span><span>Estado</span></div>
@@ -745,17 +732,6 @@ const StudentList: React.FC<StudentListProps> = ({
           <div className="absolute bottom-0 left-0 right-0 px-4 sm:px-7 py-3 bg-[#FDFBF9]/95 backdrop-blur border-t border-[#E6D8CB] flex items-center justify-end gap-3 shrink-0 z-10"><button type="button" onClick={() => setShowModal(false)} className="h-10 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E] hover:text-[#7B3F22]">Cancelar</button><button onClick={handleSubmit} disabled={isSubmitting} className="h-10 px-4 sm:px-5 bg-[#7B3F22] text-white rounded-md text-[11px] font-bold uppercase tracking-[0.1em] hover:bg-[#63321C] transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? 'Guardando...' : (editingStudent ? 'Guardar cambios' : 'Guardar alumno')}</button></div>
         </div>
       </div>}
-      <ConfirmModal isOpen={showLegacyInitialization} title="¿Inicializar períodos?" message={`Se crearán los períodos de membresía para ${legacyMembershipCount} alumnos antiguos. No se modifican pagos ni bonos existentes.`} confirmText="Inicializar" isDestructive={false} loading={initializingLegacy} loadingText="Inicializando..." onCancel={() => { if (!initializingLegacy) setShowLegacyInitialization(false); }} onConfirm={async () => {
-        if (!onInitializeLegacyMemberships || initializingLegacy) return;
-        setInitializingLegacy(true);
-        try {
-          const result = await onInitializeLegacyMemberships();
-          setShowLegacyInitialization(false);
-          if (result.failed > 0) showError(`Se inicializaron ${result.initialized} períodos; ${result.failed} requieren revisión.`);
-        } catch (error: any) { showError(error?.message || 'No se pudieron inicializar los períodos.'); }
-        finally { setInitializingLegacy(false); }
-      }} />
-
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory === 'temporal' ? 'Bonos temporales' : 'Membresía'}. Se ajustarán sus bonos y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y los bonos contratados.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />
         <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo con la acción Reactivar alumno manualmente, sin renovar ni confirmar un pago." confirmText="Archivar" isDestructive={false} onConfirm={async () => { if (studentToArchive && !isSubmitting) { setIsSubmitting(true); try { await onUpdate(studentToArchive, { archivedAt: getWorkshopDate() }); setStudentToArchive(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo archivar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToArchive(null)} />
