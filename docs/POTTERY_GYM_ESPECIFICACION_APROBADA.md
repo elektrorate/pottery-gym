@@ -428,6 +428,8 @@ La definición exacta de qué campos son obligatorios u opcionales se cerrará d
 
 ### Tipo de alumno y estado
 
+## Estado de este subpunto: APROBADO
+
 **APROBADO:** distinguir tres tipos de relación del alumno con el taller:
 
 ```text
