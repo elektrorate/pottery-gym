@@ -2,7 +2,8 @@ import React, { createContext, useContext } from 'react';
 
 export const initialAuth = { session: { user: { id: 'owner-a' }, access_token: 'token-a' }, sedeId: 'sede-a', isSuperAdmin: false };
 export const TestAuthContext = createContext(initialAuth);
-export const useAuth = () => useContext(TestAuthContext);
+let currentAuth = initialAuth;
+export const useAuth = () => { currentAuth = useContext(TestAuthContext); return currentAuth; };
 
 export const clientCalls: any[] = [];
 export const clientResponses: any[] = [];
@@ -10,7 +11,7 @@ class Query {
   private request: any;
   private signal?: AbortSignal;
   constructor(table?: string, name?: string, args?: any) {
-    this.request = table ? { table, filters: [], orders: [] } : { name, args };
+    this.request = table ? { table, filters: [], orders: [], scope: { sedeId: currentAuth.sedeId, isSuperAdmin: currentAuth.isSuperAdmin } } : { name, args };
   }
   select(columns = '*', options?: any) { this.request.columns = columns; this.request.count = options?.count; return this; }
   eq(key: string, value: any) { this.request.filters.push(['eq', key, value]); return this; }

@@ -15,6 +15,7 @@
     "test:sql:domain-read": "node supabase/tests/run-domain-read.mjs",
     "test:sql:policy": "node supabase/tests/run-session-business-policy.mjs",
     "test:sql:manual-credits": "node supabase/tests/run-manual-credit-reconciliation-settlement.mjs",
+    "test:sql:mixed-sessions": "node supabase/tests/run-atomic-mixed-session-integrity.mjs",
     "staging:setup": "node scripts/local-staging-setup.mjs",
     "staging:policy-setup": "node scripts/local-staging-policy-setup.mjs",
     "staging:restore-rehearsal": "node scripts/local-staging-restore-rehearsal.mjs",

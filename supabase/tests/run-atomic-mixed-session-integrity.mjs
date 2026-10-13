@@ -1,4 +1,4 @@
-import { execFileSync, execFile } from 'node:child_process';
+import { execFileSync, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
@@ -80,35 +80,79 @@ try {
   console.log(`PASS: mixed integrity fixture: ${mixedCounts.assertions} SQL assertions (${mixedCounts.expectedDenials} expected denials)`);
   const identity = "set request.jwt.claim.sub='00000000-0000-0000-0000-000000000001'; set request.jwt.claim.role='authenticated';";
   const query = sql => run(['-c', identity + sql]);
-  const tx = sql => query(`begin; set local role authenticated; ${sql}; select pg_sleep(0.2); commit;`);
+  const raceLocked = async (session, statements) => {
+    const blocker = spawn('docker', [...psql, '-d', 'postgres'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = ''; let stderr = ''; let resolveReady; let rejectReady;
+    const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+    const closed = new Promise((resolve, reject) => {
+      blocker.stdout.on('data', chunk => { stdout += chunk; if (stdout.includes('MIXED_PARENT_LOCKED')) resolveReady(); });
+      blocker.stderr.on('data', chunk => { stderr += chunk; });
+      blocker.on('error', error => { rejectReady(error); reject(error); });
+      blocker.on('close', code => {
+        if (code === 0) resolve(capture({ stdout, stderr }));
+        else { const error = Object.assign(new Error(`Mixed lock holder exited ${code}`), { stdout, stderr }); rejectReady(error); reject(error); }
+      });
+    });
+    let results;
+    try {
+      const sessions = Array.isArray(session) ? session : [session];
+      blocker.stdin.write(`begin; select 1 from public.sessions where id in(${sessions.map(n => `public.business_id(2,${n})`).join(',')}) order by id for update; select 'MIXED_PARENT_LOCKED';\n`);
+      await ready;
+      const names = statements.map(() => `atomic-mixed-race-${randomUUID()}`);
+      results = Promise.allSettled(statements.map((sql, i) => query(`set application_name='${names[i]}'; begin;
+        set local role authenticated; ${sql}; select pg_sleep(0.2); commit;`)));
+      let waiting = false;
+      for (let i = 0; i < 50; i++) {
+        const state = await query(`select count(*) from pg_stat_activity where application_name in(${names.map(n => `'${n}'`).join(',')}) and wait_event_type='Lock';`);
+        if (Number(state.stdout.trim()) === statements.length) { waiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.ok(waiting, 'Every mixed race participant must actually wait before the barrier is released');
+      blocker.stdin.end('commit;\n'); await closed;
+      return await results;
+    } finally {
+      if (!blocker.stdin.writableEnded) blocker.stdin.end('rollback;\n');
+      await closed; if (results) await results;
+    }
+  };
   const block = `(select id from public.session_activity_blocks where session_id=public.business_id(2,530) and activity_type='mesa')`;
   const empty = `(select id from public.session_activity_blocks where session_id=public.business_id(2,530) and activity_type='torno')`;
-  const seat = student => tx(`select public.mix_save(530,${student},1,array[530,${student}],jsonb_build_array(
-    public.mix_block('mesa',null,1,array[530,${student}],${block}),public.mix_block('torno',null,1,'{}',${empty})),'{}','{}',20)`);
-  const overbooked = await Promise.allSettled([seat(531), seat(532)]); races++;
+  const seat = student => `select public.mix_save(530,${student},1,array[530,${student}],jsonb_build_array(
+    public.mix_block('mesa',null,1,array[530,${student}],${block}),public.mix_block('torno',null,1,'{}',${empty})),'{}','{}',20)`;
+  const overbooked = await raceLocked(530,[seat(531), seat(532)]); races++;
   assert.equal(overbooked.filter(x => x.status === 'fulfilled').length, 0);
   for (const result of overbooked) assert.match(result.reason.stderr, /Activity block capacity exceeded/);
   raceRejections += 2;
   await query(`select public.atomic_assert(revision=1,'independent block overbooking attempts never consume global spare capacity')
     from public.sessions where id=public.business_id(2,530);`);
-  const edit = key => tx(`select public.mix_save(530,${key},1,array[530],jsonb_build_array(
-    public.mix_block('mesa',null,1,array[530],${block}),public.mix_block('torno',null,1,'{}',${empty})),'{}','{}',20)`);
-  const same = await Promise.all([edit(800), edit(800)]); races++;
-  assert.ok(same.some(x => x.stdout.includes('"replayed": true')));
-  const parallel = await Promise.allSettled([
-    tx(`select public.mix_save(530,801,2,array[530,531],jsonb_build_array(public.mix_block('mesa',null,1,array[530],${block}),
-      public.mix_block('torno',null,1,array[531],${empty})),'{}','{}',20)`),
-    tx(`select public.mix_save(530,802,2,array[530,532],jsonb_build_array(public.mix_block('mesa',null,1,array[530],${block}),
-      public.mix_block('torno',null,1,array[532],${empty})),'{}','{}',20)`)
+  const edit = key => `select public.mix_save(530,${key},1,array[530],jsonb_build_array(
+    public.mix_block('mesa',null,1,array[530],${block}),public.mix_block('torno',null,1,'{}',${empty})),'{}','{}',20)`;
+  const same = await raceLocked(530,[edit(800), edit(800)]); races++;
+  assert.ok(same.every(x => x.status === 'fulfilled'));
+  assert.ok(same.some(x => x.value.stdout.includes('"replayed": true')));
+  const parallel = await raceLocked(530,[
+    `select public.mix_save(530,801,2,array[530,531],jsonb_build_array(public.mix_block('mesa',null,1,array[530],${block}),
+      public.mix_block('torno',null,1,array[531],${empty})),'{}','{}',20)`,
+    `select public.mix_save(530,802,2,array[530,532],jsonb_build_array(public.mix_block('mesa',null,1,array[530],${block}),
+      public.mix_block('torno',null,1,array[532],${empty})),'{}','{}',20)`
   ]); races++;
   assert.equal(parallel.filter(x => x.status === 'fulfilled').length, 1);
   assert.match(parallel.find(x => x.status === 'rejected').reason.stderr, /Stale session revision/); raceRejections++;
-  const finals = await Promise.all([tx("select public.mix_attend(533,803,1,array[533],array['present'])"),
-    tx("select public.mix_attend(533,803,1,array[533],array['present'])")]); races++;
-  assert.ok(finals.some(x => x.stdout.includes('"replayed": true')));
+  const finals = await raceLocked(533,["select public.mix_attend(533,803,1,array[533],array['present'])",
+    "select public.mix_attend(533,803,1,array[533],array['present'])"]); races++;
+  assert.ok(finals.every(x => x.status === 'fulfilled'));
+  assert.ok(finals.some(x => x.value.stdout.includes('"replayed": true')));
   await query(`select public.atomic_assert(count(*)=1,'duplicate mixed finalization has one original debit')
     from public.session_credit_movements where session_id=public.business_id(2,533);
-    select public.atomic_assert(count(*)=0,'no atomic writer capability leaks after race commits') from private.mixed_session_writers;`);
+     select public.atomic_assert(count(*)=0,'no atomic writer capability leaks after race commits') from private.mixed_session_writers;`);
+  const lastCredit = await raceLocked([534,535],["select public.mix_attend(534,804,1,array[534],array['absent'])",
+    "select public.mix_attend(535,805,1,array[534],array['absent'])"]); races++;
+  assert.ok(lastCredit.every(x => x.status === 'fulfilled'));
+  await query(`select public.atomic_assert(remaining_classes=0,'different mixed parents serialize the same last manual UUID without overspending')
+      from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(534,534);
+    select public.atomic_assert(count(*) filter(where state='charged')=1 and count(*) filter(where state='pending')=1,
+      'different-parent last-credit race creates one original debit and one pending original-source incident')
+      from public.session_business_penalties where session_id in(public.business_id(2,534),public.business_id(2,535));`);
 
   // Execute the complete previous runner in a generated disposable adapter. Only
   // additive roster shape and reservation arity expectations are adapted; no behavioral assertion changes.
@@ -133,6 +177,11 @@ try {
   previous = replaceOnce(previous, "await input(business, 'manual_policy_regression');",
     `business = business.replace('\\\\i /tmp/manual-policy.sql', ${JSON.stringify(`\\i /tmp/manual-policy.sql\n${includes}`)});\n  await input(business, 'manual_policy_regression');`);
   previous = replaceOnce(previous, "'--network=none', '--name'", "'--network=none', '--label', 'opencode.test=atomic-mixed-regression', '--name'");
+  previous = replaceOnce(previous, "if (container) docker('rm', '-f', container);", `if (container) {
+    assert.equal(docker('inspect', container, '--format', '{{index .Config.Labels "opencode.test"}}').trim(), 'atomic-mixed-regression');
+    assert.equal(docker('inspect', container, '--format', '{{.Image}}').trim(), ${JSON.stringify(image)});
+    docker('rm', '-f', container);
+  }`);
   previous = replaceOnce(previous,
     "const migrations = readdirSync(path('supabase/migrations')).filter(name => /^\\d+_.*\\.sql$/.test(name)).sort();",
     `const migrations = readdirSync(path('supabase/migrations')).filter(name => /^\\d+_.*\\.sql$/.test(name) && name <= '${migration}').sort();`);
@@ -141,6 +190,7 @@ try {
   appendFileSync(log, '\nFULL PREVIOUS REGRESSION WITH MIXED FOLLOW-UP ACTIVE\n' + regression.stdout + regression.stderr);
   process.stdout.write(regression.stdout); process.stderr.write(regression.stderr);
   const previousCounts = JSON.parse(readFileSync(join(temporary, 'manual-credit-test-summary.json'), 'utf8'));
+  appendFileSync(log, '\nCOMPLETE ACTIVE PRIOR SQL OUTPUT\n' + readFileSync(join(temporary, 'manual-credit-test-output.log'), 'utf8'));
   assert.equal(previousCounts.assertions, 837);
   assert.equal(previousCounts.migrations, 30);
   // Later, independently authored business-rule migrations are not structural
@@ -182,7 +232,7 @@ try {
   const summary = { version, image, ownAssertions: assertions, ownExpectedDenials: denials, mixedFixture: mixedCounts,
     mixedRaces: races, expectedRaceRejections: raceRejections, previousRegression: previousCounts,
     totalSqlAssertions: assertions + previousCounts.assertions, workspaceColdMigrations: workspaceMigrations.length,
-    policyBoundary: migration };
+    policyBoundary: migration, policy1MixedAttendance: 'Fresh requests rejected before V1 dispatch; authorized exact old receipts replay only' };
   writeFileSync(join(output, 'atomic-mixed-test-summary.json'), JSON.stringify(summary, null, 2) + '\n');
   console.log(`PASS: ${assertions} own SQL assertions (${denials} expected denials), ${races} mixed races, plus ${previousCounts.assertions} prior assertions with follow-up active; 30-migration policy boundary and ${workspaceMigrations.length}-migration workspace cold chain`);
   console.log(`Full output: ${log}\nContract: ${join(output, 'atomic-mixed-contract.json')}`);

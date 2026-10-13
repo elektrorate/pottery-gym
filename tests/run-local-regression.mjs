@@ -11,7 +11,7 @@ const files = [
   'domain-read', 'session-atomic-ops', 'attendance-history',
   'gift-card-ui', 'calendar-atomic-ui', 'dashboard-integrity-ui', 'business-policy-ui', 'session-policy-ops',
   'student-credit-ui', 'student-credit-ops', 'student-credit-projection', 'session-manual-credit-ops', 'calendar-manual-credit-ui',
-  'data-pagination', 'data-provider-integrity', 'auth-provider-integrity', 'operation-scope-integrity'
+  'data-pagination', 'data-provider-integrity', 'auth-provider-integrity', 'operation-scope-integrity', 'mixed-session-ops'
 ].map(name => `tests/e2e/${name}.spec.ts`);
 const root = fileURLToPath(new URL('../', import.meta.url));
 const server = await createServer({ root, cacheDir: path.join(root, 'node_modules', '.cache', 'local-regression-vite'), configFile: false, envDir: false, plugins: [react()],

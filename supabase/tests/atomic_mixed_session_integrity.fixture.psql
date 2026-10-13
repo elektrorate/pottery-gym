@@ -21,7 +21,43 @@ insert into public.session_activity_blocks(id,session_id,sede_id,activity_type,c
 insert into public.session_activity_block_students(block_id,session_id,student_id)
   values(public.business_id(7,490),public.business_id(2,490),public.business_id(1,490));
 select public.save_session_attendance(public.business_id(2,490),public.business_id(6,491),1,public.business_attendance(490,'present'),true,null);
+-- Real policy1 parents predate policy2. The preceding mixed migration permits their conversion.
+insert into public.students(id,sede_id,full_name,name,student_category,membership_tier)
+  values(public.business_id(1,480),public.business_id(3,1),'Policy1 Mixed Paid Member','Policy1 Mixed','membresia','gold');
+select public.confirm_student_membership_payment(current_membership_period_id) from public.students where id=public.business_id(1,480);
 reset role;
+insert into public.sessions(id,sede_id,date,start_time,end_time,class_type,capacity,attendance_policy_version)
+  select public.business_id(2,n),public.business_id(3,1),public.business_metadata(5,(n-480)*2+6)->>'date',
+    (public.business_metadata(5,(n-480)*2+6)->>'start_time')::timestamptz,
+    (public.business_metadata(5,(n-480)*2+6)->>'end_time')::timestamptz,'mesa',1,1 from generate_series(480,482) n;
+set role authenticated;
+select public.save_session_reservation(public.business_id(2,480),public.business_id(6,480),0,public.business_id(3,1),
+  public.business_metadata(5,6,1)||'{"class_type":"mixto"}',array[public.business_id(1,480)],'{}','{}');
+select public.save_session_reservation(public.business_id(2,481),public.business_id(6,481),0,public.business_id(3,1),
+  public.business_metadata(5,8,1)||'{"class_type":"mixto"}',array[public.business_id(1,480)],'{}','{}');
+select public.save_session_reservation(public.business_id(2,482),public.business_id(6,482),0,public.business_id(3,1),
+  public.business_metadata(5,10,1),array[public.business_id(1,480)],'{}','{}');
+select public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'present'),true,null);
+select public.atomic_assert(st.classes_remaining=3 and p.payment_status='paid' and st.archived_at is null
+  and private.membership_today()+5 between p.starts_on and p.ends_on,
+  'pre-follow-up policy1 mixed reproducer has known positive paid unarchived valid original membership')
+  from public.students st join public.student_membership_periods p on p.id=st.current_membership_period_id where st.id=public.business_id(1,480);
+select public.save_session_reservation(public.business_id(2,483),public.business_id(6,483),0,public.business_id(3,1),
+  public.business_metadata(5,2,1)||'{"class_type":"mixto"}',array[public.business_id(1,490)],'{}','{}');
+select public.save_session_reservation(public.business_id(2,484),public.business_id(6,484),0,public.business_id(3,1),
+  public.business_metadata(5,4,1)||'{"class_type":"mixto"}',array[public.business_id(1,490)],'{}','{}');
+reset role;
+-- The old single-column FKs permit these historic cross-sede teacher/block anomalies.
+insert into public.session_activity_blocks(id,session_id,sede_id,activity_type,teacher_id,capacity) values
+  (public.business_id(7,483),public.business_id(2,483),public.business_id(3,1),'mesa','70000000-0000-0000-0000-000000000001',1),
+  (public.business_id(7,484),public.business_id(2,484),public.business_id(3,2),'mesa',null,1);
+insert into public.session_activity_block_students(block_id,session_id,student_id) values
+  (public.business_id(7,483),public.business_id(2,483),public.business_id(1,490)),
+  (public.business_id(7,484),public.business_id(2,484),public.business_id(1,490));
+update public.session_students set activity_type='mesa' where session_id in(public.business_id(2,483),public.business_id(2,484));
+create table public.mixed_policy1_receipt_before as select to_jsonb(r) raw from public.session_operation_receipts r
+  where session_id=public.business_id(2,481) and request_key=public.business_id(6,1481);
+grant select on public.mixed_policy1_receipt_before to authenticated;
 create table public.mixed_history_before as
   select 'students' kind,to_jsonb(t) raw from public.students t
   union all select 'sessions',to_jsonb(t) from public.sessions t
@@ -116,6 +152,72 @@ declare before text:=public.mixed_fingerprint(); begin
   perform public.atomic_assert(before=public.mixed_fingerprint(),'mixed failure rolls back complete public/private financial/history fingerprint');
 end $$;
 set role authenticated;
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'present'),true,null)$q$,
+  'Fresh attendance is unsupported for historical policy1 mixed sessions');
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'present'),false,null)$q$,
+  'Fresh attendance is unsupported for historical policy1 mixed sessions');
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'absent'),true,null)$q$,
+  'Fresh attendance is unsupported for historical policy1 mixed sessions');
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,481),gen_random_uuid(),2,public.business_attendance(480,'absent'),true,null)$q$,
+  'Fresh attendance is unsupported for historical policy1 mixed sessions');
+reset role;
+select public.atomic_assert(st.classes_remaining=3 and s.attendance_policy_version=1 and s.class_type='mixto'
+  and s.revision=1 and s.completed_at is null and e.attendance='pending' and e.activity_type is null
+  and not exists(select 1 from public.session_credit_movements where session_id=s.id)
+  and not exists(select 1 from public.session_operation_receipts where session_id=s.id and operation='attendance')
+  and not exists(select 1 from public.session_business_events where session_id=s.id)
+  and not exists(select 1 from private.mixed_session_reservations where session_id=s.id),
+  'fresh policy1 mixed rejection preserves budget, historical policy, pending roster, receipts, events and missing provenance')
+  from public.sessions s join public.session_students e on e.session_id=s.id join public.students st on st.id=e.student_id where s.id=public.business_id(2,480);
+set role authenticated;
+select public.atomic_assert(public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,
+  public.business_attendance(480,'present'),true,null)->>'replayed'='true'
+  and public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,
+    public.business_attendance(480,'present'),true,null)-'replayed'=(b.raw->'result')-'replayed',
+  'authorized exact pre-follow-up policy1 mixed attendance receipt replays its original stable snapshot')
+  from public.mixed_policy1_receipt_before b;
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'absent'),true,null)$q$,
+  'Idempotency key conflicts with original session intent');
+select public.mix_reject($q$select private.save_session_attendance_before_atomic_mixed(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'present'),true,null)$q$,
+  'permission denied%','42501');
+select public.mix_reject($q$select private.save_session_attendance_v1(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'present'),true,null)$q$,
+  'permission denied%','42501');
+set request.jwt.claim.sub='01000000-0000-0000-0000-000000000001';
+select public.atomic_assert(public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'present'),true,null)->>'replayed'='true',
+  'actual sede employee may replay the exact historical policy1 mixed receipt without new writes');
+select public.mix_reject($q$select private.save_session_attendance_before_manual(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'present'),true,null)$q$,
+  'permission denied%','42501');
+set request.jwt.claim.sub='01000000-0000-0000-0000-000000000002';
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'present'),true,null)$q$,
+  'Session not accessible','42501');
+set request.jwt.claim.sub='01000000-0000-0000-0000-000000000004';
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'present'),true,null)$q$,
+  'Session not accessible','42501');
+set request.jwt.claim.sub='01000000-0000-0000-0000-000000000005';
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'present'),true,null)$q$,
+  'Session not accessible','42501');
+reset role;
+begin;
+delete from public.sede_members where user_id=public.business_id(0,3);
+set local role authenticated;
+set local request.jwt.claim.sub='01000000-0000-0000-0000-000000000003';
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,481),public.business_id(6,1481),1,public.business_attendance(480,'present'),true,null)$q$,
+  'Session not accessible','42501');
+rollback;
+set role service_role;
+select public.mix_reject($q$select private.save_session_attendance_before_atomic_mixed(public.business_id(2,480),gen_random_uuid(),1,public.business_attendance(480,'present'),true,null)$q$,
+  'permission denied%','42501');
+set role authenticated;
+set request.jwt.claim.sub='00000000-0000-0000-0000-000000000001';
+select public.atomic_assert(to_jsonb(r)=b.raw and st.classes_remaining=3 and (select count(*) from public.session_credit_movements where session_id=r.session_id)=1,
+  'old policy1 mixed receipt and original single debit survive authorized replays and denied actor/private bypass attempts unchanged')
+  from public.session_operation_receipts r cross join public.mixed_policy1_receipt_before b cross join public.students st
+  where r.session_id=public.business_id(2,481) and r.request_key=public.business_id(6,1481) and st.id=public.business_id(1,480);
+select public.save_session_attendance(public.business_id(2,482),public.business_id(6,1482),1,public.business_attendance(480,'present'),true,null);
+select public.atomic_assert(st.classes_remaining=2 and s.attendance_policy_version=1 and s.class_type='mesa'
+  and s.completed_at is not null and (select count(*) from public.session_credit_movements where session_id=s.id)=1,
+  'classic policy1 fresh attendance retains its shipped paid-membership debit behavior')
+  from public.sessions s join public.students st on st.id=public.business_id(1,480) where s.id=public.business_id(2,482);
 select public.atomic_assert(public.save_session_reservation(public.business_id(2,490),public.business_id(6,490),0,public.business_id(3,1),
   public.business_metadata(5,8,1)||'{"class_type":"mixto"}',array[public.business_id(1,490)],'{}','{}')->>'replayed'='true',
   'authorized old eight-argument mixed receipt replays unchanged despite unknown provenance');
@@ -123,6 +225,13 @@ select public.mix_reject($q$select public.save_session_attendance(public.busines
   'Mixed activity assignment requires reconciliation');
 select public.atomic_assert(not activity_source_verified and funding_activity_type is null,'old mixed projections do not claim an inferred financial activity')
   from public.session_activity_business_state where session_id=public.business_id(2,490);
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,483),gen_random_uuid(),1,public.business_attendance(490,'present'),true,null)$q$,
+  'Mixed activity assignment requires reconciliation');
+select public.mix_reject($q$select public.save_session_attendance(public.business_id(2,484),gen_random_uuid(),1,public.business_attendance(490,'present'),true,null)$q$,
+  'Mixed activity assignment requires reconciliation');
+select public.atomic_assert(count(*)=2 and bool_and(not activity_source_verified and funding_activity_type is null),
+  'NOT VALID historic block/teacher sede anomalies remain preserved but fail closed in financial projections')
+  from public.session_activity_business_state where session_id in(public.business_id(2,483),public.business_id(2,484));
 insert into public.students(id,sede_id,full_name,name,student_category,membership_tier,classes_remaining,payment_status)
   select public.business_id(1,n),public.business_id(3,1),'Atomic Mixed '||n,'Atomic Mixed '||n,
     case when n in(500,510) then 'membresia' else 'temporal' end,case when n in(500,510) then 'gold' end,0,null
@@ -136,7 +245,7 @@ insert into public.gift_cards(id,sede_id,recipient,recipient_student_id,num_clas
     (public.business_id(4,505),public.business_id(3,1),'Atomic Mixed 505',public.business_id(1,505),3,'torno',private.membership_today()+2,'paid'),
     (public.business_id(4,506),public.business_id(3,1),'Atomic Mixed 506',public.business_id(1,506),3,'torno',private.membership_today(),'pending');
 reset role;
-update public.gift_cards set payment_status=null,status='active' where id=public.business_id(4,506);
+update public.gift_cards set payment_status=null,status='pending' where id=public.business_id(4,506);
 create table public.mixed_students_before as select id,to_jsonb(st) raw from public.students st where id in(select public.business_id(1,n) from generate_series(501,550) n) and id<>public.business_id(1,510);
 grant select on public.mixed_students_before to authenticated;
 set role authenticated;
@@ -167,6 +276,23 @@ select public.mix_reject($q$select public.mix_save(502,505,0,array[504],jsonb_bu
 select public.mix_reject($q$select public.mix_save(502,505,0,array[504],jsonb_build_array(public.mix_block('mesa','70000000-0000-0000-0000-000000000002',1,array[504])))$q$,'Block teacher must belong to the session sede');
 select public.mix_reject($q$select public.mix_save(502,505,0,array[504],jsonb_build_array(public.mix_block('mesa',null,1,array[504])),
   '{}',jsonb_build_object(public.business_id(1,504)::text,public.manual_entitlement(501,501)))$q$,'Selected manual credit must match student, sede and block activity');
+select public.mix_reject($q$select public.mix_save(502,505,0,array[504],jsonb_build_array(public.mix_block('mesa',null,1,array[504],public.business_id(7,490))))$q$,
+  'Block IDs must belong to this session and sede');
+select public.mix_reject($q$select public.save_session_reservation(public.business_id(2,502),gen_random_uuid(),0,public.business_id(3,1),
+  public.business_metadata(5,16,2)||'{"class_type":"mixto"}',array[public.business_id(1,504)],'{}','{}',
+  jsonb_build_array(public.mix_block('mesa',null,1,array[504])))$q$,'Parent capacity must equal block capacity sum');
+select public.mix_reject($q$select public.mix_save(502,505,0,array[504],'[{"activity_type":"mesa","capacity":1,"student_ids":[]}]')$q$,
+  'Exact activity, teacher, integer capacity and UUID student arrays required');
+select public.mix_reject($q$select public.save_session_reservation(public.business_id(2,502),gen_random_uuid(),0,public.business_id(3,1),
+  public.business_metadata(5,16,2)||'{"class_type":"mixto"}',array[public.business_id(1,504)],'{}','{}',
+  '[{"activity_type":"mesa","teacher_id":null,"capacity":1.5,"student_ids":[]}]')$q$,
+  'Exact activity, teacher, integer capacity and UUID student arrays required');
+reset role;
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining) values
+  (public.business_id(1,555),public.business_id(3,2),'Foreign Mixed Student','Foreign Mixed','temporal',0);
+set role authenticated;
+select public.mix_reject($q$select public.mix_save(502,505,0,array[555],jsonb_build_array(public.mix_block('mesa',null,1,array[555])))$q$,
+  'Roster students must belong to the session sede');
 select public.mix_save(505,506,0,array[505],jsonb_build_array(public.mix_block('torno',null,1,array[505])),jsonb_build_object(public.business_id(1,505)::text,public.business_id(4,505)), '{}',16);
 select public.mix_reject($q$select public.mix_attend(505,507,1,array[505],array['present'])$q$,'Presence requires valid original credit%');
 select public.mix_reject($q$select public.approve_session_exception(public.business_id(2,505),public.business_id(1,505),gen_random_uuid(),1,'no_credit','Future gift is known allocation')$q$,'No-credit exception cannot bypass available credit%');
@@ -176,10 +302,34 @@ select public.mix_save(506,508,0,array[506],jsonb_build_array(public.mix_block('
 select public.mix_reject($q$select public.mix_attend(506,509,1,array[506],array['present'])$q$,'Presence requires valid original credit%');
 select public.mix_attend(506,509,1,array[506],array['absent']);
 select public.atomic_assert(payment_status is null and sessions_used=0,'unknown gift payment remains unknown and unusable in mixed funding') from public.gift_cards where id=public.business_id(4,506);
+reset role;
+create table public.mixed_pending_before as select id,to_jsonb(p) raw from public.session_business_penalties p where session_id=public.business_id(2,506);
+grant select on public.mixed_pending_before to authenticated;
+-- Existing payment RPC deliberately accepts only reviewed pending observations, not NULL.
+update public.gift_cards set payment_status='pending' where id=public.business_id(4,506);
+set role authenticated;
+select public.confirm_gift_card_payment(public.business_id(4,506));
+select public.manual_settle(506,650,2);
+select public.atomic_assert(to_jsonb(p)=b.raw and p.state='pending','mixed original-only settlement never rewrites its pending penalty')
+  from public.session_business_penalties p join public.mixed_pending_before b using(id);
+select public.atomic_assert(penalty_state='charged' and settlement_id is not null and funding_activity_type='torno',
+  'actual original gift confirmation permits activity-bound owner settlement, not source replacement') from public.session_activity_business_state where session_id=public.business_id(2,506);
+select public.waive_session_penalty(public.business_id(2,506),public.business_id(1,506),public.business_id(6,651),3,'Owner reverses settled mixed gift');
+select public.atomic_assert(penalty_state='waived' and settlement_id is not null and sessions_used=0,
+  'settlement audit survives original mixed gift waiver') from public.session_activity_business_state v join public.gift_cards g on g.id=v.funding_gift_card_id where v.session_id=public.business_id(2,506);
 select public.mix_save(507,510,0,array[507],jsonb_build_array(public.mix_block('coworking',null,1,array[507])), '{}','{}',16);
 select public.approve_session_exception(public.business_id(2,507),public.business_id(1,507),public.business_id(6,511),1,'no_credit','Explicit mixed courtesy');
 select public.mix_attend(507,512,2,array[507],array['present']);
 select public.atomic_assert(billing_kind='courtesy' and billing_state='no_charge' and exception_kind='no_credit', 'activity-bound mixed courtesy remains explicit and nonfinancial') from public.session_activity_business_state where session_id=public.business_id(2,507);
+set request.jwt.claim.sub='01000000-0000-0000-0000-000000000001';
+select public.mix_save(529,529,0,array[529],jsonb_build_array(public.mix_block('privada',null,1,array[529])), '{}','{}',18);
+select public.approve_session_exception(public.business_id(2,529),public.business_id(1,529),public.business_id(6,629),1,'no_credit','Authorized employee approves explicit mixed courtesy');
+select public.mix_attend(529,630,2,array[529],array['present'],false);
+select public.atomic_assert(count(*)=0,'actual employee mixed provisional attendance remains nonfinancial') from public.session_credit_movements where session_id=public.business_id(2,529);
+select public.mix_attend(529,631,3,array[529],array['present']);
+select public.atomic_assert(billing_kind='courtesy' and approved_by=auth.uid(),'actual sede employee can reserve, approve policy exception and finalize mixed attendance')
+  from public.session_activity_business_state where session_id=public.business_id(2,529);
+set request.jwt.claim.sub='00000000-0000-0000-0000-000000000001';
 select public.approve_student_manual_credit(public.business_id(1,508),public.business_id(6,508),'new_manual',2,0,'mesa',private.membership_today()-60,private.membership_today()-30,'Expired original','Signed original');
 select public.mix_save(508,513,0,array[508],jsonb_build_array(public.mix_block('mesa',null,1,array[508])), '{}',jsonb_build_object(public.business_id(1,508)::text,public.manual_entitlement(508,508)),16);
 select public.mix_attend(508,514,1,array[508],array['absent']);
@@ -204,6 +354,11 @@ select public.waive_session_penalty(public.business_id(2,500),public.business_id
 select public.atomic_assert(classes_remaining=8,'mixed membership historical waiver never credits successor') from public.students where id=public.business_id(1,500);
 select public.atomic_assert(count(*)=1 and bool_and(disposition='original_period_credit' and activity_type='mesa'), 'original-period reversal retains verified mixed activity and disposition')
   from public.session_credit_activity_state where session_id=public.business_id(2,500) and student_id=public.business_id(1,500) and delta=1;
+select public.mix_reject($q$select public.mix_save(500,521,7,array[500,501,502],jsonb_build_array(
+  public.mix_block('mesa',null,2,array[500,501],(select id from public.session_activity_blocks where session_id=public.business_id(2,500) and activity_type='mesa')),
+  public.mix_block('torno',public.business_id(8,501),1,array[502],(select id from public.session_activity_blocks where session_id=public.business_id(2,500) and activity_type='torno'))),
+  jsonb_build_object(public.business_id(1,502)::text,public.business_id(4,502)),jsonb_build_object(public.business_id(1,501)::text,public.manual_entitlement(501,501)))$q$,
+  'Finalized or cancelled activity block is immutable');
 select public.mix_reject($q$select public.mix_save(500,521,7,array[500,501,502],jsonb_build_array(public.mix_block('mesa',null,4,array[500,501,502])))$q$,'Mixed history locks interval, capacity and original activity teachers');
 select public.mix_save(509,522,0,array[509],jsonb_build_array(public.mix_block('mesa',public.business_id(8,500),1,array[509])), '{}','{}',18);
 select public.cancel_session_reservation(public.business_id(2,509),public.business_id(1,509),public.business_id(6,523),1,'Timely mixed cancellation');
@@ -216,6 +371,50 @@ select public.mix_reject($q$select public.mix_save(509,525,3,array[509,511],json
   (select id from public.session_activity_blocks where session_id=public.business_id(2,509)))), '{}','{}',18)$q$,'Each active roster student must occur in exactly one block%');
 select public.mix_attend(509,526,3,array[509,511],array['pending','absent']);
 select public.atomic_assert(billing_state='no_charge' and billing_kind='timely_cancellation','cancelled tombstone finalizes without financial effects') from public.session_activity_business_state where session_id=public.business_id(2,509) and student_id=public.business_id(1,509);
+select public.mix_save(512,640,0,array[512],jsonb_build_array(public.mix_block('mesa',null,1,array[512])), '{}','{}',18);
+select public.approve_session_exception(public.business_id(2,512),public.business_id(1,512),public.business_id(6,641),1,'no_credit','Original mixed teacher snapshot');
+reset role;
+create table public.mixed_exception_before as select to_jsonb(x) raw from public.session_business_exceptions x where session_id=public.business_id(2,512);
+grant select on public.mixed_exception_before to authenticated;
+set role authenticated;
+select public.mix_save(512,642,2,array[512],jsonb_build_array(public.mix_block('mesa',public.business_id(8,500),1,array[512],
+  (select id from public.session_activity_blocks where session_id=public.business_id(2,512)))), '{}','{}',18);
+select public.mix_reject($q$select public.mix_attend(512,643,3,array[512],array['present'])$q$,'Session exception is stale; explicit reapproval required');
+select public.atomic_assert(to_jsonb(x)=b.raw,'changed mixed teacher never rewrites an old exception funding snapshot') from public.session_business_exceptions x cross join public.mixed_exception_before b where x.session_id=public.business_id(2,512);
+-- Force a failure AFTER parent, source-map, activity and block writes but before its receipt.
+reset role;
+create function public.mixed_test_fail_origin() returns trigger language plpgsql as $$begin
+  if new.session_id=public.business_id(2,514) then raise exception 'Injected mixed origin persistence failure'; end if;
+  return new;
+end $$;
+create trigger mixed_test_fail_origin before insert on private.mixed_session_reservations for each row execute function public.mixed_test_fail_origin();
+set role authenticated;
+select public.mix_reject($q$select public.mix_save(514,660,0,array[510],jsonb_build_array(public.mix_block('mesa',public.business_id(8,500),1,array[510])), '{}','{}',18)$q$,
+  'Injected mixed origin persistence failure');
+select public.atomic_assert(not exists(select 1 from public.sessions where id=public.business_id(2,514))
+  and not exists(select 1 from public.session_activity_blocks where session_id=public.business_id(2,514))
+  and not exists(select 1 from public.session_operation_receipts where session_id=public.business_id(2,514)),
+  'post-block failure leaves no parent, block or receipt and no consumed financial source');
+reset role;
+drop trigger mixed_test_fail_origin on private.mixed_session_reservations;
+set role authenticated;
+insert into public.students(id,sede_id,full_name,name,student_category,classes_remaining)
+  values(public.business_id(1,551),public.business_id(3,1),'Mixed Late Original','Mixed Late','temporal',0);
+select public.manual_approve(551,551,'new_manual',1,0);
+select public.save_session_reservation(public.business_id(2,551),public.business_id(6,551),0,public.business_id(3,1),
+  public.business_metadata(-1,12,1)||'{"class_type":"mixto","teacher_id":null}',array[public.business_id(1,551)],'{}',
+  jsonb_build_object(public.business_id(1,551)::text,public.manual_entitlement(551,551)),
+  jsonb_build_array(public.mix_block('mesa',null,1,array[551])));
+select public.cancel_session_reservation(public.business_id(2,551),public.business_id(1,551),public.business_id(6,552),1,'Actual late mixed cancellation');
+select public.mix_attend(551,553,2,array[551],array['pending']);
+select public.atomic_assert(billing_kind='late_cancellation' and penalty_state='charged' and funding_activity_type='mesa',
+  'actual late mixed cancellation charges one valid original activity-bound manual credit')
+  from public.session_activity_business_state where session_id=public.business_id(2,551);
+select public.atomic_assert(remaining_classes=0,'late mixed cancellation consumes original UUID exactly once')
+  from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(551,551);
+select public.waive_session_penalty(public.business_id(2,551),public.business_id(1,551),public.business_id(6,554),3,'Owner restores late original mixed manual');
+select public.atomic_assert(remaining_classes=1,'owner late-cancellation waiver restores the same mixed manual source')
+  from public.manual_credit_entitlements_with_balance where entitlement_id=public.manual_entitlement(551,551);
 -- Direct table ACLs include inherited default ALL privileges, TRUNCATE, REFERENCES and TRIGGER.
 select public.atomic_reject($q$insert into public.session_activity_blocks default values$q$,'permission denied%','42501');
 select public.atomic_reject($q$update public.session_activity_blocks set capacity=100$q$,'permission denied%','42501');
@@ -267,5 +466,8 @@ set role authenticated;
 select public.mix_save(530,530,0,array[530],jsonb_build_array(public.mix_block('mesa',null,1,array[530]),public.mix_block('torno',null,1,'{}')), '{}','{}',20);
 select public.manual_approve(533,533,'new_manual',1,0);
 select public.mix_save(533,533,0,array[533],jsonb_build_array(public.mix_block('mesa',null,1,array[533])), '{}',jsonb_build_object(public.business_id(1,533)::text,public.manual_entitlement(533,533)),20);
+select public.manual_approve(534,534,'new_manual',1,0);
+select public.mix_save(534,534,0,array[534],jsonb_build_array(public.mix_block('mesa',null,1,array[534])), '{}',jsonb_build_object(public.business_id(1,534)::text,public.manual_entitlement(534,534)),20);
+select public.mix_save(535,535,0,array[534],jsonb_build_array(public.mix_block('mesa',null,1,array[534])), '{}',jsonb_build_object(public.business_id(1,534)::text,public.manual_entitlement(534,534)),22);
 reset role;
 \o

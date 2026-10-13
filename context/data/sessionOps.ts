@@ -1,10 +1,10 @@
-import { getDefaultSessionCapacity, type ClassSession, type SessionActivityBlock, type SessionBusinessIntent, type PendingSessionOperation } from '../../types';
+import { getDefaultSessionCapacity, type ClassSession, type SessionBusinessIntent, type PendingSessionOperation } from '../../types';
 import { showError } from '../toast';
 import { withTimeout, supabase, buildSessionPayload, type OpsContext } from './shared';
 import {
     SessionIntentStore, attendanceInput, createSessionAttendanceIntent, createSessionOperations,
     createSessionReservationIntent, createSessionBusinessIntent, requireSessionRevision, reservationInput, resolveSessionStudentIds,
-    type RevisionedSession, type SessionUpdates
+    type RevisionedSession, type SessionUpdates, type SessionReservationActivityBlock
 } from './sessionAttendanceOps';
 
 let store: SessionIntentStore;
@@ -26,41 +26,38 @@ const operations = (ctx: OpsContext) => {
     });
 };
 
-const persistActivityBlocks = async (ctx: OpsContext, sessionId: string, sedeId: string, blocks: SessionActivityBlock[] = []) => {
-    ctx.assertScope();
-    const sourceBlocks = blocks.filter(block => block.activityType !== 'mixto' && block.studentIds.length > 0);
-    const normalized = sourceBlocks
-        .map(block => ({ session_id: sessionId, sede_id: sedeId, activity_type: block.activityType,
-            teacher_id: block.teacherId || null, capacity: block.capacity }));
-    const { data: existing, error: existingError } = await withTimeout('session_activity_blocks.select',
-        supabase.from('session_activity_blocks').select('id').eq('session_id', sessionId));
-    ctx.assertScope();
-    if (existingError) throw existingError;
-    if (existing?.length) {
-        const { error } = await withTimeout('session_activity_blocks.delete', supabase.from('session_activity_blocks').delete().eq('session_id', sessionId));
-        ctx.assertScope();
-        if (error) throw error;
+const reservationBlocks = (session: Omit<ClassSession, 'id'>, studentIds: string[], current?: ClassSession): SessionReservationActivityBlock[] | undefined => {
+    if (session.classType !== 'mixto') {
+        if (session.activityBlocks?.length || current?.classType === 'mixto') throw new Error('Los bloques requieren una sesion mixta; no conviertas su historial en clasico.');
+        return undefined;
     }
-    if (!normalized.length) return;
-    const { data: saved, error } = await withTimeout('session_activity_blocks.insert', supabase.from('session_activity_blocks').insert(normalized).select('id,activity_type,teacher_id,capacity'));
-    ctx.assertScope();
-    if (error) throw error;
-    const rows = (saved || []).flatMap((block: any, index: number) => (sourceBlocks[index]?.studentIds || []).map(student_id => ({
-        block_id: block.id, session_id: sessionId, student_id
-    })));
-    if (rows.length) {
-        const result = await withTimeout('session_activity_block_students.insert', supabase.from('session_activity_block_students').insert(rows));
-        ctx.assertScope();
-        if (result.error) throw result.error;
+    if (session.attendancePolicyVersion !== undefined && session.attendancePolicyVersion !== 2) throw new Error('La sesion mixta requiere politica 2.');
+    if (session.teacherId) throw new Error('Asigna el profesor por bloque, no a la sesion mixta padre.');
+    if (!Array.isArray(session.activityBlocks) || !session.activityBlocks.length) throw new Error('La sesion mixta requiere bloques explicitos.');
+    const cancelled = (current?.studentIds || []).filter(id => current?.businessStateByStudentId?.[id]?.reservationState === 'cancelled');
+    const blocks = session.activityBlocks.map(block => {
+        if (!Array.isArray(block?.studentIds)) throw new Error('El bloque requiere IDs de alumnos explicitos.');
+        if (block.id !== undefined && !current?.activityBlocks?.some(original => original.id === block.id)) {
+            throw new Error('El ID de bloque no pertenece a la sesion cargada.');
+        }
+        return { ...block, studentIds: block.studentIds.filter(id => !cancelled.includes(id)) };
+    });
+    const active = studentIds.filter(id => !cancelled.includes(id));
+    const assigned = blocks.flatMap(block => block.studentIds);
+    if (assigned.length !== active.length || new Set(assigned).size !== assigned.length || active.some(id => !assigned.includes(id))) {
+        throw new Error('Cada ID activo debe pertenecer exactamente a un bloque.');
     }
-    for (const block of sourceBlocks) {
-        if (!block.studentIds.length) continue;
-        ctx.assertScope();
-        const result = await withTimeout('session_students.activity_type.update', supabase.from('session_students')
-            .update({ activity_type: block.activityType }).eq('session_id', sessionId).in('student_id', block.studentIds));
-        ctx.assertScope();
-        if (result.error) throw result.error;
+    if (current && (current.completedAt || cancelled.length)) {
+        const originals = (current.activityBlocks || []).map(block => ({ ...block, studentIds: block.studentIds.filter(id => !cancelled.includes(id)) }));
+        const shape = (items: typeof blocks) => items.map(block => reservationInput({ activityBlocks: [{ ...block, studentIds: [...block.studentIds].sort() }] })).sort().join('|');
+        if (shape(blocks) !== shape(originals)
+            || session.classType !== current.classType || session.capacity !== current.capacity
+            || session.date !== current.date || session.startTime !== current.startTime || session.endTime !== current.endTime) {
+            throw new Error('El historial mixto protege sus bloques, profesores, cupos y horario originales.');
+        }
     }
+    return blocks.map(block => ({ ...(block.id === undefined ? {} : { id: block.id }), activity_type: block.activityType,
+        teacher_id: block.teacherId ?? null, capacity: block.capacity, student_ids: block.studentIds }));
 };
 
 export const getPendingSessionOperation = (ctx: OpsContext, id?: string): PendingSessionOperation | null => {
@@ -95,22 +92,22 @@ export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession,
             const capacity = newSession.classType === 'feriado' ? 1 : newSession.capacity
                 ?? ctx.capacityDefaults.find(item => item.classType === newSession.classType)?.capacity
                 ?? getDefaultSessionCapacity(newSession.classType);
+            if (newSession.classType === 'mixto' && !newSession.studentIds) throw new Error('La reserva mixta requiere el roster por ID, no por nombre.');
             const studentIds = resolveSessionStudentIds(ctx.students, newSession.students || [], newSession.studentIds);
+            const blocks = reservationBlocks(newSession, studentIds);
             if (newSession.attendancePolicyVersion === 1 && Object.keys(newSession.manualCreditIdByStudentId || {}).length) {
                 throw new Error('El credito manual requiere una sesion con politica 2.');
             }
             if (newSession.completedAt || Object.values(newSession.attendanceByStudentId || newSession.attendance || {}).some(status => status === 'present')) {
                 throw new Error('Crea la reserva primero; guarda la asistencia con la operacion atomica.');
             }
-            const metadata = buildSessionPayload({ ...newSession, capacity });
+            const metadata = buildSessionPayload({ ...newSession, capacity: blocks ? newSession.capacity : capacity });
+            if (blocks) metadata.teacher_id = null;
             delete metadata.completed_at;
             delete metadata.teacher_substitute_id;
             return createSessionReservationIntent(crypto.randomUUID(), 0, ctx.sedeId!, metadata,
-                studentIds, newSession.giftCardIdByStudentId || {}, input, undefined, newSession.manualCreditIdByStudentId || {});
+                studentIds, newSession.giftCardIdByStudentId || {}, input, undefined, newSession.manualCreditIdByStudentId || {}, blocks);
         });
-        await persistActivityBlocks(ctx, receipt.session_id, ctx.sedeId, newSession.activityBlocks);
-        ctx.assertScope();
-        await ctx.safeReload();
         ctx.assertScope();
         return receipt;
     } catch (error: any) {
@@ -136,17 +133,25 @@ export const updateSession = async (ctx: OpsContext, id: string, updates: Sessio
         await operations(ctx).save(`${sedeId}:${id}`, input, () => {
             if (updates.teacherSubstituteId !== undefined) throw new Error('Guarda el suplente junto con la asistencia.');
             const merged = { ...current, ...updates };
+            if (merged.classType === 'mixto' && (!merged.studentIds || (updates.students !== undefined && updates.studentIds === undefined))) {
+                throw new Error('La reserva mixta requiere el roster por ID, no por nombre.');
+            }
             const studentIds = resolveSessionStudentIds(ctx.students, merged.students || [],
                 updates.studentIds ?? (updates.students === undefined ? current.studentIds : undefined));
             const cancelledIds = current.attendancePolicyVersion === 2 ? (current.studentIds || [])
                 .filter(studentId => current.businessStateByStudentId?.[studentId]?.reservationState === 'cancelled') : [];
             // Cancelled enrollments are tombstones, including their original source maps.
             for (const studentId of cancelledIds) if (!studentIds.includes(studentId)) studentIds.push(studentId);
+            const blocks = reservationBlocks(merged, studentIds, current);
             const metadata = buildSessionPayload({ ...merged, capacity: merged.classType === 'feriado' ? 1 : merged.capacity
                 ?? ctx.capacityDefaults.find(item => item.classType === merged.classType)?.capacity
                 ?? getDefaultSessionCapacity(merged.classType) });
             delete metadata.completed_at;
             delete metadata.teacher_substitute_id;
+            if (blocks) {
+                metadata.teacher_id = null;
+                if (merged.capacity === undefined) delete metadata.capacity;
+            }
             const giftCardIds = Object.fromEntries(Object.entries(updates.giftCardIdByStudentId ?? current.giftCardIdByStudentId ?? {})
                 .filter(([studentId]) => studentIds.includes(studentId)));
             const manualCreditIds = Object.fromEntries(Object.entries(updates.manualCreditIdByStudentId ?? current.manualCreditIdByStudentId ?? {})
@@ -159,6 +164,14 @@ export const updateSession = async (ctx: OpsContext, id: string, updates: Sessio
             if (current.attendancePolicyVersion !== 2 && Object.keys(manualCreditIds).length) {
                 throw new Error('El credito manual requiere una sesion con politica 2.');
             }
+            for (const studentId of blocks ? cancelledIds : []) {
+                for (const [mapping, original] of [[giftCardIds, current.giftCardIdByStudentId], [manualCreditIds, current.manualCreditIdByStudentId]] as const) {
+                    if (mapping[studentId] !== undefined && mapping[studentId] !== original?.[studentId]) {
+                        throw new Error('La financiacion original cancelada es inmutable.');
+                    }
+                    if (original?.[studentId]) mapping[studentId] = original[studentId];
+                }
+            }
             for (const studentId of current.completedAt ? current.studentIds || [] : cancelledIds) {
                 if (!studentIds.includes(studentId) || giftCardIds[studentId] !== current.giftCardIdByStudentId?.[studentId]
                     || manualCreditIds[studentId] !== current.manualCreditIdByStudentId?.[studentId]) {
@@ -169,12 +182,8 @@ export const updateSession = async (ctx: OpsContext, id: string, updates: Sessio
                 throw new Error('El roster finalizado es inmutable.');
             }
             return createSessionReservationIntent(id, requireSessionRevision(current, updates.revision ?? current.revision),
-                sedeId, metadata, studentIds, giftCardIds, input, undefined, manualCreditIds);
+                sedeId, metadata, studentIds, giftCardIds, input, undefined, manualCreditIds, blocks);
         });
-        const merged = { ...(current || {}), ...updates } as ClassSession;
-        await persistActivityBlocks(ctx, id, sedeId, merged.activityBlocks);
-        ctx.assertScope();
-        await ctx.safeReload();
     }
     ctx.assertScope();
     return true;

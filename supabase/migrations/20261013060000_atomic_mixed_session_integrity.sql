@@ -72,6 +72,15 @@ begin
   end if;
   select * into s from public.sessions where id=sid;
   if s.class_type is distinct from 'mixto' or s.attendance_policy_version<>2 then raise exception 'Activity blocks require policy2 mixto'; end if;
+  if tg_op='INSERT' and s.completed_at is not null then raise exception 'Finalized activity assignment is immutable'; end if;
+  if tg_table_name='session_activity_block_students' and tg_op='INSERT' then
+    if exists(select 1 from public.session_students where session_id=new.session_id and student_id=new.student_id and cancelled_at is not null) then
+      raise exception 'Cancelled activity assignment is immutable';
+    end if;
+    if (select count(*) from public.session_activity_block_students r join public.session_students e
+      on e.session_id=r.session_id and e.student_id=r.student_id where r.block_id=new.block_id and e.cancelled_at is null)
+      >=(select capacity from public.session_activity_blocks where id=new.block_id) then raise exception 'Activity block capacity exceeded'; end if;
+  end if;
   if tg_op in ('UPDATE','DELETE') then
     if tg_table_name='session_activity_blocks' then
       if tg_op='UPDATE' and (new.id is distinct from old.id or new.session_id is distinct from old.session_id
@@ -119,7 +128,7 @@ create trigger guard_mixed_parent_history before update on public.sessions
 create function private.mixed_activity(p_session_id uuid,p_student_id uuid) returns jsonb
 language plpgsql stable security definer set search_path='' set timezone='UTC' as $$
 declare s public.sessions; e public.session_students; b public.session_activity_blocks;
-  origin private.mixed_session_reservations; shape jsonb; roster_item jsonb; context jsonb;
+  origin private.mixed_session_reservations; shape jsonb; roster_item jsonb; context jsonb; all_blocks jsonb; all_bindings jsonb;
 begin
   select * into s from public.sessions where id=p_session_id;
   select * into e from public.session_students where session_id=s.id and student_id=p_student_id;
@@ -143,9 +152,19 @@ begin
   roster_item:=jsonb_build_object('student_id',e.student_id,'block_id',b.id,'activity_type',e.activity_type,
     'period_id',e.membership_period_id,'gift_card_id',e.gift_card_id,'manual_credit_id',e.manual_credit_id);
   context:=to_jsonb(s)-array['id','sede_id','revision','created_at','completed_at','teacher_substitute_id','type','title','max_capacity','instructor_id','workshop_name','private_reason','session_audience'];
+  select coalesce(jsonb_agg(jsonb_build_object('id',b0.id,'activity_type',b0.activity_type,'teacher_id',b0.teacher_id,'capacity',b0.capacity,
+    'student_ids',(select coalesce(jsonb_agg(student_id order by student_id),'[]') from public.session_activity_block_students where block_id=b0.id)) order by b0.id),'[]')
+    into all_blocks from public.session_activity_blocks b0 where session_id=s.id;
+  select coalesce(jsonb_agg(jsonb_build_object('student_id',en.student_id,'block_id',r.block_id,'activity_type',en.activity_type,
+    'period_id',en.membership_period_id,'gift_card_id',en.gift_card_id,'manual_credit_id',en.manual_credit_id) order by en.student_id),'[]')
+    into all_bindings from public.session_students en join public.session_activity_block_students r on r.session_id=en.session_id and r.student_id=en.student_id
+    where en.session_id=s.id;
   select * into origin from private.mixed_session_reservations where session_id=s.id order by revision desc limit 1;
   if origin.session_id is null or origin.sede_id is distinct from s.sede_id or origin.revision>s.revision
-    or origin.session_snapshot is distinct from context or not origin.blocks_snapshot @> jsonb_build_array(shape)
+    or origin.session_snapshot is distinct from context or origin.blocks_snapshot is distinct from all_blocks
+    or origin.roster_snapshot is distinct from all_bindings
+    or (select count(*) from public.session_students where session_id=s.id)<>jsonb_array_length(all_bindings)
+    or not origin.blocks_snapshot @> jsonb_build_array(shape)
     or not origin.roster_snapshot @> jsonb_build_array(roster_item) then
     raise exception 'Mixed funding provenance requires an atomic reservation before the incident';
   end if;
@@ -210,6 +229,46 @@ begin
   return jsonb_set(f,'{snapshot}',f->'snapshot'||jsonb_build_object('activity_type',a->>'activity_type',
     'activity_block_id',a->'block_id','activity_teacher_id',a->'teacher_id','activity_capacity',a->'capacity'));
 end $$;
+
+-- Gate before the preserved policy1 dispatcher, which never calls mixed_activity.
+alter function private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid) rename to save_session_attendance_before_atomic_mixed;
+create function private.save_session_attendance(p_session_id uuid,p_request_key uuid,p_expected_revision bigint,
+  p_attendance jsonb,p_finalize boolean,p_teacher_substitute_id uuid) returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare s public.sessions; prior public.session_operation_receipts; attendance jsonb; intent jsonb;
+begin
+  s:=private.lock_atomic_session(p_session_id);
+  if not private.session_employee_sede(s.sede_id) then raise exception 'Session not accessible' using errcode='42501'; end if;
+  if s.attendance_policy_version<>1 or s.class_type is distinct from 'mixto' then
+    return private.save_session_attendance_before_atomic_mixed(p_session_id,p_request_key,p_expected_revision,p_attendance,p_finalize,p_teacher_substitute_id);
+  end if;
+  if p_request_key is null or p_expected_revision is null or p_expected_revision<0 or p_finalize is null
+    or p_attendance is null or jsonb_typeof(p_attendance)<>'array' then
+    raise exception 'Request key, revision, attendance array and finalize flag required';
+  end if;
+  if exists(select 1 from jsonb_array_elements(p_attendance) a where jsonb_typeof(a)<>'object'
+    or not (a ? 'student_id' and a ? 'status') or a->>'student_id' is null
+    or coalesce(a->>'status','') not in('present','absent','pending') or a-'student_id'-'status'<>'{}') then
+    raise exception 'Attendance requires exact student_id/status objects';
+  end if;
+  select coalesce(jsonb_agg(jsonb_build_object('student_id',student_id,'status',status) order by student_id),'[]')
+    into attendance from jsonb_to_recordset(p_attendance) a(student_id uuid,status text);
+  if (select count(*)<>count(distinct student_id) from jsonb_to_recordset(attendance) a(student_id uuid,status text)) then
+    raise exception 'Duplicate attendance student IDs';
+  end if;
+  intent:=jsonb_build_object('expected_revision',p_expected_revision,'attendance',attendance,'finalize',p_finalize,'teacher_substitute_id',p_teacher_substitute_id);
+  select * into prior from public.session_operation_receipts where session_id=s.id and request_key=p_request_key;
+  if found then
+    if prior.operation<>'attendance' or prior.intent<>intent then raise exception 'Idempotency key conflicts with original session intent'; end if;
+    return prior.result||jsonb_build_object('replayed',true);
+  end if;
+  raise exception 'Fresh attendance is unsupported for historical policy1 mixed sessions';
+end $$;
+create or replace function public.save_session_attendance(p_session_id uuid,p_request_key uuid,p_expected_revision bigint,
+  p_attendance jsonb,p_finalize boolean,p_teacher_substitute_id uuid) returns jsonb
+language sql security invoker set search_path='' as $$
+  select private.save_session_attendance(p_session_id,p_request_key,p_expected_revision,p_attendance,p_finalize,p_teacher_substitute_id);
+$$;
 
 alter function private.apply_gift_card_session(uuid,uuid,uuid,boolean,uuid,uuid) rename to apply_gift_card_session_before_atomic_mixed;
 create function private.apply_gift_card_session(p_gift_card_id uuid,p_session_id uuid,p_student_id uuid,p_reverse boolean,
@@ -461,12 +520,16 @@ from public.session_credit_movements m join public.session_activity_business_sta
 revoke all on public.session_activity_business_state,public.session_credit_activity_state from public,anon,authenticated,service_role;
 grant select on public.session_activity_business_state,public.session_credit_activity_state to authenticated;
 revoke all on function private.guard_atomic_mixed_state(),private.guard_mixed_parent_history(),private.mixed_activity(uuid,uuid),private.mixed_activity_verified(uuid,uuid),
+  private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid),private.save_session_attendance_before_atomic_mixed(uuid,uuid,bigint,jsonb,boolean,uuid),
+  private.save_session_attendance_before_manual(uuid,uuid,bigint,jsonb,boolean,uuid),private.save_session_attendance_v1(uuid,uuid,bigint,jsonb,boolean,uuid),
+  public.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid),
   private.session_business_funding(uuid,uuid),private.session_business_funding_before_atomic_mixed(uuid,uuid),
   private.apply_gift_card_session(uuid,uuid,uuid,boolean,uuid,uuid),private.apply_gift_card_session_before_atomic_mixed(uuid,uuid,uuid,boolean,uuid,uuid),
   private.save_session_reservation_before_atomic_mixed(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb,jsonb),
   private.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb,jsonb,jsonb),
   public.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb,jsonb,jsonb) from public,anon,authenticated,service_role;
 grant execute on function private.mixed_activity_verified(uuid,uuid),private.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb,jsonb,jsonb),
+  private.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid),public.save_session_attendance(uuid,uuid,bigint,jsonb,boolean,uuid),
   public.save_session_reservation(uuid,uuid,bigint,uuid,jsonb,uuid[],jsonb,jsonb,jsonb) to authenticated;
 notify pgrst,'reload schema';
 commit;

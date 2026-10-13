@@ -1,8 +1,11 @@
-import type { ClassSession, Student, SessionBusinessIntent } from '../../types';
+import type { CapacityActivity, ClassSession, Student, SessionBusinessIntent } from '../../types';
 
 export type AttendanceStatus = 'present' | 'absent' | 'pending';
 export type RevisionedSession = ClassSession & { revision?: number };
 export type SessionUpdates = Partial<RevisionedSession>;
+export type SessionReservationActivityBlock = {
+    id?: string; activity_type: CapacityActivity; teacher_id: string | null; capacity: number; student_ids: string[];
+};
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export interface SessionIntent {
     readonly operation: 'attendance' | 'reservation' | SessionBusinessIntent['operation'];
@@ -114,8 +117,11 @@ export const createSessionAttendanceIntent = (
 export const createSessionReservationIntent = (
     sessionId: string, expectedRevision: number, sedeId: string, metadata: Record<string, unknown>,
     studentIds: string[], giftCardIds: Record<string, string>, input: string, requestKey: string = crypto.randomUUID(),
-    manualCreditIds: Record<string, string> = {}
+    manualCreditIds: Record<string, string> = {}, activityBlocks?: readonly SessionReservationActivityBlock[]
 ): SessionIntent => {
+    if (new Set(studentIds).size !== studentIds.length || studentIds.some(id => typeof id !== 'string' || !id.trim() || id.trim() !== id)) {
+        throw new Error('IDs de alumnos duplicados o vacios.');
+    }
     for (const mapping of [giftCardIds, manualCreditIds]) {
         for (const [studentId, sourceId] of Object.entries(mapping)) {
             if (!studentIds.includes(studentId) || typeof sourceId !== 'string' || !sourceId.trim()) {
@@ -126,11 +132,38 @@ export const createSessionReservationIntent = (
     if (Object.keys(manualCreditIds).some(id => Object.hasOwn(giftCardIds, id))) {
         throw new Error('No combines bono regalo y credito manual para el mismo ID.');
     }
-    return freeze({ operation: 'reservation', sessionId, requestKey, input, args: {
+    const blocks = activityBlocks?.map(block => {
+        if (!block || Object.keys(block).some(key => !['id', 'activity_type', 'teacher_id', 'capacity', 'student_ids'].includes(key))
+            || !['mesa', 'torno', 'coworking', 'workshop', 'privada'].includes(block.activity_type)
+            || !Number.isSafeInteger(block.capacity) || block.capacity < 1 || block.capacity > 100
+            || !Array.isArray(block.student_ids) || block.student_ids.length > block.capacity
+            || new Set(block.student_ids).size !== block.student_ids.length
+            || block.student_ids.some(id => !studentIds.includes(id))
+            || (block.id !== undefined && (typeof block.id !== 'string' || !block.id.trim() || block.id.trim() !== block.id))
+            || (block.teacher_id !== null && (typeof block.teacher_id !== 'string' || !block.teacher_id.trim() || block.teacher_id.trim() !== block.teacher_id))) {
+            throw new Error('Bloque de actividad, capacidad o IDs invalidos.');
+        }
+        return { ...(block.id === undefined ? {} : { id: block.id }), activity_type: block.activity_type,
+            teacher_id: block.teacher_id, capacity: block.capacity, student_ids: [...block.student_ids].sort() };
+    }).sort((a, b) => canonical(a).localeCompare(canonical(b)));
+    if (blocks?.length) {
+        const assigned = blocks.flatMap(block => block.student_ids);
+        const ids = blocks.filter(block => block.id !== undefined).map(block => block.id);
+        const capacity = blocks.reduce((total, block) => total + block.capacity, 0);
+        if (metadata.class_type !== 'mixto' || metadata.teacher_id !== null || capacity > 100
+            || (metadata.capacity !== undefined && metadata.capacity !== capacity)
+            || new Set(assigned).size !== assigned.length || new Set(ids).size !== ids.length
+            || new Set(blocks.map(canonical)).size !== blocks.length) {
+            throw new Error('La reserva mixta requiere bloques unicos, profesor padre nulo y cupo total coherente.');
+        }
+    } else if (metadata.class_type === 'mixto') throw new Error('La reserva mixta requiere bloques explicitos.');
+    // Clone before freezing: caller-owned maps, metadata and block arrays stay editable.
+    return freeze(JSON.parse(canonical({ operation: 'reservation', sessionId, requestKey, input, args: {
         p_session_id: sessionId, p_request_key: requestKey, p_expected_revision: expectedRevision,
         p_sede_id: sedeId, p_metadata: { ...metadata }, p_student_ids: [...studentIds].sort(),
-        p_gift_card_ids: { ...giftCardIds }, p_manual_credit_ids: { ...manualCreditIds }
-    } });
+        p_gift_card_ids: { ...giftCardIds }, p_manual_credit_ids: { ...manualCreditIds },
+        ...(blocks?.length ? { p_activity_blocks: blocks } : {})
+    } })));
 };
 
 export const createSessionBusinessIntent = (intent: SessionBusinessIntent): SessionIntent => {

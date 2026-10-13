@@ -168,6 +168,11 @@ export interface SessionBusinessState {
   fundingPeriodId?: string;
   fundingGiftCardId?: string;
   fundingManualCreditId?: string;
+  fundingActivityType?: CapacityActivity;
+  fundingActivityBlockId?: string;
+  activityTeacherId?: string;
+  activityCapacity?: number;
+  activitySourceVerified?: boolean;
   exceptionManualCreditId?: string;
   penaltyManualCreditId?: string;
   settlementId?: string;
@@ -251,7 +256,7 @@ export interface ClassSession {
 
 export interface SessionActivityBlock {
   id?: string;
-  activityType: Exclude<ClassSession['classType'], 'feriado'>;
+  activityType: CapacityActivity;
   teacherId?: string;
   capacity: number;
   studentIds: string[];

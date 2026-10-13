@@ -12,7 +12,7 @@ const rawStudent = (id: string, category = 'temporal') => ({ id, sede_id: 'sede-
   student_category: category, classes_remaining: 2, payment_status: category === 'membresia' ? 'paid' : null,
   current_membership_period_id: category === 'membresia' ? 'period-original' : null, archived_at: null, status: 'new' });
 const sessionRow = (id: string, date: string, classType = 'mesa', completed = true) => ({ id, sede_id: 'sede-a', date,
-  start_time: '10:00:00', end_time: '12:00:00', class_type: classType, capacity: 6, teacher_id: 'teacher',
+  start_time: '10:00:00', end_time: '12:00:00', class_type: classType, capacity: 6, teacher_id: classType === 'mixto' ? null : 'teacher',
   attendance_policy_version: 2, revision: 7, completed_at: completed ? `${date}T12:00:00Z` : null });
 const incident = (id: string, session: string, source: 'manual' | 'gift' | 'period', student = 'student-a') => ({
   penalty_id: id, student_id: student, sede_id: 'sede-a', session_id: session, expected_revision: 7, incident_revision: 5,
@@ -23,6 +23,8 @@ const incident = (id: string, session: string, source: 'manual' | 'gift' | 'peri
 });
 const business = (session: string, student: string, penalty?: any) => ({ session_id: session, student_id: student, sede_id: 'sede-a',
   policy_version: 2, reservation_state: 'reserved', billing_state: penalty ? 'incident' : 'unfinalized',
+  funding_activity_type: null, funding_activity_block_id: null, activity_teacher_id: null,
+  activity_capacity: null, activity_source_verified: false,
   ...(penalty ? { penalty_id: penalty.penalty_id, penalty_state: 'pending', billing_kind: penalty.kind, finalized_revision: 5,
     funding_period_id: penalty.original_period_id, funding_gift_card_id: penalty.original_gift_card_id,
     funding_manual_credit_id: penalty.original_manual_credit_id } : {}) });
@@ -56,9 +58,10 @@ const fixture = (): Record<string, any[]> => {
       starts_on: '2026-06-01', ends_on: '2026-12-31', payment_status: 'paid' },
       { id: 'period-queued', student_id: 'student-member', sede_id: 'sede-a', predecessor_id: 'period-original', allocated_classes: 8,
         starts_on: '2027-01-01', ends_on: '2027-01-31', payment_status: 'pending' }],
-    session_business_state: [business('recent', 'student-a'), business('old-manual', 'student-a', manualIncident),
+    session_activity_business_state: [business('recent', 'student-a'), business('old-manual', 'student-a', manualIncident),
       business('old-gift', 'student-a', giftIncident), business('old-period', 'student-member', periodIncident),
-      business('mixed-history', 'student-a'), business('mixed-history', 'student-member'),
+       { ...business('mixed-history', 'student-a'), funding_activity_type: 'mesa', funding_activity_block_id: 'block-mesa', activity_teacher_id: 'teacher', activity_capacity: 4, activity_source_verified: true },
+       { ...business('mixed-history', 'student-member'), funding_activity_type: 'torno', funding_activity_block_id: 'block-torno', activity_teacher_id: 'teacher', activity_capacity: 2, activity_source_verified: true },
       { ...business('cancelled-history', 'student-a'), reservation_state: 'cancelled', cancelled_at: '2026-07-01T12:00:00Z',
         cancellation_kind: 'early', cancellation_reason: 'Original cancellation', funding_manual_credit_id: 'manual-original' }],
     sedes: [{ id: 'sede-a', owner_id: 'owner-a', is_active: true }],
@@ -133,15 +136,14 @@ test.beforeEach(async ({ page }) => {
       if (!rows) throw new Error(`Unexpected table ${request.table}`);
       if (request.table === 'session_activity_block_students') {
         const columns = new Set(['block_id', 'session_id', 'student_id', 'created_at']);
-        const joined = request.columns === '*,session_activity_blocks!session_activity_block_students_block_id_fkey!inner(sede_id)';
-        const invalid = request.filters.find(([, key]: any[]) => !columns.has(key) && !(joined && key === 'session_activity_blocks.sede_id'))
+        const invalid = request.filters.find(([, key]: any[]) => !columns.has(key))
           ?? request.orders.find(([key]: any[]) => !columns.has(key));
         if (invalid) return respond({ data: null, error: { code: '42703', message: `Column ${invalid[0] === 'eq' ? invalid[1] : invalid[0]} does not exist on activity roster` }, count: null });
-        if (request.columns !== '*' && !joined) return respond({ data: null, error: { code: 'PGRST201', message: 'Explicit parent FK join required' }, count: null });
+        if (request.columns !== '*') return respond({ data: null, error: { code: 'PGRST201', message: 'Obsolete parent FK join' }, count: null });
         if (rows.some(row => Object.keys(row).some(key => !columns.has(key)))) throw new Error('Activity roster fixture invented a database column');
-        if (joined) rows = rows.flatMap(row => {
+        rows = rows.filter(row => {
           const parent = backend.rows.session_activity_blocks.find(block => block.id === row.block_id);
-          return parent ? [{ ...row, session_activity_blocks: { sede_id: parent.sede_id } }] : [];
+          return parent && (request.scope.isSuperAdmin || parent.sede_id === request.scope.sedeId);
         });
       }
       for (const [op, key, value] of request.filters) rows = rows.filter(row => {
@@ -175,7 +177,7 @@ test.beforeEach(async ({ page }) => {
         return respond({ data: null, error: { code: 'P0001', message: 'El bono original no esta pagado' } });
       }
       const session = backend.rows.sessions.find(item => item.id === penalty.session_id);
-      const business = backend.rows.session_business_state.find(item => item.session_id === session.id);
+      const business = backend.rows.session_activity_business_state.find(item => item.session_id === session.id);
       session.revision++;
       const audit = { settlement_id: 'settlement-original', settlement_reason: args.p_reason, settled_by: 'owner-a', settled_at: '2026-10-12T08:00:00Z', settlement_revision: 8 };
       Object.assign(penalty, audit, { expected_revision: 8, penalty_state: 'charged', billing_state: 'charged', is_pending: false });
@@ -218,9 +220,9 @@ for (const admin of [false, true]) test(`${admin ? 'superadmin' : 'owner'} loads
     await ready(page);
   }
   const query = backend.reads.filter(read => read.table === 'session_activity_block_students').at(-1)!;
-  expect(query.columns).toBe('*,session_activity_blocks!session_activity_block_students_block_id_fkey!inner(sede_id)');
+  expect(query.columns).toBe('*');
   expect(query.orders).toEqual([['block_id', true], ['student_id', true]]);
-  expect(query.filters).toEqual(admin ? [] : [['eq', 'session_activity_blocks.sede_id', 'sede-a']]);
+  expect(query.filters).toEqual([]);
   expect((await snapshot(page))).toMatchObject({ ready: true, error: null });
   expect((await snapshot(page)).sessions.every((session: any) => session.activityBlocks.length === 0)).toBe(true);
   expect(backend.rpcs).toEqual([]);
@@ -248,7 +250,7 @@ for (const view of ['owner', 'superadmin', 'other-sede']) test(`${view} activity
   backend.rows.sessions.push({ ...sessionRow('mixed-other-sede', '2026-10-12', 'mixto', false), sede_id: 'sede-b', teacher_id: null });
   backend.rows.session_students.push({ id: 'mixed-other-sede:student-b', session_id: 'mixed-other-sede', sede_id: 'sede-b',
     student_id: 'student-b', student_name: 'Alex', attendance: 'pending', gift_card_id: null, manual_credit_id: null });
-  backend.rows.session_business_state.push({ ...business('mixed-other-sede', 'student-b'), sede_id: 'sede-b' });
+  backend.rows.session_activity_business_state.push({ ...business('mixed-other-sede', 'student-b'), sede_id: 'sede-b' });
   backend.rows.session_activity_blocks.push({ id: 'block-other-mesa', session_id: 'mixed-other-sede', sede_id: 'sede-b',
     activity_type: 'mesa', teacher_id: 'teacher-b', capacity: 4 }, { id: 'block-other-torno', session_id: 'mixed-other-sede', sede_id: 'sede-b',
     activity_type: 'torno', teacher_id: 'teacher-b', capacity: 2 });
@@ -273,8 +275,7 @@ for (const view of ['owner', 'superadmin', 'other-sede']) test(`${view} activity
       { id: 'block-other-torno', activityType: 'torno', teacherId: 'teacher-b', capacity: 2, studentIds: [] }]);
   const queries = backend.reads.slice(view === 'owner' ? 0 : start).filter(read => read.table === 'session_activity_block_students');
   expect(queries.every(query => JSON.stringify(query.orders) === JSON.stringify([['block_id', true], ['student_id', true]]))).toBe(true);
-  expect(queries.every(query => JSON.stringify(query.filters) === JSON.stringify(view === 'superadmin' ? []
-    : [['eq', 'session_activity_blocks.sede_id', view === 'other-sede' ? 'sede-b' : 'sede-a']]))).toBe(true);
+  expect(queries.every(query => query.filters.length === 0)).toBe(true);
   if (view === 'superadmin') expect(queries.map(query => query.start)).toEqual([0, 2]);
   expect(state).toMatchObject({ ready: true, error: null }); expect(backend.rpcs).toEqual([]);
 });
@@ -296,7 +297,7 @@ test('bounded calendar paints before held financial and inventory reads; financi
   await expect(page.locator('[data-session-id="recent"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Abrir control de asistencia' })).toBeDisabled();
-  await expect(page.getByTestId('students')).toContainText('Cargando datos');
+  await expect(page.getByTestId('students').getByRole('status')).toContainText('Cargando bonos y detalles');
   expect((await snapshot(page))).toMatchObject({ loading: false, ready: false, owner: false });
   await page.locator('[data-session-id="recent"]').dispatchEvent('click');
   await expect(page.getByRole('button', { name: 'Crear sesión', exact: true })).toHaveCount(0);
@@ -345,7 +346,7 @@ test('known legacy NULL gift payment loads as unknown without changing raw state
   Object.assign(backend.rows.gift_cards[0], { id: legacyId, buyer: 'fixture buyer', recipient: 'Alex Perez', num_classes: 2,
     sessions_used: 0, validity_months: 3, activated_at: '2020-01-01', expiry_date: '2099-01-01', payment_status: null });
   backend.rows.session_students.find(row => row.session_id === 'old-gift').gift_card_id = legacyId;
-  backend.rows.session_business_state.find(row => row.session_id === 'old-gift').funding_gift_card_id = legacyId;
+  backend.rows.session_activity_business_state.find(row => row.session_id === 'old-gift').funding_gift_card_id = legacyId;
   backend.rows.student_credit_profile[0].penalty_incidents.find(row => row.penalty_id === 'penalty-gift').original_gift_card_id = legacyId;
   const originalRows = clone(backend.rows);
   await open(page); await ready(page);
@@ -362,6 +363,7 @@ test('known legacy NULL gift payment loads as unknown without changing raw state
   expect(penalties.filter((penalty: any) => penalty.id !== 'penalty-gift').every((penalty: any) => penalty.canSettle === true)).toBe(true);
   expect(backend.rows).toEqual(originalRows); expect(backend.rpcs).toEqual([]);
 
+  await page.getByTestId('students').getByRole('button', { name: /^Bonos temporales/ }).click();
   await page.getByTestId('students').locator('button[data-student-id="student-a"]').click();
   const giftPenalty = page.locator('[data-penalty-id="penalty-gift"]');
   await giftPenalty.getByLabel('Motivo de resolución penalty-gift', { exact: true }).fill('Review of the unknown original payment');
@@ -395,6 +397,58 @@ test('business state precedes attendance history; mixed activity ID maps and can
   expect(state.students[1].assignedClasses).toHaveLength(2);
 });
 
+test('required mixed financial view projects activity provenance and paginates by the stable session/student composite key', async ({ page }) => {
+  await open(page); await ready(page);
+  const backend = backends.get(page)!;
+  const reads = backend.reads.filter(read => read.table === 'session_activity_business_state');
+  expect(reads.length).toBeGreaterThan(1);
+  expect(reads.every(read => JSON.stringify(read.orders) === JSON.stringify([['session_id', true], ['student_id', true]]))).toBe(true);
+  expect(reads.every(read => read.columns === '*,funding_activity_type,funding_activity_block_id,activity_teacher_id,activity_capacity,activity_source_verified')).toBe(true);
+  expect(backend.reads.some(read => read.table === 'session_business_state')).toBe(false);
+  const state = await snapshot(page);
+  expect(state.sessions.find((row: any) => row.id === 'mixed-history').businessStateByStudentId['student-a']).toMatchObject({
+    fundingActivityType: 'mesa', fundingActivityBlockId: 'block-mesa', activityTeacherId: 'teacher', activityCapacity: 4, activitySourceVerified: true
+  });
+  expect(state.sessions.find((row: any) => row.id === 'old-manual').businessStateByStudentId['student-a'].activitySourceVerified).toBe(false);
+  expect(backend.rpcs).toEqual([]);
+});
+
+for (const verified of [true, false]) test(`mixed incident with ${verified ? 'verified' : 'unknown'} original activity loads intact and ${verified ? 'enables' : 'blocks'} its availability hint`, async ({ page }) => {
+  const backend = backends.get(page)!;
+  const parent = backend.rows.sessions.find(row => row.id === 'old-manual');
+  Object.assign(parent, { class_type: 'mixto', teacher_id: null });
+  backend.rows.session_activity_blocks.push({ id: 'incident-mesa', session_id: parent.id, sede_id: parent.sede_id,
+    activity_type: 'mesa', teacher_id: 'teacher', capacity: 4 }, { id: 'incident-torno', session_id: parent.id,
+    sede_id: parent.sede_id, activity_type: 'torno', teacher_id: 'teacher', capacity: 2 });
+  backend.rows.session_activity_block_students.push({ block_id: 'incident-mesa', session_id: parent.id, student_id: 'student-a', created_at: '2026-07-04T08:00:00Z' });
+  Object.assign(backend.rows.session_activity_business_state.find(row => row.session_id === parent.id), {
+    funding_activity_type: verified ? 'mesa' : null, funding_activity_block_id: 'incident-mesa', activity_teacher_id: 'teacher',
+    activity_capacity: 4, activity_source_verified: verified
+  });
+  const original = clone(backend.rows);
+  await open(page); await ready(page);
+  const state = await snapshot(page);
+  expect(state.students[0].pendingPenalties.find((row: any) => row.id === 'penalty-manual')).toMatchObject({
+    canSettle: verified, originalManualCreditId: 'manual-original', state: 'pending'
+  });
+  expect(state.sessions.find((row: any) => row.id === parent.id)).toMatchObject({ classType: 'mixto',
+    manualCreditIdByStudentId: { 'student-a': 'manual-original' }, businessStateByStudentId: { 'student-a': { activitySourceVerified: verified } } });
+  expect(backend.rows).toEqual(original); expect(backend.rpcs).toEqual([]);
+});
+
+for (const contract of ['missing-view', 'old-columns', 'missing-verification']) test(`new frontend fails closed against ${contract} financial contracts without falling back to the old view`, async ({ page }) => {
+  const backend = backends.get(page)!;
+  if (contract === 'missing-view') backend.failures.set('session_activity_business_state', { code: '42P01', message: 'Required mixed view is missing' });
+  else for (const row of backend.rows.session_activity_business_state) {
+    if (contract === 'missing-verification') delete row.activity_source_verified;
+    else for (const key of ['funding_activity_type', 'funding_activity_block_id', 'activity_teacher_id', 'activity_capacity', 'activity_source_verified']) delete row[key];
+  }
+  await open(page);
+  await expect.poll(async () => (await snapshot(page)).error).toBeTruthy();
+  expect(await snapshot(page)).toMatchObject({ ready: false, students: [], giftCards: [] });
+  expect(backend.reads.some(read => read.table === 'session_business_state')).toBe(false); expect(backend.rpcs).toEqual([]);
+});
+
 test('a due projected successor preserves raw period identity and balance without retargeting an older incident', async ({ page }) => {
   const backend = backends.get(page)!;
   Object.assign(backend.rows.students_effective_membership[0], { effective_period_id: 'period-queued', classes_remaining: 8, payment_status: 'pending' });
@@ -406,7 +460,7 @@ test('a due projected successor preserves raw period identity and balance withou
   expect(backend.rpcs).toEqual([]);
 });
 
-for (const table of ['student_credit_profile', 'students_effective_membership', 'student_membership_periods', 'session_business_state',
+for (const table of ['student_credit_profile', 'students_effective_membership', 'student_membership_periods', 'session_activity_business_state',
   'sedes', 'gift_cards', 'session_operation_receipts', 'gift_card_operation_receipts', 'full-sessions']) {
   test(`critical ${table} denial rejects refresh, displays loadError and preserves the stored credit key`, async ({ page }) => {
     const backend = backends.get(page)!;
@@ -431,7 +485,7 @@ for (const malformed of ['profile-revision', 'business-roster', 'membership-peri
     expect(await run(page, 'approveStudentManualCredit', [approval()])).toMatchObject({ ok: false });
     const original = (await snapshot(page)).storage;
     if (malformed === 'profile-revision') backend.rows.student_credit_profile[0].penalty_incidents[0].expected_revision = 6;
-    if (malformed === 'business-roster') backend.rows.session_business_state[0].student_id = 'foreign';
+    if (malformed === 'business-roster') backend.rows.session_activity_business_state[0].student_id = 'foreign';
     if (malformed === 'membership-period') backend.rows.students_effective_membership[0].materialized_period_id = 'other';
     if (malformed === 'gift-balance') backend.rows.gift_cards[0].sessions_used = -1;
     if (malformed === 'gift-payment') delete backend.rows.gift_cards[0].payment_status;
@@ -534,7 +588,7 @@ test('stored credit and session descriptors remain read-only during remount hydr
   const original = (await snapshot(page)).storage;
   const held = gate(); backend.holds.set('student_credit_profile', held);
   await configure(page, { remount: true });
-  await expect(page.getByRole('status')).toBeVisible();
+  await expect(page.getByTestId('calendar').getByRole('status')).toBeVisible();
   const state = await snapshot(page);
   expect(state).toMatchObject({ ready: false, storage: original, pendingCredit: { requestKey: approval().requestKey },
     pendingSession: { sessionId: 'recent', operation: 'attendance' } });

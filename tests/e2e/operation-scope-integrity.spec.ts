@@ -28,7 +28,7 @@ const finish = async (page: Page, id: string) => {
   await expect.poll(async () => (await snapshot(page)).results[id].pending).not.toBe(true);
   return (await snapshot(page)).results[id];
 };
-const draft = () => { const { id, ...session } = structuredClone(scopeSession); return session; };
+const draft = () => { const { id, ...session } = structuredClone(scopeSession); return { ...session, activityBlocks: session.activityBlocks!.map(({ id, ...block }) => block) }; };
 const movement = { item_id: 'item', type: 'entrada', quantity: 3, new_quantity: 5 };
 const business = { operation: 'cancel_reservation', sessionId: 'session', studentId: 'student-mesa',
   requestKey: 'business-key', expectedRevision: 7, reason: 'Explicit correction' };
@@ -48,7 +48,8 @@ test.beforeEach(async ({ page }) => {
   const backend: Backend = { calls: [], mutations: [], holds: new Map(), failures: new Map(), receipts: new Map(), external: [], errors: [], rows: {
     inventory_items: [{ id: 'item', current_quantity: 2 }], inventory_movements: [],
     teachers: [{ id: 'teacher', name: 'Original' }], sessions: [{ id: 'session', teacher_id: 'teacher', teacher_substitute_id: 'teacher' }],
-    session_activity_blocks: [{ id: 'old-block', session_id: 'session', sede_id: 'sede-a', activity_type: 'mesa' }],
+    session_activity_blocks: scopeBlocks.map(block => ({ id: block.id, session_id: 'session', sede_id: 'sede-a',
+      activity_type: block.activityType, teacher_id: block.teacherId || null, capacity: block.capacity })),
     session_activity_block_students: [], session_students: [
       { session_id: 'session', student_id: 'student-mesa', gift_card_id: 'gift', activity_type: 'mesa' },
       { session_id: 'session', student_id: 'student-torno', activity_type: 'mesa' }
@@ -99,6 +100,18 @@ test.beforeEach(async ({ page }) => {
           response.data = { session_id: request.args.p_session_id, request_key: request.args.p_request_key, revision: 8 };
           backend.receipts.set(request.args.p_request_key, response.data);
           backend.mutations.push(structuredClone(request));
+          if (request.name === 'save_session_reservation' && request.args.p_activity_blocks) {
+            backend.rows.session_activity_blocks = request.args.p_activity_blocks.map((block: any, index: number) => ({
+              id: block.id || `atomic-block-${index}`, session_id: request.args.p_session_id, sede_id: request.args.p_sede_id,
+              activity_type: block.activity_type, teacher_id: block.teacher_id, capacity: block.capacity
+            }));
+            backend.rows.session_activity_block_students = request.args.p_activity_blocks.flatMap((block: any, index: number) =>
+              block.student_ids.map((student_id: string) => ({ block_id: block.id || `atomic-block-${index}`, session_id: request.args.p_session_id, student_id })));
+            for (const block of request.args.p_activity_blocks) for (const studentId of block.student_ids) {
+              const enrollment = backend.rows.session_students.find(row => row.student_id === studentId);
+              if (enrollment) enrollment.activity_type = block.activity_type;
+            }
+          }
         }
       } else throw new Error(`Unexpected RPC ${request.name}`);
     } else if (!error && request.kind !== 'refresh') throw new Error(`Unexpected request kind ${request.kind}`);
@@ -190,10 +203,12 @@ for (const [name, args, heldLabel] of delayed) for (const change of changes) {
   });
 }
 
-for (const heldLabel of ['refresh', 'session_activity_blocks.select', 'session_activity_blocks.delete',
-  'session_activity_blocks.insert', 'session_activity_block_students.insert', 'session_students.update.mesa', 'session_students.update.torno']) {
-  test(`mixed session cannot continue after actor return during ${heldLabel}`, async ({ page }) => {
-    await staleAfter(page, 'updateSession', ['session', { capacity: 7 }], heldLabel, 'actor-return');
+for (const [heldLabel, change] of [['save_session_reservation', 'actor-return'], ['save_session_reservation', 'sede-return'],
+  ['refresh', 'actor-return'], ['refresh', 'sede-return'], ['refresh', 'not-ready'], ['refresh', 'remount'], ['refresh', 'actor-same-sede']]) {
+  test(`atomic mixed session cannot publish or mutate activity trees after ${change} during ${heldLabel}`, async ({ page }) => {
+    await staleAfter(page, 'updateSession', ['session', { capacity: 7 }], heldLabel, change);
+    expect(backends.get(page)!.calls.every(call => call.kind !== 'table')).toBe(true);
+    expect(backends.get(page)!.mutations).toHaveLength(1);
   });
 }
 for (const [name, args, heldLabel] of [
@@ -222,33 +237,29 @@ test('valid scope preserves inventory quantity and parallel teacher unlink/delet
     'sessions.update.teacher_id', 'sessions.update.teacher_substitute_id', 'teachers.delete']);
 });
 
-test('valid mixed session keeps shipping block replacement, roster links and per-student activity writes', async ({ page }) => {
+test('valid mixed session saves the complete activity tree with one atomic RPC and no standalone reads or DML', async ({ page }) => {
   const backend = backends.get(page)!;
   expect(await finish(page, await start(page, 'updateSession', ['session', { capacity: 7 }]))).toEqual({ ok: true, value: true });
-  expect(backend.calls.map(label)).toEqual(['save_session_reservation', 'refresh', 'session_activity_blocks.select',
-    'session_activity_blocks.delete', 'session_activity_blocks.insert', 'session_activity_block_students.insert',
-    'session_students.update.mesa', 'session_students.update.torno', 'refresh']);
+  expect(backend.calls.map(label)).toEqual(['save_session_reservation', 'refresh']);
   const rpc = backend.calls[0];
   expect(rpc.args).toMatchObject({ p_expected_revision: 7, p_sede_id: 'sede-a', p_student_ids: ['student-mesa', 'student-torno'],
     p_gift_card_ids: { 'student-torno': 'gift' }, p_manual_credit_ids: { 'student-mesa': 'manual' } });
-  expect(backend.rows.session_activity_blocks).toEqual(scopeBlocks.slice(0, 2).map((block, index) => ({
-    id: `saved-${index}`, session_id: 'session', sede_id: 'sede-a', activity_type: block.activityType,
-    teacher_id: block.teacherId, capacity: block.capacity
-  })));
-  expect(backend.rows.session_activity_block_students).toEqual([
-    { block_id: 'saved-0', session_id: 'session', student_id: 'student-mesa' },
-    { block_id: 'saved-1', session_id: 'session', student_id: 'student-torno' }
-  ]);
+  expect(rpc.args.p_metadata.teacher_id).toBeNull();
+  expect(rpc.args.p_activity_blocks).toHaveLength(3);
+  expect(rpc.args.p_activity_blocks).toEqual(expect.arrayContaining(scopeBlocks.map(block => ({
+    id: block.id, activity_type: block.activityType, teacher_id: block.teacherId || null, capacity: block.capacity, student_ids: block.studentIds
+  }))));
+  expect(backend.rows.session_activity_blocks.map(row => row.id).sort()).toEqual(scopeBlocks.map(block => block.id).sort());
   expect(backend.rows.session_students.map(row => row.activity_type)).toEqual(['mesa', 'torno']);
   expect((await snapshot(page)).storage).toEqual({});
 });
 
-test('empty activity blocks keep the allowlisted read without any standalone block DML', async ({ page }) => {
+test('classic empty blocks omit the optional argument and require no activity-tree reads or DML', async ({ page }) => {
   const backend = backends.get(page)!;
   backend.rows.session_activity_blocks = [];
-  expect(await finish(page, await start(page, 'addSession', [{ ...draft(), activityBlocks: [] }]))).toMatchObject({ ok: true });
-  expect(backend.calls.map(label)).toEqual(['save_session_reservation', 'refresh', 'session_activity_blocks.select', 'refresh']);
-  expect(backend.calls[2]).toMatchObject({ columns: 'id', filters: [['eq', 'session_id', backend.calls[0].args.p_session_id]] });
+  expect(await finish(page, await start(page, 'addSession', [{ ...draft(), classType: 'mesa', activityBlocks: [] }]))).toMatchObject({ ok: true });
+  expect(backend.calls.map(label)).toEqual(['save_session_reservation', 'refresh']);
+  expect(backend.calls[0].args).not.toHaveProperty('p_activity_blocks');
 });
 
 test('gift reverse lookup keeps its resolved identity and missing link remains a real no-op', async ({ page }) => {

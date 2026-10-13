@@ -224,7 +224,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     return execute(query.limit(limit));
                 }
                 const keys = activityRoster ? ['block_id', 'student_id']
-                    : table === 'session_business_state' ? ['session_id', 'student_id']
+                    : table === 'session_activity_business_state' ? ['session_id', 'student_id']
                     : ['students_effective_membership', 'student_credit_profile'].includes(table) ? ['student_id'] : ['id'];
                 return readAllRows((offset, size) => {
                     let query = select();
@@ -301,7 +301,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             (activityBlockStudentsRes.data || []).forEach((row: any) => {
                 const block = activityBlocksById.get(row.block_id);
                 const session = sessionsById.get(row.session_id);
-                if (!block || !session || block.session_id !== row.session_id || block.sede_id !== session.sede_id
+                if (!block || block.session_id !== row.session_id || (session && block.sede_id !== session.sede_id)
                     || !sessionStudentsMap[row.session_id]?.some(item => item.student_id === row.student_id)) {
                     throw new Error('El roster de actividades no coincide con el bloque, la sede o el alumno de la sesion. Recarga los datos.');
                 }
@@ -317,6 +317,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             const configuredCapacityDefaults = DEFAULT_CAPACITY_BY_ACTIVITY;
 
             const mapSession = (row: any): ClassSession => {
+                if ((activityBlocksMap[row.id] || []).some(block => block.sede_id !== row.sede_id
+                    || !['mesa', 'torno', 'coworking', 'workshop', 'privada'].includes(block.activity_type))) {
+                    throw new Error('El bloque de actividad no coincide con la sede o su actividad es desconocida.');
+                }
                 const linked = sessionStudentsMap[row.id] || [];
                 const attendance: Record<string, 'present' | 'absent'> = {};
                 linked.forEach((item: any) => {
@@ -436,7 +440,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes] = await Promise.all([
                 buildQuery('students'), buildQuery('sessions'), buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
-                buildQuery('session_business_state'),
+                buildQuery('session_activity_business_state', undefined, undefined, undefined, {
+                    columns: '*,funding_activity_type,funding_activity_block_id,activity_teacher_id,activity_capacity,activity_source_verified'
+                }),
                 readAllRows((offset, size) => withTimeout('sedes.owner.select',
                     supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session!.user.id).eq('is_active', true)
                         .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
@@ -454,6 +460,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             const sessionIds = new Set(fullSessions.map(item => item.id));
             const businessBySession: Record<string, any[]> = {};
             (businessRes.data || []).forEach((row: any) => {
+                if (typeof row.activity_source_verified !== 'boolean'
+                    || ['funding_activity_type', 'funding_activity_block_id', 'activity_teacher_id', 'activity_capacity'].some(key => !Object.hasOwn(row, key))) {
+                    throw new Error('El backend requiere la proyeccion de actividad y financiacion mixta de esta version.');
+                }
                 if (!sessionIds.has(row.session_id)) throw new Error('El estado de negocio contiene una sesion no cargada. Recarga los datos.');
                 (businessBySession[row.session_id] ||= []).push(row);
             });

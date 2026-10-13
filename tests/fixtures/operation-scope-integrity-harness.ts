@@ -24,15 +24,14 @@ export const operationScopeHarnessHtml = `<!doctype html><html><body><script typ
 </script></body></html>`;
 
 export const scopeBlocks: SessionActivityBlock[] = [
-  { activityType: 'mesa', teacherId: 'teacher', capacity: 4, studentIds: ['student-mesa'] },
-  { activityType: 'torno', teacherId: 'substitute', capacity: 2, studentIds: ['student-torno'] },
-  { activityType: 'mixto', capacity: 8, studentIds: ['ignored-mixed'] },
-  { activityType: 'mesa', capacity: 1, studentIds: [] }
+  { id: 'block-mesa', activityType: 'mesa', teacherId: 'teacher', capacity: 4, studentIds: ['student-mesa'] },
+  { id: 'block-torno', activityType: 'torno', teacherId: 'substitute', capacity: 2, studentIds: ['student-torno'] },
+  { id: 'block-empty', activityType: 'mesa', capacity: 1, studentIds: [] }
 ];
 export const scopeSession: ClassSession = {
   id: 'session', sedeId: 'sede-a', revision: 7, attendancePolicyVersion: 2,
-  date: '2026-10-12', startTime: '10:00', endTime: '12:00', classType: 'mixto', capacity: 6,
-  teacherId: 'teacher', studentIds: ['student-mesa', 'student-torno'], students: ['Mesa', 'Torno'],
+  date: '2026-10-12', startTime: '10:00', endTime: '12:00', classType: 'mixto', capacity: 7,
+  studentIds: ['student-mesa', 'student-torno'], students: ['Mesa', 'Torno'],
   giftCardIdByStudentId: { 'student-torno': 'gift' }, manualCreditIdByStudentId: { 'student-mesa': 'manual' },
   activityBlocks: scopeBlocks
 };

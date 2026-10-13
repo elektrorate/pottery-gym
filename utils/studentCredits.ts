@@ -1,5 +1,6 @@
 import type { ClassSession, GiftCard, ManualCreditEntitlement, PendingStudentPenalty, Student } from '../types';
 import { getWorkshopDate } from './studentLifecycle';
+import { getSessionFundingActivity } from './sessionBusiness';
 
 const record = (value: unknown): value is Record<string, any> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -136,6 +137,7 @@ export const attachStudentCreditProfiles = (
       const giftId = incident.original_gift_card_id ?? undefined;
       const manualId = incident.original_manual_credit_id ?? undefined;
       const sources = [periodId, giftId, manualId].filter(Boolean);
+      const activity = getSessionFundingActivity(session, student.id, student.sedeId);
       // Availability is only a local UI hint. The owner RPC rechecks identity, ledgers and revision.
       let canSettle = incident.is_pending && session.attendancePolicyVersion === 2 && timestamp(session.completedAt)
         && !student.archivedAt && raw.archived_at == null && sources.length === 1 && !!business
@@ -144,7 +146,8 @@ export const attachStudentCreditProfiles = (
         && (business.fundingManualCreditId ?? undefined) === manualId
         && (session.giftCardIdByStudentId?.[student.id] ?? undefined) === giftId
         && (session.manualCreditIdByStudentId?.[student.id] ?? undefined) === manualId
-        && !business.billingDebitId && !business.settlementDebitId;
+        && !business.billingDebitId && !business.settlementDebitId
+        && (session.classType !== 'mixto' || activity !== undefined);
       if (canSettle && periodId) {
         const periods = student.membershipPeriods || [];
         const originals = periods.filter(period => period.id === periodId);
@@ -168,15 +171,16 @@ export const attachStudentCreditProfiles = (
         const used = card && integer(card.sessionsUsed);
         const remaining = card && integer(card.sessionsRemaining);
         canSettle = originals.length === 1 && card.recipientStudentId === student.id
-          && (cardSede === undefined || cardSede === student.sedeId) && card.paymentStatus === 'paid'
+          && (session.classType === 'mixto' ? cardSede === student.sedeId : cardSede === undefined || cardSede === student.sedeId)
+          && card.paymentStatus === 'paid'
           && ['active', 'pending'].includes(card.status || '')
-          && (card.type === 'torno' ? 'torno' : card.type === 'modelado' ? 'mesa' : undefined) === session.classType
+          && (card.type === 'torno' ? 'torno' : card.type === 'modelado' ? 'mesa' : undefined) === activity
           && allocation !== undefined && allocation > 0 && used !== undefined && used >= 0 && used < allocation
           && remaining !== undefined && remaining > 0 && remaining === allocation - used
           && covers(card.activatedAt, card.expiryDate, today, session.date);
       } else if (canSettle && manualId) {
         const credit = manualCredits.find(candidate => candidate.id === manualId);
-        canSettle = !!credit && credit.remainingClasses > 0 && credit.activity === session.classType
+        canSettle = !!credit && credit.remainingClasses > 0 && credit.activity === activity
           && covers(credit.startsOn, credit.endsOn, today, session.date);
       }
       return { id: incident.penalty_id, studentId: student.id, sedeId: student.sedeId!, sessionId: session.id,

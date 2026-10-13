@@ -109,7 +109,22 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     sessionAudience: 'membresia' as 'membresia' | 'temporal' | 'ambos',
     activityBlocks: [] as SessionActivityBlock[]
   });
-  const activeSelectedCount = sessionForm.selectedStudents.filter(id => !editingReservation || !isCancelled(editingReservation, id)).length;
+  const selectedRoster = sessionForm.classType === 'mixto'
+    ? [...new Set([...sessionForm.activityBlocks.flatMap(block => block.studentIds),
+      ...(editingReservation?.studentIds || []).filter(id => isCancelled(editingReservation!, id))])]
+    : sessionForm.selectedStudents;
+  const activeSelectedCount = selectedRoster.filter(id => !editingReservation || !isCancelled(editingReservation, id)).length;
+  const formCapacity = sessionForm.classType === 'mixto'
+    ? sessionForm.activityBlocks.reduce((total, block) => total + block.capacity, 0) : sessionForm.capacity;
+  const mixedHistoryLocked = editingReservation?.classType === 'mixto' && (!!editingReservation.completedAt
+    || editingReservation.studentIds?.some(id => isCancelled(editingReservation, id)));
+  const getFundingActivity = (studentId: string) => {
+    if (sessionForm.classType !== 'mixto') return sessionForm.classType;
+    const assigned = sessionForm.activityBlocks.filter(block => block.studentIds.includes(studentId));
+    const block = assigned[0];
+    return assigned.length === 1 && ['mesa', 'torno', 'coworking', 'workshop', 'privada'].includes(block.activityType)
+      && (!block.teacherId || teachers.some(teacher => teacher.id === block.teacherId)) ? block.activityType : undefined;
+  };
 
   const getStudentName = (studentId: string, session?: ClassSession) => {
     const student = students.find(item => item.id === studentId);
@@ -125,14 +140,20 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     : getSessionOccupancy(session, capacityMap).enrolled;
   const getFundingCards = (studentId: string) => giftCards.filter(card => card.recipientStudentId === studentId
     && card.status === 'active' && !card.consumedAt && (card.sessionsRemaining || 0) > 0
-    && (!card.expiryDate || card.expiryDate.slice(0, 10) >= madridDateKey()));
+    && (!card.expiryDate || card.expiryDate.slice(0, 10) >= madridDateKey())
+    && (sessionForm.classType !== 'mixto' || (card.paymentStatus === 'paid'
+      && !!card.sedeId && card.sedeId === (editingReservation?.sedeId || students.find(student => student.id === studentId)?.sedeId)
+      && (card.type === 'torno' ? 'torno' : 'mesa') === getFundingActivity(studentId)
+      && !!card.activatedAt && !!card.expiryDate
+      && card.activatedAt.slice(0, 10) <= (sessionForm.date < today ? sessionForm.date : today)
+      && card.expiryDate.slice(0, 10) >= (sessionForm.date > today ? sessionForm.date : today))));
   const getFundingManualCredits = (student: Student | undefined) => {
     if (!student?.sedeId || isStudentArchived(student, today) || (editingReservation && editingReservation.attendancePolicyVersion !== 2)) return [];
     const sedeId = editingReservation ? editingReservation.sedeId : student.sedeId;
     const earliest = sessionForm.date < today ? sessionForm.date : today;
     const latest = sessionForm.date > today ? sessionForm.date : today;
     return (student.manualCredits || []).filter(credit => credit.studentId === student.id && credit.sedeId === sedeId
-      && credit.sedeId === student.sedeId && credit.activity === sessionForm.classType && credit.remainingClasses > 0
+      && credit.sedeId === student.sedeId && credit.activity === getFundingActivity(student.id) && credit.remainingClasses > 0
       && credit.startsOn <= earliest && credit.endsOn >= latest);
   };
 
@@ -522,7 +543,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
         showError('Asigna cada alumno a un único bloque de actividad.');
         return;
       }
-      if (blocks.some(block => block.studentIds.length > block.capacity)) {
+      if (blocks.some(block => !Number.isSafeInteger(block.capacity) || block.capacity < 1 || block.capacity > 100
+        || block.studentIds.filter(id => !editingReservation || !isCancelled(editingReservation, id)).length > block.capacity)
+        || blocks.reduce((total, block) => total + block.capacity, 0) > 100) {
         showError('Uno de los bloques supera su capacidad configurada.');
         return;
       }
@@ -539,7 +562,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       showError("La hora de inicio debe ser anterior a la hora de fin.");
       return;
     }
-    const capacity = Math.max(1, Math.min(100, Number(sessionForm.capacity) || 0));
+    const capacity = sessionForm.classType === 'mixto' ? formCapacity
+      : Math.max(1, Math.min(100, Number(sessionForm.capacity) || 0));
     if (!capacity) {
       showError("Indica una capacidad válida para la sesión.");
       return;
@@ -576,7 +600,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       return;
     }
     const studentIds: string[] = sessionForm.classType === 'feriado' ? [] : sessionForm.classType === 'mixto'
-      ? [...new Set(sessionForm.activityBlocks.flatMap(block => block.studentIds))]
+      ? [...selectedRoster]
       : [...sessionForm.selectedStudents];
     if (current?.studentIds?.some(id => isCancelled(current, id) && !studentIds.includes(id))) {
       setSaveError('Las reservas canceladas se conservan por ID en el historial. No se pueden quitar ni reactivar.');
@@ -596,6 +620,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       setSaveError('El credito manual requiere una sesion con politica 2.');
       return;
     }
+    if (sessionForm.classType === 'mixto' && studentIds.some(id => {
+      if (current && (current.completedAt || isCancelled(current, id))) return false;
+      return (manualCreditIdByStudentId[id] && !getFundingManualCredits(students.find(student => student.id === id)).some(credit => credit.id === manualCreditIdByStudentId[id]))
+        || (giftCardIdByStudentId[id] && !getFundingCards(id).some(card => card.id === giftCardIdByStudentId[id]));
+    })) {
+      setSaveError('La fuente seleccionada no corresponde al bloque actual. Corrige la seleccion explicitamente; no se sustituira automaticamente.');
+      return;
+    }
     const payload: Omit<ClassSession, 'id'> = {
       date: sessionForm.date,
       startTime: sessionForm.startTime,
@@ -607,7 +639,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       giftCardIdByStudentId,
       manualCreditIdByStudentId,
       ...(current ? { revision: sessionForm.revision } : { attendancePolicyVersion: 2 }),
-      teacherId: sessionForm.teacherId || undefined,
+      teacherId: sessionForm.classType === 'mixto' ? undefined : sessionForm.teacherId || undefined,
       workshopName: sessionForm.workshopName.trim() || undefined,
       privateReason: sessionForm.privateReason.trim() || undefined,
       sessionAudience: sessionForm.sessionAudience,
@@ -898,7 +930,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       key={`${dayKey}-${index}`}
                       onClick={() => { setSelectedDate(new Date(item.date)); setViewMode('day'); }}
                       aria-label={`${item.date.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}${daySessions.length ? `, ${countLabel}` : ', sin sesiones'}`}
-                      className={`calendar-density-cell ${densityClass} ${!item.currentMonth ? 'calendar-density-muted' : ''} ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-brand' : ''}`}
+                      className={`calendar-density-cell ${densityClass} ${!item.currentMonth ? 'calendar-density-muted' : ''} ${isPastSessionDay ? 'calendar-density-past' : ''} ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-brand' : ''}`}
                     >
                       <span className="text-[14px] font-semibold leading-none">{item.date.getDate()}</span>
                       {item.currentMonth && daySessions.length > 0 && <span className="calendar-density-count">{countLabel}</span>}
@@ -1192,7 +1224,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
               <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
               <div className="grid gap-6 md:grid-cols-[0.9fr_1.1fr] md:gap-8">
                 <div className="space-y-5">
-                  <fieldset>
+                  <fieldset disabled={mixedHistoryLocked}>
                     <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7B3F22]">Horario</legend>
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
@@ -1214,6 +1246,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     <div className="relative">
                       <select
                         id="session-type"
+                        disabled={mixedHistoryLocked}
                         value={sessionForm.classType}
                         onChange={(e) => {
                           const classType = e.target.value as ClassSession['classType'];
@@ -1258,11 +1291,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         type="number"
                         min="1"
                         max="100"
-                        value={sessionForm.capacity}
+                        disabled={sessionForm.classType === 'mixto' || mixedHistoryLocked}
+                        value={formCapacity}
                         onChange={(e) => setSessionForm({ ...sessionForm, capacity: Number(e.target.value) })}
                         className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
                       />
-                      <span className="mt-1 block text-[11px] text-[#8B6B5E]">{activeSelectedCount} de {sessionForm.capacity || 0} plazas ocupadas</span>
+                      <span className="mt-1 block text-[11px] text-[#8B6B5E]">{activeSelectedCount} de {formCapacity || 0} plazas ocupadas</span>
                     </label>
                   )}
 
@@ -1306,12 +1340,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
                 {sessionForm.classType !== 'feriado' && (
                   <div className="space-y-6 border-t border-[#E8D9CC] pt-6 md:border-l md:border-t-0 md:pl-10 md:pt-0">
-                    {sessionForm.classType === 'mixto' && <fieldset className="space-y-3 rounded-[12px] border border-[#E8D9CC] bg-[#FFF9F3] p-3">
+                    {sessionForm.classType === 'mixto' && <fieldset disabled={mixedHistoryLocked} className="space-y-3 rounded-[12px] border border-[#E8D9CC] bg-[#FFF9F3] p-3">
                       <legend className="ui-label px-1 uppercase tracking-[0.14em] text-[#7B3F22]">Actividades y profesores</legend>
                       {sessionForm.activityBlocks.map((block, blockIndex) => <div key={block.activityType} className="rounded-[10px] border border-[#E1C9B5] bg-white p-3">
                         <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">{block.activityType === 'mesa' ? 'Mesa' : 'Torno'}</span><input aria-label={`Cupo ${block.activityType}`} type="number" min="1" max="100" value={block.capacity} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, capacity: Number(event.target.value) } : item) })} className="h-8 w-20 rounded border border-[#DDBFA4] px-2 text-[12px]" /></div>
                         <select aria-label={`Profesor de ${block.activityType}`} value={block.teacherId || ''} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, teacherId: event.target.value || undefined } : item) })} className="mb-2 h-9 w-full rounded border border-[#DDBFA4] bg-white px-2 text-[12px]"><option value="">Sin profesor</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{`${teacher.name} ${teacher.surname || ''}`.trim()}</option>)}</select>
-                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => !isStudentArchived(student, today) && (sessionForm.sessionAudience === 'ambos' || (student.studentCategory || 'membresia') === sessionForm.sessionAudience)).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{student.name} {student.surname || ''}</span><span className="ml-auto text-[10px] opacity-60">{student.studentCategory === 'temporal' ? 'Bonotemp' : 'Membresía'}</span></label>; })}</div>
+                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => !isStudentArchived(student, today) && (sessionForm.sessionAudience === 'ambos' || (student.studentCategory || 'membresia') === sessionForm.sessionAudience)).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{student.name} {student.surname || ''}</span><span className="ml-auto text-[10px] opacity-60">{student.studentCategory === 'temporal' ? 'Bonotemp' : 'Membresía'}</span></label>; })}</div>
                       </div>)}
                     </fieldset>}
                     <fieldset>
@@ -1344,7 +1378,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     <div>
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <label htmlFor="student-search" className="ui-label uppercase tracking-[0.14em] text-[#7B3F22]">Alumnos</label>
-                        <span data-testid="reservation-roster-count" className="ui-meta">{activeSelectedCount} seleccionados{sessionForm.selectedStudents.length > activeSelectedCount && ` / ${sessionForm.selectedStudents.length - activeSelectedCount} cancelados`}</span>
+                        <span data-testid="reservation-roster-count" className="ui-meta">{activeSelectedCount} seleccionados{selectedRoster.length > activeSelectedCount && ` / ${selectedRoster.length - activeSelectedCount} cancelados`}</span>
                       </div>
                       <div className="relative mb-2.5">
                         <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" /></svg>
@@ -1386,13 +1420,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         return filtered.map(s => {
                           const fullName = `${s.name} ${s.surname || ''}`.trim();
                           const studentKey = s.id;
-                           const isSelected = sessionForm.selectedStudents.includes(studentKey);
+                           const isSelected = selectedRoster.includes(studentKey);
                            const cat = s.studentCategory || 'membresia';
                            const isTemporary = cat === 'temporal';
                            const cancelled = !!editingReservation && isCancelled(editingReservation, studentKey);
-                           const capacityReached = !isSelected && activeSelectedCount >= sessionForm.capacity;
+                           const capacityReached = !isSelected && activeSelectedCount >= formCapacity;
                            return (
-                             <button type="button" key={s.id} data-student-id={s.id} aria-pressed={isSelected} disabled={capacityReached || cancelled || !!editingReservation?.completedAt} onClick={() => {
+                              <button type="button" key={s.id} data-student-id={s.id} aria-pressed={isSelected} disabled={sessionForm.classType === 'mixto' || capacityReached || cancelled || !!editingReservation?.completedAt} onClick={() => {
                                const newList = isSelected
                                  ? sessionForm.selectedStudents.filter(n => n !== studentKey)
                                  : [...sessionForm.selectedStudents, studentKey];
@@ -1413,11 +1447,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         });
                       })()}
                     </div>
-                    {sessionForm.selectedStudents.length > 0 && (
+                    {selectedRoster.length > 0 && (
                       <div className="mt-3 border-t border-[#E8D9CC] pt-3">
                         <p className="mb-2 text-[12px] font-semibold text-[#6E5145]">Alumnos seleccionados</p>
                         <div className="custom-scrollbar max-h-40 space-y-1.5 overflow-y-auto">
-                          {sessionForm.selectedStudents.map(studentId => {
+                          {selectedRoster.map(studentId => {
                             const studentObj = students.find(st => st.id === studentId);
                             const cat = studentObj?.studentCategory || 'membresia';
                             const isTemporary = cat === 'temporal';
@@ -1445,9 +1479,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                 </span>
                                 <button
                                   type="button"
-                                   disabled={cancelled || !!persistedSession?.completedAt}
+                                    disabled={cancelled || !!persistedSession?.completedAt || mixedHistoryLocked}
                                   onClick={() => setSessionForm({ ...sessionForm,
                                     selectedStudents: sessionForm.selectedStudents.filter(id => id !== studentId),
+                                    activityBlocks: sessionForm.activityBlocks.map(block => ({ ...block, studentIds: block.studentIds.filter(id => id !== studentId) })),
                                     giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => id !== studentId)),
                                     manualCreditIdByStudentId: Object.fromEntries(Object.entries(sessionForm.manualCreditIdByStudentId).filter(([id]) => id !== studentId)) })}
                                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8B6B5E] transition hover:bg-[#F8EEE5] hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952]"
