@@ -426,6 +426,41 @@ No se crea un registro de alumno vacío que obligue a un segundo proceso para co
 
 La definición exacta de qué campos son obligatorios u opcionales se cerrará dentro de la revisión final de Alumnos.
 
+
+### Alta de alumno · Membresía
+
+Para un alumno de tipo **Membresía**, el alta incluye:
+
+```text
+MEMBRESÍA
+
+Actividad *
+[ seleccionar actividad ]
+
+Tipo de bono *
+[ Plata / Oro / Platinum ]
+
+Fecha de inicio *
+[ dd/mm/aaaa ]
+
+Fecha de vencimiento
+[ último día del mes ]
+
+Estado
+[ calculado automáticamente ]
+```
+
+Reglas:
+
+- No se introducen manualmente “bonos / sesiones iniciales”.
+- El usuario selecciona el **tipo de bono de membresía**: Plata, Oro o Platinum.
+- La cantidad de sesiones/créditos asociada se obtiene del bono seleccionado.
+- La fecha de vencimiento se calcula por defecto como el **último día del mes** correspondiente.
+- El estado no se selecciona manualmente durante el alta.
+- Con sesiones/bonos disponibles → **Activo**.
+- Al agotarse → **Inactivo** automáticamente.
+- **Archivado** sigue siendo exclusivamente manual.
+
 ### Tipo de alumno y estado
 
 ## Estado de este subpunto: APROBADO
