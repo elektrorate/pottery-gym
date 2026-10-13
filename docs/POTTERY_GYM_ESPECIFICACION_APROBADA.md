@@ -465,7 +465,7 @@ Reglas:
 
 ## Estado de este subpunto: APROBADO
 
-**APROBADO:** existen tres tipos de alumno independientes entre sí:
+**APROBADO:** existen tres tipos de alumno:
 
 ```text
 ALUMNO
@@ -473,12 +473,6 @@ ALUMNO
 ├── Temporal
 └── Gift Card
 ```
-
-No se mezclan entre sí.
-
-Un alumno de **Gift Card** no es un alumno Temporal ni un alumno de Membresía.  
-Un alumno de **Membresía** no utiliza Gift Card como parte de su membresía.  
-Un alumno **Temporal** tampoco se define mediante Gift Card.
 
 ### Separación de conceptos
 
@@ -543,7 +537,6 @@ sesiones > 0 → Activo
 sesiones = 0 → Gift Card agotada + alumno archivado
 ```
 
-La Gift Card no se mezcla con Membresía ni Temporal.
 
 ### Historial contextual del alumno
 
