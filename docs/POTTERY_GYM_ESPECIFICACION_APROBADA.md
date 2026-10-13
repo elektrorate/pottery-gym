@@ -594,8 +594,9 @@ Mantener:
 ### Reglas comerciales ya aprobadas
 
 - El consumo ocurre **al finalizar la sesión**, no al reservar.
-- Cancelación con al menos **8 horas** antes → no consume.
-- Cancelación tardía → consume una clase.
+- El plazo de cancelación **es configurable por cada taller**; no existe un valor fijo global para Pottery Gym.
+- Una cancelación realizada dentro del plazo configurado por el taller → no consume.
+- Una cancelación realizada fuera del plazo configurado → consume una clase.
 - Falta/no-show sin cancelación a tiempo → consume una clase.
 - Sin crédito válido → incidencia pendiente; no saldo negativo automático.
 - Pago pendiente/desconocido → asistencia solo con aprobación explícita.
@@ -1290,6 +1291,12 @@ LOCAL
 2. Agente solo lectura.
 3. Escrituras no financieras.
 4. Operaciones sensibles cuando estén verificadas.
+
+---
+
+## Configuración · regla de cancelación
+
+**APROBADO:** cada taller puede configurar su propio plazo de cancelación en horas. No existe un plazo fijo global de 8 horas para todos los talleres. La lógica de cancelación y penalización debe consultar el valor configurado en el workshop.
 
 ---
 
