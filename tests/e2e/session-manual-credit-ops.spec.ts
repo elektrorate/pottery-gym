@@ -136,7 +136,7 @@ for (const code of ['P0001', '42501', '40001']) test(`${code} is a proved rollba
     calls.push({ name, args }); return { data: null, error: { code, message: 'SQL rejected original source' } };
   } }).save('reservation', input, intent)).rejects.toMatchObject({ code });
   expect(calls).toEqual([{ name: 'save_session_reservation', args: intent().args }]);
-  expect(refreshes).toBe(code === '40001' ? 1 : 0); expect(store.get('reservation')).toBeNull();
+  expect(refreshes).toBe(1); expect(store.get('reservation')).toBeNull();
 });
 
 test('storage loss or corrupt recovery cannot launch a write with a manufactured new identity', async () => {

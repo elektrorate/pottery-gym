@@ -98,7 +98,7 @@ test('uncertain failure blocks a different target and malformed receipt keeps or
     expect(store.get('session')).toEqual(retained);
 });
 
-test('SQL rollback clears intent; stale revision reloads without automatic retargeting', async () => {
+test('SQL rollback reloads authoritative state before clearing the intent without automatic retargeting', async () => {
     for (const code of ['P0001', '40001']) {
         const store = new SessionIntentStore(storage());
         let refreshes = 0;
@@ -108,10 +108,45 @@ test('SQL rollback clears intent; stale revision reloads without automatic retar
         }, refresh: async () => { refreshes++; } });
         await expect(operations.save('session', attendanceInput({}), () => createSessionAttendanceIntent(session, students, {}))).rejects.toMatchObject({ code });
         expect(calls).toBe(1);
-        expect(refreshes).toBe(code === '40001' ? 1 : 0);
+        expect(refreshes).toBe(1);
         expect(store.get('session')).toBeNull();
     }
 });
+
+for (const code of ['P0001', '42501', '40001']) {
+    test(`${code} followed by refresh failure retains the exact session intent until a refreshed rejection`, async () => {
+        const store = new SessionIntentStore(storage());
+        const calls: any[] = [];
+        let failRefresh = true;
+        const operations = createSessionOperations({ store, rpc: async (name, args) => {
+            calls.push({ name, args }); return { data: null, error: { code, message: 'rolled back' } };
+        }, refresh: async () => {
+            if (failRefresh) throw new Error('financial reload failed');
+        } });
+        const intent = createSessionAttendanceIntent(session, students, {});
+        await expect(operations.save('session', intent.input, () => intent)).rejects.toThrow('financial reload failed');
+        expect(store.get('session')).toEqual(intent);
+        failRefresh = false;
+        await expect(operations.save('session', intent.input, () => {
+            throw new Error('Must not rebuild');
+        })).rejects.toMatchObject({ code });
+        expect(calls[1]).toEqual(calls[0]);
+        expect(store.get('session')).toBeNull();
+    });
+}
+
+for (const code of ['57P01', 'FETCH']) {
+    test(`${code} is ambiguous and cannot clear the stored session intent`, async () => {
+        const store = new SessionIntentStore(storage());
+        let refreshes = 0;
+        const operations = createSessionOperations({ store, rpc: async () => ({ data: null, error: { code, message: 'uncertain' } }),
+            refresh: async () => { refreshes++; } });
+        const intent = createSessionAttendanceIntent(session, students, {});
+        await expect(operations.save('session', intent.input, () => intent)).rejects.toMatchObject({ code });
+        expect(refreshes).toBe(0);
+        expect(store.get('session')).toEqual(intent);
+    });
+}
 
 test('commit followed by reload failure retains retry identity rather than returning success', async () => {
     const store = new SessionIntentStore(storage());

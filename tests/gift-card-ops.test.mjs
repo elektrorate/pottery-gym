@@ -41,7 +41,7 @@ beforeEach(() => {
     rpc(name, args) { this.calls.push({ name, args }); return this.respond?.() ?? Promise.resolve(this.result); }
   };
   globalThis.__giftCardHarness = harness;
-  ctx = { sedeId: 'tenant', students: [
+  ctx = { assertScope() {}, sedeId: 'tenant', students: [
     { id: 'member', name: 'Alex', surname: 'Perez', studentCategory: 'membresia' },
     { id: 'temporary', name: 'Alex', surname: 'Perez', studentCategory: 'temporal' }
   ], giftCards: cards, setGiftCards(update) { cards = update(cards); },

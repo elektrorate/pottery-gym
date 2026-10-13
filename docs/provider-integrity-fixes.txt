@@ -1,0 +1,94 @@
+POTTERY GYM - CORRECCIONES DE AUTH Y CARGA DE DATOS
+
+Verificacion: 2026-10-12T23:40:58+02:00.
+Rama: fix/provider-state-integrity, base c3d2b5c.
+El solicitante aprobo corregir los hallazgos conservando las mejoras de rendimiento.
+Se preservaron los cambios previos de agenda, sesiones mixtas, UI y restauracion.
+No se hizo commit, push, despliegue, migracion ni renovacion de grants.
+
+DATACONTEXT
+
+- Primera carga rapida del calendario limitada a +/-62 dias de la fecha Madrid.
+  Se publica en modo lectura, sin habilitar operaciones con presupuestos parciales.
+- La segunda fase carga sesiones e historia completas, membresias, estado de
+  negocio, perfil de creditos, financiacion Gift y propietarios reales.
+- loadAllData/safeReload ESPERAN esa fase y rechazan errores o inconsistencias.
+  Inventario, piezas, historia de movimientos y horarios no confirman una operacion
+  financiera ni impiden que una recarga financiera valida termine.
+- Se adjunta el estado de negocio a las sesiones antes del historial y los
+  perfiles. La incidencia conserva su fuente original y canSettle es solo un hint.
+- businessDataReady habilita la ficha y los controles del calendario solo tras
+  validar el conjunto financiero. Los errores muestran loadError y recuperacion
+  de solo lectura; los descriptores de intents siguen disponibles sin escribir.
+- Las generaciones y scopes de actor/sede impiden publicar respuestas antiguas,
+  incluso al volver al mismo actor en una nueva vida de scope.
+- session_activity_block_students se consulta con su FK real al bloque padre,
+  filtro de sede del padre y orden compuesto block_id/student_id. No se inventan
+  columnas id/sede_id en la tabla hija ni se ocultan errores del contrato mixto.
+- Un pago Gift legado NULL se conserva desconocido e inutilizable, sin bloquear
+  derechos independientes validos ni convertirlo en paid. Campos ausentes o
+  invalidos siguen fallando cerrados.
+
+AUTHCONTEXT
+
+- El listener onAuthStateChange es sincronico: las consultas SDK/autorizacion se
+  programan fuera del callback que Supabase espera bajo su bloqueo.
+- Bootstrap, password login y listeners comparten verificaciones de generacion,
+  actor y montaje antes de aplicar resultados o iniciar un signOut.
+- Logout/SIGNED_OUT y cambios de actor invalidan exitos Y rechazos antiguos.
+  Un finally antiguo no libera una operacion de login mas nueva.
+- Un SIGNED_IN o TOKEN_REFRESHED de otro ID elimina el perfil/rol/sede anterior
+  antes de autorizar al nuevo actor. El refresh del mismo actor conserva su token
+  mas reciente; los claims del JWT no conceden roles de la aplicacion.
+- Si una respuesta password cancelada modifica realmente el SDK, se invalida la
+  autoridad React y se reconcilia con getSession fuera del listener. Se comprueba
+  otra vez el SDK antes de publicar: no se conserva perfil B usando token A.
+- La resolucion paralela sede/miembro se conserva, con prioridad del propietario.
+  El perfil retornado debe pertenecer al ID consultado y tener un rol admitido.
+
+CONTINUACIONES Y RECUPERACION
+
+OpsContext.assertScope es obligatorio. Inventario, profesores, persistencia de
+bloques de sesion y reversion Gift comprueban scope antes de cada escritura
+posterior a un await. RLS puede permitir dos actores de la misma sede, pero eso
+no autoriza a una continuacion de A a escribir con la identidad nueva de B.
+Una peticion ya enviada no puede cancelarse retroactivamente.
+
+El store de sesiones conserva key/IDs/revision/argumentos si falla la recarga
+despues de un recibo O de un rechazo SQL. Solo limpia tras recarga confirmada.
+Errores de transporte/shutdown no se interpretan como rollback confirmado.
+El Dashboard vuelve a conectar el callback existente al control compartido de
+asistencia, manteniendo la lista de actividades y sin agregar un escritor propio.
+
+VERIFICACION FINAL
+
+- npm run test:local: 524/524, ejecucion completa final en 6.8 minutos.
+- 51 casos AuthProvider: bloqueo simulado SDK, respuestas tardias, logout, actor,
+  token/perfil coherentes, strict mode y montaje/desmontaje.
+- 45 casos DataProvider: pintura inicial, lectura completa paginada, incidencias
+  de hace 100 dias, schema mixto real, NULL legado, errors y replay persistido.
+- 53 casos de scope: llamadas SDK registradas antes/despues de esperas, mismo
+  taller con otro actor, regreso al actor previo y continuaciones multi-paso.
+- Cinco regresiones nuevas de session intents; suites anteriores conservadas.
+- npm run test:unit: 40/40. TypeScript y build aprobados.
+- Warnings anteriores de chunks circulares/tamano permanecen.
+- Revision independiente: los cuatro P1 adicionales detectados en esta ronda se
+  corrigieron; sin P0/P1 confirmados en la revision final del alcance modificado.
+
+La primera suite conjunta detecto un mock que prohibia la lectura real de bloques
+tras el RPC, un callback Dashboard desconectado y termino por timeout. Se
+corrigieron los contratos/fixtures, no se eliminaron ni saltaron esos casos.
+
+LIMITES Y SIGUIENTE VERIFICACION
+
+Los casos nuevos montan los providers reales con transporte HTTP/SDK simulado,
+sin .env, backends externos, roles administrativos o escrituras reales.
+Las 45 pruebas reales anteriores NO certifican estos cambios nuevos. No se
+repitieron: el lector sintetico caduco y no se renovo sin aprobacion explicita.
+El backend debe tener los contratos financieros y las tablas/FK mixtas de la
+migracion 20261012170342_session_activity_blocks.sql ya autorizados/aplicados.
+Este trabajo no aplica migraciones ni sustituye pruebas reales de PostgREST/RLS.
+Operaciones publicas del SDK no son una transaccion atomica entre pestanas; los
+guards protegen las decisiones de los providers y continuaciones no enviadas,
+no deshacen solicitudes ya despachadas. Repetir pruebas reales con un permiso
+sintetico aprobado antes de considerar publicacion o activacion productiva.

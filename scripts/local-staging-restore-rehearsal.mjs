@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { createServer as httpServer } from 'node:http';
+import { createServer as httpServer, request as httpRequest } from 'node:http';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ const expectedImageId = 'sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5f
 const hash = value => createHash('sha256').update(value).digest('hex');
 const lit = value => "'" + String(value).replaceAll("'", "''") + "'";
 const ident = value => '"' + String(value).replaceAll('"', '""') + '"';
+const shellLit = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/(?:SECRET|TOKEN|PASSWORD|DATABASE_URL|DB_URL|JWT|SUPABASE|^VITE_|^PG|^DEBUG$|PWDEBUG)/i.test(key)));
@@ -57,7 +58,7 @@ function sourceIdentity() {
     const image = JSON.parse(docker(['image', 'inspect', container.Image]).toString())[0];
     if (image.Id !== container.Image) throw new Error('Source image is not locally available.');
   }
-  return { status, db, auth, rest };
+  return { status, db, auth, rest, dockerHost: context.Endpoints.docker.Host };
 }
 
 function psql(id, database, sql) {
@@ -284,6 +285,10 @@ async function run() {
     inventory = await exporter.query(inventorySQL);
     const beforeSequences = await exporter.query(sequencesSQL(inventory.sequences));
     const roles = await exporter.query(roleSQL);
+    const operational = await exporter.query(`select jsonb_object_agg(name,jsonb_build_object('value',case when name='search_path' then reset_val else setting end,'unit',unit))
+      from pg_settings where name in ('max_stack_depth','max_locks_per_transaction','max_pred_locks_per_transaction',
+      'default_text_search_config','search_path','extra_float_digits','statement_timeout','lock_timeout',
+      'idle_in_transaction_session_timeout','check_function_bodies','jit','row_security','work_mem');`);
     const dbConfig = await exporter.query(databaseSQL);
     const catalog = await exporter.query(catalogSQL);
     const schemaGrants = await exporter.query(`select jsonb_agg(jsonb_build_object('schema',n.nspname,'grantee',case when a.grantee=0 then null
@@ -308,7 +313,7 @@ async function run() {
     const currentRoles = JSON.parse(psql(source.db.Id, 'postgres', `begin read only; ${roleSQL} rollback;`).toString());
     requireSame(roles, currentRoles, 'Source role bracket');
     baseline = { rows, catalog, roles, database: dbConfig, sequences: beforeSequences,
-      schemaSha256: hash(schemaText(sourceSchema)), schemaGrants, migrations, media };
+      schemaSha256: hash(schemaText(sourceSchema)), schemaGrants, operational, migrations, media };
     report.checks.snapshotCoherent = true;
     report.checks.sequencesStableDuringBackup = true;
     report.checks.rolesStableDuringBackup = true;
@@ -320,10 +325,12 @@ async function run() {
       sequencesSha256: hash(JSON.stringify(beforeSequences)), tables: rows };
     try {
       const backup = encryptedBackup(filename, { version: 1, runId, sourceImage: source.db.Image,
-        dump: dump.toString('base64'), rolesDump: rolesDump.toString('base64'), inventory, baseline });
+        dump: dump.toString('base64'), rolesDump: rolesDump.toString('base64'), inventory, baseline,
+        services: { auth: envMap(source.auth), rest: envMap(source.rest), anonKey: source.status.ANON_KEY,
+          authImage: source.auth.Image, restImage: source.rest.Image } });
       restored = backup.payload;
       report.backup = { path: `${filename}.aes`, protectedKeyPath: `${filename}.key.dpapi`,
-        sha256: backup.archiveSha256, bytes: backup.bytes, verifiedDecryptionFromDisk: true };
+        sha256: backup.archiveSha256, bytes: backup.bytes, verifiedDecryptionFromDisk: true, serviceConfigurationIncluded: true };
     } finally { dump.fill(0); rolesDump.fill(0); sourceSchema.fill(0); }
     await exporter.close(); exporter = undefined;
     saveReport();
@@ -338,7 +345,9 @@ async function run() {
     // The same image's binaries/extensions are used against a fresh tmpfs cluster.
     const dbEntry = create('db', source.db.Image, ['--user', 'postgres', '--tmpfs', '/tmp:rw,mode=1777',
       '--entrypoint', '/bin/sh']);
-    const bootstrap = "initdb -D /tmp/rehearsal-pg -U supabase_admin --auth-local=trust --auth-host=md5 >/dev/null && printf '\\nhost all all 0.0.0.0/0 md5\\n' >> /tmp/rehearsal-pg/pg_hba.conf && exec postgres -D /tmp/rehearsal-pg -c listen_addresses='*' -c unix_socket_directories=/tmp -c port=5432 -c shared_preload_libraries=pg_stat_statements";
+    const configArgs = Object.entries(restored.baseline.operational).map(([key, setting]) =>
+      `-c ${shellLit(`${key}=${setting.value}${setting.unit || ''}`)}`).join(' ');
+    const bootstrap = "initdb -D /tmp/rehearsal-pg -U supabase_admin --auth-local=trust --auth-host=md5 >/dev/null && printf '\\nhost all all 0.0.0.0/0 md5\\n' >> /tmp/rehearsal-pg/pg_hba.conf && exec postgres -D /tmp/rehearsal-pg -c listen_addresses='*' -c unix_socket_directories=/tmp -c port=5432 -c shared_preload_libraries=pg_stat_statements " + configArgs;
     // Set a non-secret command using the Engine-created container's stdin shell.
     attach(dbEntry, Buffer.from(`${bootstrap}\n`));
     for (let i = 0; i < 100; i++) {
@@ -387,6 +396,14 @@ async function run() {
       docker(['exec', '-i', dbEntry.id, 'pg_restore', '-h', '/tmp', '-U', 'supabase_admin', '-d', dbName,
         '--exit-on-error', '--single-transaction'], customDump);
     } finally { customDump.fill(0); restored.dump = null; }
+    report.phase = 'target_statistics';
+    const statisticsSQL = `select jsonb_build_object('tables',count(*),'withoutStatistics',count(*) filter(where c.reltuples<0))
+      from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='r' and ${namespaceFilter};`;
+    report.statistics = { before: JSON.parse(targetQuery(statisticsSQL).toString()) };
+    // Logical dumps do not include planner statistics; rebuild them before API queries.
+    targetQuery('ANALYZE;');
+    report.statistics.after = JSON.parse(targetQuery(statisticsSQL).toString());
+    report.checks.restoredStatistics = true;
     const targetEvidence = sql => JSON.parse(targetQuery(`begin isolation level repeatable read read only; set local timezone='UTC'; set local datestyle='ISO, YMD'; set local search_path=pg_catalog; ${sql} rollback;`).toString());
     // Some image-provisioned schema privileges are recorded as extension initial
     // privileges and omitted by pg_dump. Reapply only differing schemas from the
@@ -420,7 +437,7 @@ async function run() {
     saveReport();
     console.log(`Restored baseline matches: ${report.coverage.tables} tables, ${report.coverage.rows} rows, 24 migrations. Starting restored-only Auth/REST probes.`);
     report.phase = 'target_auth_rest_browser';
-    await probeRestored({ source, runId, network, create, attach, dbEntry, dbName, targetEvidence, report,
+    await probeRestored({ source, services: restored.services, runId, network, create, attach, dbEntry, dbName, targetEvidence, report,
       setResources: resources => { server = resources.server; vite = resources.vite; browser = resources.browser; } });
     const finalRows = targetEvidence(rowsSQL(inventory.tables));
     const protectedRows = Object.fromEntries(Object.entries(baseline.rows).filter(([name]) => !name.startsWith('auth.')));
@@ -494,10 +511,11 @@ const jwtRole = token => {
   try { return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).role; } catch { return undefined; }
 };
 
-async function probeRestored({ source, runId, create, attach, dbEntry, dbName, targetEvidence, report, setResources }) {
-  const authConfig = envMap(source.auth);
-  const restConfig = envMap(source.rest);
-  const publicKey = source.status.ANON_KEY;
+async function probeRestored({ source, services, runId, create, attach, dbEntry, dbName, targetEvidence, report, setResources }) {
+  if (services?.authImage !== source.auth.Image || services?.restImage !== source.rest.Image) throw new Error('Restored service image identity mismatch.');
+  const authConfig = { ...services.auth };
+  const restConfig = { ...services.rest };
+  const publicKey = services.anonKey;
   if (jwtRole(publicKey) !== 'anon') throw new Error('Only the public anon key may be used for probes.');
   const authDb = new URL(authConfig.GOTRUE_DB_DATABASE_URL);
   const restDb = new URL(restConfig.PGRST_DB_URI);
@@ -518,7 +536,7 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
   for (const key of Object.keys(authConfig)) if (/^GOTRUE_EXTERNAL_.*_ENABLED$/.test(key)) authConfig[key] = 'false';
   authConfig.GOTRUE_EXTERNAL_EMAIL_ENABLED = 'true';
   restConfig.PGRST_DB_URI = restDb.href;
-  restConfig.PGRST_SERVER_HOST = '0.0.0.0'; restConfig.PGRST_SERVER_PORT = '3000';
+  restConfig.PGRST_SERVER_HOST = '0.0.0.0'; restConfig.PGRST_SERVER_PORT = '3001';
   delete restConfig.PGRST_ADMIN_SERVER_PORT;
   const shell = 'while IFS= read -r line; do [ "$line" = END ] && break; key=${line%%:*}; value=${line#*:}; value=$(printf "%s" "$value" | base64 -d); export "$key=$value"; done; exec auth';
   // Secrets travel through stdin into process RAM, not Docker Config.Env/args or files.
@@ -528,10 +546,8 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
     .map(([key, value]) => `${key}:${Buffer.from(value).toString('base64')}`).join('\n') + '\nEND\n');
   const authProcess = attach(authEntry, authInput);
   const restEntry = create('rest', source.rest.Image, ['--read-only', '--cap-drop', 'ALL',
-    '--security-opt', 'no-new-privileges'], ['/bin/postgrest', '/dev/stdin']);
-  const restInput = Buffer.from(Object.entries(restConfig).filter(([key]) => key.startsWith('PGRST_'))
-    .map(([key, value]) => `${key.slice(6).toLowerCase().replaceAll('_', '-')} = ${['PGRST_SERVER_PORT', 'PGRST_DB_MAX_ROWS'].includes(key) ? Number(value) : JSON.stringify(value)}`).join('\n'));
-  const restProcess = attach(restEntry, restInput);
+    '--security-opt', 'no-new-privileges'], ['/bin/postgrest']);
+  const restProcess = attach(restEntry, Buffer.alloc(0));
   const processDiagnostic = child => {
     const output = Buffer.concat(child.ramOutput || []);
     try {
@@ -553,8 +569,38 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
   };
   await readyContainer(authEntry, 9999);
   await readyContainer(restEntry, 3000);
+  // PostgREST rereads its config on pool startup, so a one-shot stdin file is
+  // insufficient. Docker exec environment is daemon/process RAM only (unlike
+  // container Config.Env, which Docker persists). Use the verified local socket;
+  // secrets are never command arguments, container metadata, logs or disk files.
+  const engine = (route, payload) => new Promise((resolve, reject) => {
+    assertLocalDocker(source.dockerHost, process.env.DOCKER_HOST);
+    assertOwned(inspect(restEntry.id), restEntry, runId);
+    const socketPath = source.dockerHost.startsWith('unix:') ? source.dockerHost.slice('unix://'.length)
+      : '\\\\.\\pipe\\' + source.dockerHost.slice('npipe:////./pipe/'.length);
+    const input = Buffer.from(JSON.stringify(payload));
+    const req = httpRequest({ socketPath, path: route, method: 'POST', headers: {
+      'Content-Type': 'application/json', 'Content-Length': input.length } }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        const output = Buffer.concat(chunks); chunks.forEach(b => b.fill(0));
+        try {
+          if (response.statusCode < 200 || response.statusCode > 299) throw new Error(`Local Docker exec API rejected (${response.statusCode}).`);
+          resolve(output.length ? JSON.parse(output.toString()) : null);
+        } catch (error) { reject(error); } finally { output.fill(0); input.fill(0); }
+      });
+    });
+    req.setTimeout(30_000, () => req.destroy());
+    req.on('error', () => { input.fill(0); reject(new Error('Local Docker exec socket failed.')); });
+    req.end(input);
+  });
+  const exec = await engine(`/containers/${restEntry.id}/exec`, { AttachStdout: false, AttachStderr: false,
+    Cmd: ['/bin/postgrest'], Env: Object.entries(restConfig).filter(([key]) => key.startsWith('PGRST_')).map(([key, value]) => `${key}=${value}`) });
+  if (!/^[a-f0-9]{64}$/.test(exec?.Id || '')) throw new Error('Local Docker exec identity invalid.');
+  await engine(`/exec/${exec.Id}/start`, { Detach: true, Tty: false });
   const authOrigin = `http://${authEntry.name}:9999`;
-  const restOrigin = `http://${restEntry.name}:3000`;
+  const restOrigin = `http://${restEntry.name}:3001`;
   // Internal networks deliberately have no published ports. curl runs in the
   // owned DB container; request config (including Auth bodies/JWTs) is stdin-only.
   const internal = (origin, suffix, method = 'GET', headers = {}, body) => new Promise((resolve, reject) => {
@@ -621,7 +667,11 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
   };
   const ok = async (actor, route, body) => {
     const result = await http(actor, route, body);
-    if (result.status < 200 || result.status > 299) throw new Error(`Restored probe rejected: HTTP ${result.status}, path ${route.split('?')[0]}.`);
+    if (result.status < 200 || result.status > 299) {
+      const code = /^[A-Z0-9]{5,12}$/.test(result.data?.code || '') ? result.data.code : 'unclassified';
+      const categories = String(result.data?.message || '').match(/stack depth limit exceeded|permission denied|function .* does not exist|invalid input syntax|ambiguous|statement timeout|could not serialize|operator does not exist|JWT secret|JWT expired/gi) || [];
+      throw new Error(`Restored probe rejected: HTTP ${result.status}, code ${code}, categories ${JSON.stringify(categories)}, path ${route.split('?')[0]}.`);
+    }
     return result.data;
   };
   const actors = [];
@@ -637,22 +687,27 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
     actors.push(actor);
   }
   report.probes = { authLogins: actors.length, authUserReads: actors.length, profileReads: actors.length,
-    scopedRestReads: 0, ownerOnlyDenials: 0, domainReadAllowed: 0, domainReadDenied: 0, receiptReplays: 0 };
+    scopedRestReads: 0, restSampleLimit: 10, ownerOnlyDenials: 0, domainReadAllowed: 0, domainReadDenied: 0, receiptReplays: 0 };
   const [owner, foreign, reader, employee, supervisor] = actors;
-  const views = ['student_credit_profile', 'manual_credit_entitlements_with_balance', 'session_pending_penalties'];
-  for (const view of views) {
-    const ownedRows = await ok(owner, `/rest/v1/${view}?select=*&sede_id=eq.${ownSede}`);
-    const observedCount = targetEvidence(`select jsonb_build_object('count',count(*)) from public.${ident(view)} where sede_id=${lit(ownSede)}::uuid;`).count;
-    if (ownedRows.length !== observedCount) throw new Error('Restored owner view count mismatch (including potential pagination).');
+  const views = [['student_credit_profile', 'student_id'], ['manual_credit_entitlements_with_balance', 'entitlement_id'],
+    ['session_pending_penalties', 'penalty_id']];
+  // Full data equality is checked in SQL; API probes use deterministic bounded reads.
+  for (const [view, key] of views) {
+    const route = `/rest/v1/${view}?select=*&sede_id=eq.${ownSede}&order=${key}.asc&limit=10`;
+    const ownedRows = await ok(owner, route);
+    const observedCount = targetEvidence(`set local role authenticated;
+      set local request.jwt.claims=${lit(JSON.stringify({ sub: owner.id, role: 'authenticated' }))};
+      select jsonb_build_object('count',count(*)) from public.${ident(view)} where sede_id=${lit(ownSede)}::uuid;`).count;
+    if (ownedRows.length !== Math.min(10, observedCount)) throw new Error('Restored owner view sample count mismatch.');
     report.probes.scopedRestReads++;
     for (const actor of [foreign, reader]) {
-      const hiddenRows = await ok(actor, `/rest/v1/${view}?select=*&sede_id=eq.${ownSede}`);
+      const hiddenRows = await ok(actor, route);
       if (hiddenRows.length) throw new Error('Restored scoped view leaked rows.');
       report.probes.scopedRestReads++;
     }
   }
   for (const actor of [employee, supervisor]) {
-    const projection = await ok(actor, `/rest/v1/student_credit_profile?select=*&sede_id=eq.${ownSede}`);
+    const projection = await ok(actor, `/rest/v1/student_credit_profile?select=*&sede_id=eq.${ownSede}&order=student_id.asc&limit=10`);
     if (!projection.length || projection.some(row => row.can_approve_manual_credit || row.can_reconcile_legacy)) {
       throw new Error('Restored nonowner profile has manual-credit authority.');
     }
@@ -660,7 +715,7 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
   }
   const replay = targetEvidence(`select jsonb_build_object('request_key',e.request_key,'intent',e.intent,'result',e.result)
     from public.student_manual_credit_entitlements e join public.sedes s on s.id=e.sede_id
-    where s.owner_id=${lit(owner.id)}::uuid order by e.created_at,e.id limit 1;`);
+    where s.owner_id=${lit(owner.id)}::uuid order by e.approved_at,e.id limit 1;`);
   if (!replay?.request_key || !replay.intent) throw new Error('An existing manual-credit receipt is required; no fixture writes are allowed.');
   const replayArgs = Object.fromEntries(Object.entries(replay.intent).map(([key, value]) => [`p_${key}`, value]));
   replayArgs.p_request_key = replay.request_key;
@@ -676,12 +731,23 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
     where user_id=${lit(reader.id)}::uuid and enabled and revoked_at is null and expires_at>now()),
     'grants',(select count(*) from private.domain_read_grants where user_id=${lit(reader.id)}::uuid and sede_id=${lit(ownSede)}::uuid
     and student_id=${lit(student)}::uuid and enabled and revoked_at is null and expires_at>now()));`);
-  if (!principal.active || principal.grants !== 2) throw new Error('Restored reader grants have expired or changed; no renewal will be performed.');
+  report.reader = { principalActive: principal.active, activeGrants: principal.grants, grantsRenewed: false };
   for (const operation of ['student.summary.get', 'membership.status.get']) {
     const request = { version: 1, operation, sedeId: ownSede, studentId: student };
-    const result = await ok(reader, '/rest/v1/rpc/domain_read_v1', { p_request: request });
-    if (result.version !== 1 || result.operation !== operation || result.data?.studentId !== student) throw new Error('Restored domain read projection mismatch.');
-    report.probes.domainReadAllowed++;
+    const authorized = targetEvidence(`select jsonb_build_object('allowed',exists(select 1 from private.domain_read_principals p
+      join private.domain_read_grants g on g.user_id=p.user_id where p.user_id=${lit(reader.id)}::uuid
+      and p.enabled and p.revoked_at is null and p.expires_at>now() and g.enabled and g.revoked_at is null
+      and g.expires_at>now() and g.sede_id=${lit(ownSede)}::uuid and g.student_id=${lit(student)}::uuid
+      and g.operation=${lit(operation)}));`).allowed;
+    const result = await http(reader, '/rest/v1/rpc/domain_read_v1', { p_request: request });
+    if (authorized) {
+      if (result.status !== 200 || result.data?.version !== 1 || result.data.operation !== operation
+        || result.data.data?.studentId !== student) throw new Error('Restored domain read projection mismatch.');
+      report.probes.domainReadAllowed++;
+    } else {
+      if (result.status !== 403 || result.data?.code !== '42501') throw new Error('Restored expired/revoked grant was not denied.');
+      report.probes.domainReadDenied++;
+    }
     const denied = await http(reader, '/rest/v1/rpc/domain_read_v1', { p_request: { ...request, sedeId: foreignSede } });
     if (denied.status !== 403 || denied.data?.code !== '42501') throw new Error('Restored domain read scope denial failed.');
     report.probes.domainReadDenied++;
@@ -727,7 +793,7 @@ async function probeRestored({ source, runId, create, attach, dbEntry, dbName, t
   let vite; let browser;
   try {
     vite = await createServer({ root, configFile: false, envDir: false, cacheDir, logLevel: 'silent', plugins: [react()],
-      resolve: { alias: { '@': root } }, optimizeDeps: { noDiscovery: true, include: [] },
+      resolve: { alias: { '@': root } },
       server: { host: '127.0.0.1', port: 0, hmr: false, cors: false } });
     setResources({ server, vite });
     await vite.listen();

@@ -115,6 +115,7 @@ export const redeemGiftCardSession = async (ctx: OpsContext, giftCardId: string,
 };
 
 export const reverseGiftCardSession = async (ctx: OpsContext, giftCardId: string, sessionId: string, studentId?: string) => {
+    ctx.assertScope();
     try {
         let resolvedGiftCardId = giftCardId;
         if (!resolvedGiftCardId && studentId) {
@@ -125,13 +126,16 @@ export const reverseGiftCardSession = async (ctx: OpsContext, giftCardId: string
                     .eq('student_id', studentId)
                     .maybeSingle()
             );
+            ctx.assertScope();
             if (error) throw error;
             resolvedGiftCardId = data?.gift_card_id || '';
         }
         if (!resolvedGiftCardId) return false;
+        ctx.assertScope();
         const { data, error } = await withTimeout('gift_cards.reverse', supabase.rpc('reverse_gift_card_session', {
             p_gift_card_id: resolvedGiftCardId, p_session_id: sessionId, p_student_id: studentId || null
         }));
+        ctx.assertScope();
         if (error) throw error;
         updateGiftCardFromRpc(ctx, data);
         return true;

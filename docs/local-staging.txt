@@ -34,7 +34,8 @@ historicos y respaldo cifrado previo:
 
 El respaldo AES-256-GCM se guarda fuera de Git en el runtime/backups. Su clave
 esta protegida con DPAPI del usuario Windows; se verifica el descifrado, no
-se afirma haber ensayado una restauracion completa.
+se ensaya automaticamente la restauracion de cada respaldo de policy-setup.
+El ensayo logico de un respaldo actualizado distinto paso; ver la seccion siguiente.
 
 El segundo comando mantiene el frontend en la terminal. Tambien existe
 staging:launch para ejecutarlo en segundo plano, con logs en el directorio
@@ -89,6 +90,27 @@ Verificacion final 2026-10-12: 45/45 reales, 370/370 regresiones, 37/37 unitaria
 TypeScript/build y lint aprobados; pgTAP 3/3. La suite real completa duro 13 min.
 El rollout manual, respaldo y limites se registran en docs/manual-credit-phase.txt.
 
+Seguimiento de providers: 524/524 regresiones locales y 40/40 unitarias pasaron,
+con TypeScript/build. Estas pruebas usan transporte simulado, no certifican de
+nuevo los 45 escenarios reales anteriores. Ver docs/provider-integrity-fixes.txt.
+No se renovaron los grants vencidos ni se aplico el schema mixto por este seguimiento.
+
+ENSAYO DE RESTAURACION
+
+  npm run staging:restore-rehearsal
+
+Toma un snapshot solo lectura del staging aprobado, guarda dump/roles/configuracion
+en un archivo AES-GCM con clave DPAPI y lo relee del disco. Restaura en un cluster
+Docker nuevo en RAM, con Auth/PostgREST propios, sin modificar la base original.
+Compara todas las filas y permisos, genera estadisticas con ANALYZE y prueba login,
+lecturas REST acotadas, denegaciones, replay y navegador desktop/mobile.
+Solo elimina los contenedores/red que creo y conserva el respaldo y reporte.
+
+Resultado 2026-10-12: PASSED, 83 tablas/13503 filas, 31 roles y 24 migraciones.
+Los grants del lector estaban vencidos: su denegacion se verifico sin renovarlos.
+Detalle y limites: docs/restore-rehearsal.txt. No certifica PITR, archivos externos,
+recuperacion off-host o restauracion de todos los respaldos antiguos.
+
 PARADA
 
   npm run staging:stop
@@ -100,7 +122,8 @@ de Docker o Studio en Internet: es un entorno de desarrollo local.
 LIMITES
 
 No conecta una preview publica de Vercel a este equipo. No demuestra todavia
-un despliegue remoto ni un ensayo de restauracion. El contrato MCP sigue
+un despliegue remoto o recuperacion off-host/PITR. El ensayo logico local paso.
+El contrato MCP sigue
 sin servidor/transporte activo. Los grants del lector caducan deliberadamente;
 un reinicio no renueva permisos de forma silenciosa.
 
@@ -123,5 +146,5 @@ Los ajustes genericos de membresia permanecen bloqueados. Las incidencias
 pendientes solo se liquidan por el propietario desde la ficha contra la fuente
 original valida; no hay liquidacion automatica ni cargo al siguiente periodo.
 
-Antes de produccion faltan revision visual, respaldo/restauracion ensayados,
-reglas de negocio pendientes y autorizacion explicita del rollout coordinado.
+Antes de produccion faltan revision visual, recuperacion especifica del entorno
+productivo, reglas de negocio pendientes y autorizacion del rollout coordinado.

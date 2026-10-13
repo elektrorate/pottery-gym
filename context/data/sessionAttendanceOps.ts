@@ -179,11 +179,11 @@ export const createSessionOperations = (dependencies: {
             const response = await dependencies.rpc(names[intent.operation], intent.args);
             if (response.error) {
                 const code = response.error.code;
-                // A SQL rejection proves rollback. Transport errors do not.
-                if (/^[0-9A-Z]{5}$/.test(code || '') && !['08000', '08003', '08006', '57014'].includes(code)) {
+                // Clear only after a recognized SQL rejection AND an authoritative reload.
+                if (typeof code === 'string' && /^(?:02|03|09|0A|0B|0F|0L|0P|0Z|20|21|22|23|24|25|26|27|28|2B|2D|2F|34|38|39|3B|3D|3F|40|42|44|53|54|55|P0)[0-9A-Z]{3}$/.test(code)) {
+                    await dependencies.refresh();
                     dependencies.store.clear(key);
                 }
-                if (code === '40001') await dependencies.refresh();
                 throw Object.assign(new Error(response.error.message || 'No se pudo guardar la sesion.'), { code });
             }
             if (!response.data || response.data.session_id !== intent.sessionId || response.data.request_key !== intent.requestKey

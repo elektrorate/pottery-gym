@@ -24,7 +24,8 @@ Se valido la identidad del runtime, ausencia de enlace remoto y hashes de los
 archivos previos antes de operar. Se genero pg_dump cifrado AES-256-GCM,
 con clave DPAPI CurrentUser, fuera de Git, y se verifico el descifrado.
 Respaldo de esta aplicacion: runtime/backups/before-policy-1791819079502.
-Esto NO demuestra una restauracion completa de la base.
+Ese respaldo previo solo tenia descifrado verificado. Posteriormente se aprobo
+un ensayo logico con un respaldo actualizado distinto; ver docs/restore-rehearsal.txt.
 
 Los fingerprints confirmaron conservacion de todas las observaciones previas,
 recibos, pagos, saldos, periodos, bonos, auditoria, grants y politicas RLS.
@@ -90,8 +91,9 @@ LIMITES
 Evidencia libre es una aprobacion del propietario, no verificacion externa de
 pagos. Procedencia completamente borrada antes del rollout no se reconstruye:
 no conciliar ni reciclar fondos inciertos sin evidencia independiente suficiente.
-No se completo el ensayo de restauracion, la matriz financiera/privacidad,
-el transporte MCP, la activacion historica o la autorizacion de produccion.
+El ensayo logico de restauracion local paso el 2026-10-12. No certifica una
+recuperacion fisica/off-host o PITR. La matriz financiera/privacidad, el transporte
+MCP, la activacion historica y la autorizacion de produccion siguen pendientes.
 Faltan casos reales de cambio de actor en la misma pestana y liquidacion positiva
 de fuentes manual/membresia en la ficha; tienen cobertura SQL/proyeccion separada.
 La paginacion detecta cambios de cardinalidad, no es un snapshot transaccional.

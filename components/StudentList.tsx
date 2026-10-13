@@ -9,6 +9,7 @@ import type { ManualCreditIntent, PenaltySettlementIntent, SessionBusinessIntent
 
 interface StudentListProps {
   students: Student[];
+  detailsLoading?: boolean;
   onAddStudent: (student: Omit<Student, 'id'>) => Promise<void>;
   onRenew: (intent: RenewalIntent) => Promise<void>;
   onConfirmPayment: (studentId: string, periodId: string) => Promise<void>;
@@ -240,6 +241,7 @@ const getMonthCalendarDays = (monthKey: string): Array<number | null> => {
 
 const StudentList: React.FC<StudentListProps> = ({
   students,
+  detailsLoading = false,
   onAddStudent,
   onRenew,
   onConfirmPayment, onActivateMembership, onInitializeLegacyMemberships, onAdjustClasses, canAdjustClasses = true,
@@ -251,7 +253,10 @@ const StudentList: React.FC<StudentListProps> = ({
   getPendingStudentCreditOperation, onRetryPendingStudentCreditOperation
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('all');
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('todos');
+  // La primera vista prioriza las membresías: es el grupo operativo más
+  // frecuente y permite pintar una página pequeña sin esperar todo el detalle.
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('membresia');
+  const [visibleLimit, setVisibleLimit] = useState(50);
   const [membershipTierFilter, setMembershipTierFilter] = useState<MembershipTierFilter>('todos');
   const [showLegacyInitialization, setShowLegacyInitialization] = useState(false);
   const [initializingLegacy, setInitializingLegacy] = useState(false);
@@ -514,6 +519,13 @@ const StudentList: React.FC<StudentListProps> = ({
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [students, activeTab, searchQuery, categoryFilter, membershipTierFilter, today]);
 
+  useEffect(() => {
+    setVisibleLimit(50);
+  }, [activeTab, categoryFilter, membershipTierFilter, searchQuery]);
+
+  const visibleStudents = useMemo(() => filteredStudents.slice(0, visibleLimit), [filteredStudents, visibleLimit]);
+  const hasMoreStudents = visibleStudents.length < filteredStudents.length;
+
   const suggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
@@ -592,7 +604,8 @@ const StudentList: React.FC<StudentListProps> = ({
 
            <div className="bg-white border border-[#DDBFA4] rounded-xl overflow-hidden">
              <div className="hidden md:grid grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-4 px-5 py-3 border-b border-[#EDE2D8] text-[12px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E]"><span>Alumno</span><span>Actividad</span><span>Bonos</span><span>Estado</span></div>
-            {filteredStudents.length === 0 ? <div className="px-6 py-16 text-center"><p className="text-[15px] text-[#7B3F22]" style={{ fontFamily: "'Outfit', sans-serif" }}>No hay alumnos que mostrar</p><p className="text-[12px] text-[#8B6B5E] mt-1">Prueba a cambiar la búsqueda o los filtros.</p></div> : filteredStudents.map(s => {
+            {detailsLoading && <div className="flex items-center gap-2 border-b border-[#EDE2D8] bg-[#FFF9F4] px-5 py-2.5 text-[12px] text-[#8B6B5E]" role="status"><span className="h-2 w-2 animate-pulse rounded-full bg-[#C68952]" />Cargando bonos y detalles en segundo plano…</div>}
+            {filteredStudents.length === 0 ? <div className="px-6 py-16 text-center"><p className="text-[15px] text-[#7B3F22]" style={{ fontFamily: "'Outfit', sans-serif" }}>No hay alumnos que mostrar</p><p className="text-[12px] text-[#8B6B5E] mt-1">Prueba a cambiar la búsqueda o los filtros.</p></div> : visibleStudents.map(s => {
               const isArchived = isStudentArchived(s, today);
               const lifecycle = getStudentLifecycle(s, today);
               const isPending = lifecycle === 'pending';
@@ -608,6 +621,7 @@ const StudentList: React.FC<StudentListProps> = ({
                   <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : cat === 'temporal' ? 'Temporal' : isExpired ? 'Vencida' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
+            {hasMoreStudents && <div className="flex justify-center border-t border-[#EDE2D8] px-4 py-4"><button type="button" onClick={() => setVisibleLimit(limit => limit + 50)} className="min-h-10 rounded-lg border border-[#C68952] bg-white px-4 py-2 text-[12px] font-bold text-[#7B3F22] hover:bg-[#F7F1EB]">Cargar más alumnos ({filteredStudents.length - visibleStudents.length} restantes)</button></div>}
           </div>
         </div>
       </div>

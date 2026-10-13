@@ -15,7 +15,7 @@ const StudentsPage: React.FC = () => {
         renewStudent, confirmMembershipPayment, activateMembership, initializeLegacyMemberships, adjustMembershipClasses, canAdjustMembershipClasses,
         approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
         getPendingStudentCreditOperation, retryPendingStudentCreditOperation, loadAllData, loadError,
-        isLoadingData
+        isLoadingData, businessDataReady
     } = useData();
 
     // Handle selected student from URL params
@@ -32,6 +32,8 @@ const StudentsPage: React.FC = () => {
         setSelectedStudentId(null);
     };
 
+    // La lista básica no debe quedar bloqueada por las proyecciones de bonos,
+    // asistencias y pagos. Esas proyecciones se completan en segundo plano.
     if (isLoadingData) {
         return (
             <div className="h-full flex items-center justify-center text-neutral-textHelper uppercase text-[12px] tracking-widest">
@@ -45,6 +47,7 @@ const StudentsPage: React.FC = () => {
     return (
         <StudentList
             students={students}
+            detailsLoading={!businessDataReady}
             onAddStudent={addStudent}
             onRenew={renewStudent}
             onConfirmPayment={confirmMembershipPayment}

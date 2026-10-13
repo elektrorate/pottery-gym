@@ -60,5 +60,6 @@ Ver docs/manual-credit-phase.txt para detalle, incidencias y limites reales.
 
 Pendientes, sin inventar reglas
 La activacion y el tratamiento de reservas/avisos historicos en produccion
-siguen pendientes de decision. API completa, MCP real, restauracion ensayada
+siguen pendientes de decision. API completa, MCP real, recuperacion productiva
 y las restantes decisiones de #8 no estan terminadas; no cerrar todas las issues.
+El ensayo logico local de restauracion paso: ver docs/restore-rehearsal.txt.

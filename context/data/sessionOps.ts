@@ -10,38 +10,55 @@ import {
 let store: SessionIntentStore;
 const pendingStore = () => store ??= new SessionIntentStore();
 const sessionSede = (ctx: OpsContext, id?: string) => ctx.sessions.find(session => session.id === id)?.sedeId || ctx.sedeId;
-const operations = (ctx: OpsContext) => createSessionOperations({
-    rpc: (name, args) => withTimeout(name, supabase.rpc(name, args)),
-    refresh: ctx.safeReload,
-    store: pendingStore()
-});
+const operations = (ctx: OpsContext) => {
+    ctx.assertScope();
+    return createSessionOperations({
+        rpc: (name, args) => {
+            ctx.assertScope();
+            return withTimeout(name, supabase.rpc(name, args));
+        },
+        refresh: async () => {
+            ctx.assertScope();
+            await ctx.safeReload();
+            ctx.assertScope();
+        },
+        store: pendingStore()
+    });
+};
 
-const persistActivityBlocks = async (sessionId: string, sedeId: string, blocks: SessionActivityBlock[] = []) => {
+const persistActivityBlocks = async (ctx: OpsContext, sessionId: string, sedeId: string, blocks: SessionActivityBlock[] = []) => {
+    ctx.assertScope();
     const sourceBlocks = blocks.filter(block => block.activityType !== 'mixto' && block.studentIds.length > 0);
     const normalized = sourceBlocks
         .map(block => ({ session_id: sessionId, sede_id: sedeId, activity_type: block.activityType,
             teacher_id: block.teacherId || null, capacity: block.capacity }));
     const { data: existing, error: existingError } = await withTimeout('session_activity_blocks.select',
         supabase.from('session_activity_blocks').select('id').eq('session_id', sessionId));
+    ctx.assertScope();
     if (existingError) throw existingError;
     if (existing?.length) {
         const { error } = await withTimeout('session_activity_blocks.delete', supabase.from('session_activity_blocks').delete().eq('session_id', sessionId));
+        ctx.assertScope();
         if (error) throw error;
     }
     if (!normalized.length) return;
     const { data: saved, error } = await withTimeout('session_activity_blocks.insert', supabase.from('session_activity_blocks').insert(normalized).select('id,activity_type,teacher_id,capacity'));
+    ctx.assertScope();
     if (error) throw error;
     const rows = (saved || []).flatMap((block: any, index: number) => (sourceBlocks[index]?.studentIds || []).map(student_id => ({
         block_id: block.id, session_id: sessionId, student_id
     })));
     if (rows.length) {
         const result = await withTimeout('session_activity_block_students.insert', supabase.from('session_activity_block_students').insert(rows));
+        ctx.assertScope();
         if (result.error) throw result.error;
     }
     for (const block of sourceBlocks) {
         if (!block.studentIds.length) continue;
+        ctx.assertScope();
         const result = await withTimeout('session_students.activity_type.update', supabase.from('session_students')
             .update({ activity_type: block.activityType }).eq('session_id', sessionId).in('student_id', block.studentIds));
+        ctx.assertScope();
         if (result.error) throw result.error;
     }
 };
@@ -66,6 +83,7 @@ export const retryPendingSessionOperation = async (ctx: OpsContext, id?: string)
     if (!intent) throw new Error('No hay un intento pendiente para recuperar.');
     getPendingSessionOperation(ctx, id);
     await operations(ctx).save(key, intent.input, () => intent);
+    ctx.assertScope();
 };
 
 export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession, 'id'>) => {
@@ -90,8 +108,10 @@ export const addSession = async (ctx: OpsContext, newSession: Omit<ClassSession,
             return createSessionReservationIntent(crypto.randomUUID(), 0, ctx.sedeId!, metadata,
                 studentIds, newSession.giftCardIdByStudentId || {}, input, undefined, newSession.manualCreditIdByStudentId || {});
         });
-        await persistActivityBlocks(receipt.session_id, ctx.sedeId, newSession.activityBlocks);
+        await persistActivityBlocks(ctx, receipt.session_id, ctx.sedeId, newSession.activityBlocks);
+        ctx.assertScope();
         await ctx.safeReload();
+        ctx.assertScope();
         return receipt;
     } catch (error: any) {
         showError(`No se pudo crear la sesion. ${error.message || ''}`);
@@ -152,9 +172,11 @@ export const updateSession = async (ctx: OpsContext, id: string, updates: Sessio
                 sedeId, metadata, studentIds, giftCardIds, input, undefined, manualCreditIds);
         });
         const merged = { ...(current || {}), ...updates } as ClassSession;
-        await persistActivityBlocks(id, sedeId, merged.activityBlocks);
+        await persistActivityBlocks(ctx, id, sedeId, merged.activityBlocks);
+        ctx.assertScope();
         await ctx.safeReload();
     }
+    ctx.assertScope();
     return true;
 };
 
@@ -164,6 +186,7 @@ export const applySessionBusinessOperation = async (ctx: OpsContext, intent: Ses
     // Validate without retargeting its source/revision after an uncertain write.
     const frozen = createSessionBusinessIntent(intent);
     await operations(ctx).save(`${sedeId}:${intent.sessionId}`, frozen.input, () => frozen);
+    ctx.assertScope();
 };
 
 export const deleteSession = async (_ctx: OpsContext, _id: string) => {

@@ -22,7 +22,7 @@ test('cleanup requires exact ID, UUID-prefixed name and ownership label', () => 
   assert.throws(() => assertOwned(container, { ...expected, name: 'source' }, runId));
 });
 
-test('schema comparison ignores only dump timestamps/version headers and random psql guards', () => {
+test('schema normalization removes dump noise while security catalogs verify grants separately', () => {
   const a = Buffer.from('\\restrict randomA\r\n-- Started on now\r\nCREATE TABLE public.example(id integer);\r\n\\unrestrict randomA\r\n');
   const b = Buffer.from('\\restrict randomB\n-- Started on later\nCREATE TABLE public.example(id integer);\n\\unrestrict randomB\n');
   assert.equal(schemaText(a), schemaText(b));

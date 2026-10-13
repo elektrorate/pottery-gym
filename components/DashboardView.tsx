@@ -327,6 +327,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
             </div>
 
             <div className="space-y-3">
+              {onOpenSession && todaySessions.filter(session => session.classType !== 'feriado').map(session => (
+                <div key={session.id} data-session-id={session.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
+                  <p className="text-[13px] font-semibold text-neutral-textMain">{session.startTime} · {getSessionTypeLabel(session.classType)}</p>
+                  <button type="button" onClick={() => onOpenSession(session.id, session.date)} className="min-h-[36px] rounded-lg border border-neutral-border px-3 py-2 text-[12px] font-semibold text-brand hover:text-brand-hover">Control de asistencia</button>
+                </div>
+              ))}
               {todayActivities.length === 0 ? (
                 <div className="bg-white/60 border border-dashed border-neutral-border p-8 md:p-10 rounded-2xl text-center">
                   <p className="text-neutral-textHelper text-[13px]">No hay actividades programadas para hoy</p>

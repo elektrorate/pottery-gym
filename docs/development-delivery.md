@@ -26,7 +26,7 @@ commits. Generated Supabase CLI metadata is also excluded.
 | #4 Atomic reservations/attendance | Partial, policy/manual phases verified locally | Policy2 finalization, exceptions, 8h cancellations, attributable manual credits, owner-only original-source settlement and waivers, durable ID/revision intents | 45 real local-stack scenarios, 370 regression cases, SQL preservation and races | Unknown/ambiguous legacy funds fail closed; no automatic incident settlement; remote activation/history rules remain pending |
 | #5 Minimal authorized domain API | Partial | Version 1 student summary / membership status; shared SQL/Edge contracts, strict fields, no administrative client key; metadata-only audit | SQL and in-memory HTTP/contract tests | Session/reservation/report read catalog, rate limits and deployed gateway validation still pending. Direct RPC calls are not covered by Edge request audit |
 | #6 MCP adapter | Partial | Two read tools adapt exactly the same API; fixed destination; bounded schemas; no SQL/CRUD/write tools | Adapter contract/negative input tests | No live MCP transport/server. Agree clients, authentication/consent/revocation and run client conformance before enabling |
-| #7 Integration/deployment | Partial | Reproducible isolated runners, regression suite, separate local Supabase staging, rollout/recovery gates | Local Auth/PostgreSQL/Edge/browser integration now passed; see evidence below | Remote staging/preview integration, backup restoration rehearsal and coordinated rollout remain pending. No deployment authorization inferred |
+| #7 Integration/deployment | Partial | Reproducible isolated runners, regression suite, local staging and logical restore rehearsal | Local Auth/PostgreSQL/Edge/browser integration and isolated restore passed | Remote staging/preview, off-host/PITR recovery and coordinated rollout remain pending. No deployment authorization inferred |
 
 No issue was closed. Writing code is not evidence of production readiness.
 
@@ -34,16 +34,18 @@ No issue was closed. Writing code is not evidence of production readiness.
 
 Executed in the initial development session and local-staging follow-up:
 
-- `npm run test:unit`: latest 37/37 passed, including administrative-log redaction.
+- `npm run test:unit`: latest 40/40 passed, including three restore-tooling guards and administrative-log redaction.
 - `npm run test:sql:gift-cards`: passed, including real concurrent transactions.
 - `npm run test:sql:sessions`: passed, including rollback of mixed funding,
   final-seat races, full-capacity edits, original-period corrections and lost replies.
 - `npm run test:sql:domain-read`: passed, including revocation, injected data,
   forged scopes, minimized fields and unchanged historical snapshots.
-- `npm run test:local`: latest 370/370 passed, including manual credit/pagination and policy controls,
-  persistent remount recovery, layout and projection/RPC regression cases.
-- `npm run staging:test`: latest 45/45 real local-stack scenarios passed,
+- `npm run test:local`: latest 524/524 passed, including mounted Auth/Data providers,
+  historical hydration, actor scopes, manual credit/pagination and exact recovery.
+- `npm run staging:test`: prior 45/45 real local-stack scenarios passed,
   including original-source settlement and exact replay after reload/read failure.
+  These were not rerun after the provider corrections; reader expiry needs explicit
+  synthetic reprovisioning approval. See `docs/provider-integrity-fixes.txt`.
 - `npm run test:sql:manual-credits`: 837 isolated SQL assertions, including 339
   expected denials; 17 manual and five prior policy2 concurrent scenarios passed.
   The cold 24-migration chain includes genuine pre-integrity gift-created mirrors.
@@ -53,6 +55,10 @@ Executed in the initial development session and local-staging follow-up:
 - Owned local `supabase test db`: 3/3 passed; all fixture writes rolled back.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed; existing circular chunk / bundle-size warnings remain.
+- `npm run staging:restore-rehearsal`: PASSED on 2026-10-12, full equality of
+  83 tables/13,503 rows, 31 roles, schema/RLS/ACLs and 24 migrations. Restored-only
+  Auth, bounded REST reads, receipt replay and desktop/mobile login passed.
+  Original data remained unchanged; see `docs/restore-rehearsal.txt` for limits.
 
 The SQL runners use a locally inspected `postgres:17` image, `--pull=never`,
 `--network=none`, tmpfs storage and no published ports. They remove only the
@@ -112,6 +118,13 @@ If history attribution is missing or contradicts the ledger, stop that operation
 and review it explicitly. Do not infer a person, credit an unrelated successor,
 clear historical archives or invent payment observations.
 
+The approved local logical restore rehearsal now passes. Its encrypted archive
+includes a custom dump, roles, service configuration and comparison evidence.
+Restoration uses the persisted archive in a fresh tmpfs cluster, rebuilds planner
+statistics, checks catalogs/data, and removes only UUID-labelled rehearsal resources.
+DPAPI account recovery, external files and off-host/PITR remain separate gates.
+Expired grants remain expired; they are never renewed to make a test pass.
+
 ## Next Session
 
 Complete the financial/delegation/privacy matrix and MCP transport/client targets.
@@ -119,11 +132,12 @@ Synthetic local Supabase staging is now available; see docs/local-staging.txt.
 Its 45 real scenarios passed. New sessions use policy2; pre-existing sessions
 remain v1 without rebilling. Every old business observation/policy was compared
 before/after local migration and preserved. Encrypted backup and decryption
-were verified outside Git; a full restoration rehearsal remains pending.
+were verified outside Git; an updated logical backup was restored successfully
+in a separate disposable environment. This is not off-host/PITR certification.
 
 The tests exposed and verified fixes for cumulative gift-redeem UI inference
 and concurrent login authorization. Remote staging/preview integration,
-backup restoration rehearsal and deployment authorization remain pending.
+off-host/productive recovery and deployment authorization remain pending.
 No changes to production are required to review this draft.
 
 Manual credit approval and pending-penalty settlement are wired into the student
@@ -134,6 +148,14 @@ paginated reads avoid the 1000-row historical truncation failure.
 Private append-only gift ambiguity observations prevent legacy mirror duplication
 even after recipient or label changes; observations never establish ownership.
 Unknown origins require independent evidence, not automatic financial conversion.
+
+Follow-up provider fixes preserve bounded read-only first paint while awaiting
+complete financial hydration before clearing intents. Auth events defer SDK calls
+outside their lock and verify the current SDK identity before applying authority.
+Mixed child queries match the real composite schema; NULL gift payment remains
+unknown; multi-step helpers assert actor/sede scope before subsequent writes.
+Current local verification is documented in `docs/provider-integrity-fixes.txt`;
+no new live Auth/RLS certification or production authorization is inferred.
 
 Developer-only staging limitations are documented in docs/local-staging.txt:
 Docker publishes service ports on all host interfaces unless the firewall

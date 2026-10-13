@@ -65,7 +65,20 @@ export const manualCreditIsolationPlugin = (): Plugin => ({
   load(id) {
     if (id === '\0manual-credit-mock-client') return `export const supabase = {
       rpc: (name, args) => window.__manualCreditTestRpc(name, args),
-      from: () => { throw new Error('Standalone database writes are forbidden'); }
+      from: table => {
+        const forbidden = () => { throw new Error('Standalone database writes are forbidden'); };
+        if (table !== 'session_activity_blocks') return forbidden();
+        return {
+          insert: forbidden, update: forbidden, delete: forbidden, upsert: forbidden,
+          select: columns => {
+            if (columns !== 'id') return forbidden();
+            return { eq: (column, sessionId) => {
+              if (column !== 'session_id' || typeof sessionId !== 'string' || !sessionId) return forbidden();
+              return Promise.resolve({ data: [], error: null });
+            } };
+          }
+        };
+      }
     };`;
   }
 });
@@ -125,7 +138,8 @@ const Harness = ({ ops }: { ops: SessionOps }) => {
     setSessions(context.current.sessions);
     setStudents(context.current.students);
   };
-  context.current = { sedeId: ids.sede, students, sessions, capacityDefaults: [], giftCards, safeReload: refresh } as unknown as OpsContext;
+  context.current = { sedeId: ids.sede, students, sessions, capacityDefaults: [], giftCards,
+    assertScope: () => {}, safeReload: refresh } as unknown as OpsContext;
   const call = async (action: string, data: any = {}, id = ids.session) => {
     setCalls(items => [...items, { action, id, data, sameObjectAsPrevious: previous.current === data }]);
     previous.current = data;

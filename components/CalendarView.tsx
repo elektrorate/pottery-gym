@@ -7,6 +7,7 @@ import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
 import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
 interface CalendarViewProps {
+  readOnly?: boolean;
   sessions: ClassSession[];
   onAddSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
   onUpdateSession: (id: string, updates: Partial<ClassSession>) => Promise<boolean | void>;
@@ -53,7 +54,7 @@ const isCancelled = (session: ClassSession, studentId: string) => session.attend
   && session.businessStateByStudentId?.[studentId]?.reservationState === 'cancelled';
 const shortId = (id: string) => id.slice(-8);
 
-const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onUpdateSession, onApproveSessionException, onCancelSessionReservation, onWaiveSessionPenalty, getPendingSessionOperation, onRetryPendingSessionOperation, canWaiveSessionPenalty, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
+const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions, onAddSession, onUpdateSession, onApproveSessionException, onCancelSessionReservation, onWaiveSessionPenalty, getPendingSessionOperation, onRetryPendingSessionOperation, canWaiveSessionPenalty, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
   const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
   const getSessionCapacity = (classType: ClassSession['classType']) => classType === 'mixto'
     ? getDefaultSessionCapacity('mesa', capacityMap) + getDefaultSessionCapacity('torno', capacityMap)
@@ -78,7 +79,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   const [pendingSave, setPendingSave] = useState<SaveAttempt | null>(null);
   const [saveError, setSaveError] = useState('');
   const [refreshConflict, setRefreshConflict] = useState<{ kind: Exclude<SaveAttempt['kind'], 'recovery'>; id: string; revision?: number } | null>(null);
-  const formLocked = isSubmitting || !!pendingSave || !!refreshConflict;
+  const formLocked = readOnly || isSubmitting || !!pendingSave || !!refreshConflict;
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [businessForms, setBusinessForms] = useState<Record<string, { reason: string; kind: 'membership_override' | 'no_credit'; cancellationReason: string; waiverReason: string }>>({});
   const policy2 = attendanceSession?.attendancePolicyVersion === 2;
@@ -295,13 +296,15 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
         teacherId: '',
         workshopName: '',
         privateReason: '',
-        sessionAudience: 'membresia'
+        sessionAudience: 'membresia',
+        activityBlocks: []
       });
     }
     setShowSessionModal(true);
   };
 
   useEffect(() => {
+    if (readOnly) return;
     const params = new URLSearchParams(location.search);
     const requestedDate = params.get('date');
     const requestedSessionId = params.get('sessionId');
@@ -317,7 +320,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
       else handleOpenSessionModal(requestedSession);
     }
     deepLinkHandledRef.current = deepLinkKey;
-  }, [location.search, sessions]);
+  }, [location.search, sessions, readOnly]);
 
   // Abrir modal de Control de Asistencia (Nueva funcionalidad separada)
   const handleOpenAttendanceModal = (session: ClassSession) => {
@@ -360,7 +363,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   };
 
   const persistSave = async (attempt: SaveAttempt) => {
-    if (submittingRef.current) return;
+    if (readOnly || submittingRef.current) return;
     submittingRef.current = true;
     setIsSubmitting(true);
     setSaveError('');
@@ -433,7 +436,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   }, [sessions, refreshConflict]);
 
   const saveAttendance = async (finalize: boolean) => {
-    if (submittingRef.current || refreshConflict || !attendanceSession) return;
+    if (readOnly || submittingRef.current || refreshConflict || !attendanceSession) return;
     if (pendingSave) {
       if (pendingSave.kind === 'attendance' || pendingSave.kind === 'recovery') await persistSave(pendingSave);
       return;
@@ -495,7 +498,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
   };
 
   const handleSessionSubmit = async () => {
-    if (submittingRef.current || refreshConflict) return;
+    if (readOnly || submittingRef.current || refreshConflict) return;
     if (pendingSave) {
       if (pendingSave.kind === 'reservation' || pendingSave.kind === 'recovery') await persistSave(pendingSave);
       return;
@@ -711,7 +714,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
               <button onClick={() => setViewMode('day')} className={`flex-1 rounded-[10px] px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest transition-all md:flex-none ${viewMode === 'day' ? 'bg-brand text-white shadow-sm' : 'text-neutral-textHelper hover:text-brand'}`}>Día</button>
               <button onClick={() => setViewMode('month')} className={`flex-1 rounded-[10px] px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest transition-all md:flex-none ${viewMode === 'month' ? 'bg-brand text-white shadow-sm' : 'text-neutral-textHelper hover:text-brand'}`}>Mes</button>
             </div>
-            <button onClick={() => handleOpenSessionModal()} className="whitespace-nowrap rounded-[12px] bg-brand px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest text-white shadow-sm transition-all hover:bg-brand-hover active:scale-95 md:px-6">Nueva sesión</button>
+            <button disabled={readOnly} onClick={() => handleOpenSessionModal()} className="whitespace-nowrap rounded-[12px] bg-brand px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest text-white shadow-sm transition-all hover:bg-brand-hover active:scale-95 md:px-6">Nueva sesión</button>
           </div>
         </div>
 
@@ -756,6 +759,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                     <div
                       key={session.id}
                       data-session-id={session.id}
+                      aria-disabled={readOnly}
                       className="group absolute z-10 flex cursor-pointer flex-col items-start overflow-hidden rounded-[16px] border border-neutral-border bg-white p-4 shadow-soft transition-all hover:-translate-y-0.5 hover:border-brand/40 md:p-5"
                       style={{ top: `${topOffset}px`, left: `calc(${leftOffset}% + 80px)`, width: `calc(${widthPercent}% - 92px)`, minHeight: '152px' }}
                       onClick={() => handleOpenSessionModal(session)}
@@ -822,6 +826,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                       {/* Control de asistencia */}
                       <button
                         type="button"
+                        disabled={readOnly}
                         onClick={(e) => { e.stopPropagation(); handleOpenAttendanceModal(session); }}
                         className="absolute right-4 top-4 z-20 flex h-11 w-11 items-center justify-center rounded-[13px] border-2 border-white/80 bg-brand text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-brand-hover focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 active:translate-y-0"
                         title="Control de Asistencia"
@@ -857,7 +862,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end md:self-auto">
-                  <button type="button" onClick={() => handleOpenSessionModal()} className="inline-flex h-[38px] min-h-0 items-center justify-center whitespace-nowrap rounded-full bg-brand px-4 text-[11px] font-semibold leading-none text-white transition hover:bg-brand-hover sm:px-5">Nueva sesión</button>
+                  <button type="button" disabled={readOnly} onClick={() => handleOpenSessionModal()} className="inline-flex h-[38px] min-h-0 items-center justify-center whitespace-nowrap rounded-full bg-brand px-4 text-[11px] font-semibold leading-none text-white transition hover:bg-brand-hover sm:px-5">Nueva sesión</button>
                   <button type="button" onClick={() => setViewMode('day')} className="inline-flex h-[38px] min-h-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-neutral-sec px-4 text-[12px] font-semibold leading-none text-neutral-textMain transition hover:bg-brand-soft hover:text-brand" aria-label="Volver a la vista diaria">
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 12H5m6-6-6 6 6 6" /></svg>
                     <span className="hidden sm:inline">Vista diaria</span><span className="sm:hidden">Día</span>
@@ -1123,12 +1128,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
 
             <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#E8D9CC] bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-8 sm:py-4">
               {pendingSave?.kind === 'business' || pendingSave?.kind === 'recovery' ? (
-                <button type="button" onClick={() => persistSave(pendingSave)} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white disabled:opacity-60">{pendingSave.kind === 'recovery' && ['attendance', 'reservation'].includes(pendingSave.descriptor.operation) ? isSubmitting ? 'Guardando...' : 'Reintentar guardado' : isSubmitting ? 'Procesando operación...' : 'Reintentar operación'}</button>
+                <button type="button" onClick={() => persistSave(pendingSave)} disabled={readOnly || isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white disabled:opacity-60">{pendingSave.kind === 'recovery' && ['attendance', 'reservation'].includes(pendingSave.descriptor.operation) ? isSubmitting ? 'Guardando...' : 'Reintentar guardado' : isSubmitting ? 'Procesando operación...' : 'Reintentar operación'}</button>
               ) : attendanceSession.completedAt ? (
                 isEditingAttendance ? (
                   <>
                     <button type="button" onClick={cancelAttendanceEdit} disabled={formLocked} className="min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50">Cancelar edición</button>
-                    <button type="button" onClick={() => saveAttendance(false)} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">
+                    <button type="button" onClick={() => saveAttendance(false)} disabled={readOnly || isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">
                       {isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Guardar cambios'}
                     </button>
                   </>
@@ -1145,7 +1150,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                   <button
                     type="button"
                     onClick={() => saveAttendance(true)}
-                    disabled={isSubmitting || !!refreshConflict}
+                    disabled={readOnly || isSubmitting || !!refreshConflict}
                     className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6"
                   >
                     {isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : 'Finalizar control'}
@@ -1517,7 +1522,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ sessions, onAddSession, onU
                 <p className="w-full text-[11px] text-[#8B6B5E]">El historial se conserva. Las sesiones no se pueden eliminar.</p>
               )}
               <button type="button" onClick={() => setShowSessionModal(false)} disabled={formLocked} className={`${editingSessionId ? '' : 'ml-auto'} min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50`}>Cancelar</button>
-              <button type="button" onClick={handleSessionSubmit} disabled={isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">{isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : editingSessionId ? 'Guardar cambios' : 'Crear sesión'}</button>
+              <button type="button" onClick={handleSessionSubmit} disabled={readOnly || isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">{isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : editingSessionId ? 'Guardar cambios' : 'Crear sesión'}</button>
             </footer>
           </section>
         </div>

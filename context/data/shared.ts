@@ -13,6 +13,46 @@ export const RELOAD_TIMEOUT_MS = 12000;
 export const isAbortError = (err: any): boolean =>
     err?.name === 'AbortError' || (typeof err?.message === 'string' && err.message.includes('aborted'));
 
+/**
+ * Lightweight, privacy-safe Supabase timing trace. It deliberately records
+ * only operation metadata (never query parameters or row contents), so it can
+ * be enabled in production while diagnosing slow loads from the browser
+ * console. Set `localStorage.supabase_query_trace = "off"` to silence it.
+ */
+const isQueryTraceEnabled = (): boolean => {
+    try {
+        return typeof window === 'undefined' || window.localStorage.getItem('supabase_query_trace') !== 'off';
+    } catch {
+        return true;
+    }
+};
+
+const emitQueryTrace = (operation: string, startedAt: number, result?: any, error?: unknown) => {
+    if (!isQueryTraceEnabled()) return;
+    const payload = result && typeof result === 'object' ? result : undefined;
+    const rows = Array.isArray(payload?.data) ? payload.data.length : payload?.data == null ? undefined : 1;
+    const queryError = error ?? payload?.error;
+    console.info('[SupabaseTrace]', JSON.stringify({
+        operation,
+        durationMs: Math.round(performance.now() - startedAt),
+        rows,
+        ok: !queryError,
+        error: queryError ? String(queryError?.message || queryError) : undefined
+    }));
+};
+
+export const traceSupabaseQuery = async <T,>(operation: string, queryOrPromise: T | Promise<T>): Promise<Awaited<T>> => {
+    const startedAt = performance.now();
+    try {
+        const result = await queryOrPromise;
+        emitQueryTrace(operation, startedAt, result);
+        return result as Awaited<T>;
+    } catch (error) {
+        emitQueryTrace(operation, startedAt, undefined, error);
+        throw error;
+    }
+};
+
 // Timeout wrapper with REAL abort after hard limit.
 // Warns at timeoutMs, rejects at 2x timeoutMs.
 export const withTimeout = async <T,>(
@@ -28,6 +68,7 @@ export const withTimeout = async <T,>(
         ? abortableQuery.abortSignal(controller.signal)
         : queryOrPromise;
 
+    const startedAt = performance.now();
     const warnTimer = setTimeout(() => {
         didWarn = true;
         console.warn(`⚠️ ${operation} is taking longer than ${timeoutMs}ms — still waiting...`);
@@ -44,7 +85,11 @@ export const withTimeout = async <T,>(
                 }, hardLimit);
             })
         ]);
+        emitQueryTrace(operation, startedAt, result);
         return result as Awaited<T>;
+    } catch (error) {
+        emitQueryTrace(operation, startedAt, undefined, error);
+        throw error;
     } finally {
         clearTimeout(warnTimer);
         if (hardTimer) clearTimeout(hardTimer);
@@ -157,7 +202,7 @@ export const mapGiftCardRowToModel = (row: any): GiftCard => {
         issuedDate: row.scheduled_date || undefined,
         expiryDate,
         price: row.price ?? undefined,
-        paymentStatus: row.payment_status || 'paid',
+        paymentStatus: row.payment_status ?? null,
         status,
         sessionsUsed,
         sessionsRemaining: Math.max(0, numClasses - sessionsUsed),
@@ -171,6 +216,7 @@ export const mapGiftCardRowToModel = (row: any): GiftCard => {
 
 // Shared context passed to all operation modules
 export interface OpsContext {
+    assertScope: () => void;
     sedeId: string | null;
     isSuperAdmin: boolean;
     operationLockRef: React.MutableRefObject<boolean>;

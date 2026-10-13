@@ -1,0 +1,98 @@
+POTTERY GYM - ENSAYO DE RESTAURACION LOGICA LOCAL
+
+Resultado: PASSED el 2026-10-12T19:12:30.731Z.
+Rama de trabajo creada: feat/local-restore-rehearsal, base c94d61c.
+Autorizacion: ensayo local desechable aprobado por el solicitante.
+No hubo migracion remota, despliegue, commit o push por este ensayo.
+Durante el cierre se observo checkout a main y cambios concurrentes en
+AuthContext/DataContext. Se conservaron sin editarlos ni revertirlos.
+
+COMANDO REPRODUCIBLE
+
+  npm run staging:restore-rehearsal
+
+Requiere Windows con DPAPI CurrentUser, Docker local, el runtime aprobado y
+las imagenes exactas ya instaladas. Rechaza Docker remoto/DOCKER_HOST, otro
+proyecto, un enlace remoto y una imagen PostgreSQL distinta de la inspeccionada.
+No acepta argumentos ni destinos elegidos por el cliente. No descarga imagenes.
+Cada ejecucion toma un respaldo nuevo; no sobrescribe datos ni respalda produccion.
+
+ORIGEN Y AISLAMIENTO
+
+Origen exclusivo: supabase_db_pottery-gym-local-staging, en 55322.
+Se mantuvieron activos el staging original y el stack anterior en 54321/54322.
+El proyecto remoto ilkrcakrduibgsfqfzti es produccion y no se uso.
+Se exporto un snapshot REPEATABLE READ, READ ONLY para el dump y los hashes.
+Roles y secuencias se comprobaron antes/despues porque no son MVCC.
+Se verifico al final que datos, esquema, roles y secuencias originales no cambiaron.
+
+El destino fue un cluster nuevo en tmpfs, con la misma imagen PostgreSQL 17.6,
+en una red Docker interna propia, sin puertos publicados. Auth y PostgREST
+usaron las mismas imagenes instaladas y solo conectaron a esa base restaurada.
+La prueba de navegador uso un proxy y un Vite separados en loopback, sin .env.
+Solo se expuso la anon publica; no se guardaron capturas, videos o trazas.
+Las peticiones externas del navegador quedaron bloqueadas.
+
+RESPALDO ENSAYADO
+
+Directorio: %TEMP%\opencode\pottery-gym-local-staging\backups.
+Base de archivos: restore-rehearsal-7fc52b45-8517-4ebe-b846-870fdba78509.
+Archivo .aes: dump custom, roles, configuracion Auth/PostgREST y evidencia,
+  cifrados con AES-256-GCM. Tamano: 3777182 bytes.
+Archivo .key.dpapi: clave protegida por el usuario Windows, fuera de Git.
+Archivo .json: reporte sin filas personales, passwords o tokens; hashes y conteos.
+SHA256 del .aes: cde46f7c4f6814e1d9eeb024a045903c218330e5b74e45779a6f62927b6f4f23.
+
+La restauracion utilizo el archivo cifrado RELEIDO DEL DISCO y su clave DPAPI,
+no el dump original en memoria. Tambien recupero de ahi la configuracion de
+Auth/PostgREST. No se escribieron dumps, credenciales o configuracion en texto
+plano. Los respaldos anteriores no quedan certificados por este resultado.
+
+COMPARACIONES APROBADAS
+
+- 83 tablas y 13503 filas: conteos y multiconjuntos de hashes SHA256 iguales.
+- 31 roles, 25 membresias de rol, identidades/password hashes y ACLs iguales.
+- Cinco secuencias y sus valores; 24 migraciones, incluida la manual, iguales.
+- 13 schemas, nueve vistas, 78 politicas RLS y 381 constraints iguales.
+- 193 rutinas, propietarios, security definer, configuracion y grants iguales.
+- Cinco extensiones y 27 default ACLs; fingerprint del esquema logico igual.
+- Tras las pruebas, todas las filas financieras y no-Auth de la copia quedaron
+  sin cambios. Solo Auth de la copia genero sus propias sesiones de prueba.
+
+FUNCIONAMIENTO REAL DE LA COPIA
+
+- Cinco logins, cinco lecturas Auth de usuario y cinco lecturas de perfil.
+- 11 lecturas REST acotadas de vistas de creditos/incidencias y alcance de sede.
+- Cuatro denegaciones owner-only para otros actores, incluso super_admin.
+- Replay de un recibo manual existente: mismo resultado, sin nuevo credito.
+- Cuatro denegaciones del API de dominio: el lector habia caducado. No se
+  renovaron grants ni se invento una prueba positiva de un permiso ya vencido.
+- Navegador desktop y mobile: login/perfil contra el backend restaurado real.
+- Limpieza: los tres contenedores y la red del ensayo fueron retirados, con
+  comprobacion de IDs/nombres/labels. Respaldos y reporte cifrados se conservaron.
+
+TIMEOUTS Y ESTADISTICAS
+
+El HTTP 500 era SQLSTATE 57014 (statement timeout), no perdida de datos.
+Un dump logico no guarda estadisticas del optimizador: se ejecuto ANALYZE solo
+en la copia, pasando de 39 tablas sin estadisticas a cero. No se ampliaron
+timeouts ni permisos. La consulta de student_credit_profile respondio despues.
+Una lectura masiva de session_pending_penalties aun alcanzo el timeout; las
+pruebas REST usan muestras deterministas de hasta diez filas. La comparacion
+de las 13503 filas en SQL fue completa. Esto no certifica rendimiento de
+exportaciones masivas; requieren paginacion/filtros y revision separada.
+
+LIMITES DE LA CERTIFICACION
+
+Es recuperacion LOGICA de esta base local, no PITR ni restauracion fisica total.
+Storage buckets/objects, large objects y Vault secrets estaban vacios. No se
+restauraron archivos externos ni la base secundaria _supabase. Vault no vacio
+requiere un plan separado para recuperar su clave raiz; el runner falla cerrado.
+DPAPI requiere el usuario/material Windows correspondiente. No se ensayaron
+perdida del equipo/cuenta, recuperacion off-host o persistencia ante corte de energia.
+El frontend se ejecuto desde el workspace; no es una recuperacion del codigo.
+La prueba de navegador es basica, no repite los 45 casos de negocio previos.
+Los strings de Node no se pueden borrar fiablemente de RAM; no hay secretos en logs.
+Una interrupcion forzada puede requerir limpieza por el manifiesto; nunca prune global.
+Las pruebas unitarias de tooling no sustituyen la ejecucion real registrada aqui.
+Verificacion final del tooling: node --check, git diff --check y 40/40 unitarias.

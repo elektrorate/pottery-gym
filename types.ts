@@ -337,7 +337,7 @@ export interface GiftCard {
   issuedDate?: string;
   expiryDate?: string;
   price?: number;
-  paymentStatus?: 'pending' | 'paid' | 'refunded';
+  paymentStatus?: 'pending' | 'paid' | 'refunded' | null;
   status?: 'pending' | 'active' | 'exhausted' | 'consumed' | 'expired' | 'cancelled';
   sessionsUsed?: number;
   sessionsRemaining?: number;
