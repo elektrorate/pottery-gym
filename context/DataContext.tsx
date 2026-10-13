@@ -182,6 +182,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const loadAllData = useCallback(async () => {
         requireScope();
         const generation = ++loadGenerationRef.current;
+        const hadUsableSnapshot = hasLoadedOnceRef.current;
         // Removed sedeId guard: RLS on Supabase will filter by get_owned_sede_id()
         // This ensures staff users can load data even before sedeId resolves
         if (!hasLoadedOnceRef.current) setIsLoadingData(true);
@@ -509,7 +510,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 // time, while contract/shape errors still fail closed.
                 const errorText = String((error as any)?.message || error || '').toLowerCase();
                 const recoverable = ['timeout', 'network', 'fetch', 'abort', 'transport', 'connection'].some(term => errorText.includes(term));
-                if (hasLoadedOnceRef.current || !recoverable) throw error;
+                if (hadUsableSnapshot || !recoverable) throw error;
                 businessReadyRef.current = false;
                 setBusinessDataReady(false);
                 console.warn('Secondary business data hydration skipped:', error);
