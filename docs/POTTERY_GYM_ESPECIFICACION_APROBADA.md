@@ -401,7 +401,6 @@ Incluye eventos de:
 - Gift Cards.
 - Equipo.
 - Inventario.
-- Configuración.
 - Otros eventos relevantes.
 
 ### Regla de trazabilidad
@@ -1014,7 +1013,153 @@ No registrar:
 
 ---
 
-# 14. Arquitectura de lectura / rendimiento
+# 14. Gestión → Configuración
+
+## Estado: APROBADO
+
+### Regla principal
+
+```text
+CONFIGURACIÓN
+=
+datos y reglas generales del taller
+```
+
+No se utiliza para gestionar la operación diaria.
+
+### Acceso
+
+Solo el **Administrador / Owner** puede entrar y modificar Configuración.
+
+El Colaborador no tiene acceso.
+
+### Datos del taller
+
+- Nombre.
+- Logo.
+- Teléfono.
+- Email.
+- Dirección.
+
+El onboarding configura estos datos inicialmente y Configuración permite editarlos después.
+
+### Región
+
+- Zona horaria.
+- Idioma.
+- Moneda.
+
+La zona horaria del workshop afecta:
+- Calendario.
+- Sesiones.
+- “Hoy”.
+- Dashboard.
+- Actividad.
+- Gift Cards.
+- caducidades.
+- fechas y horas.
+
+### Actividades
+
+Cada taller crea sus propios tipos de actividad.
+
+Puede:
+- crear,
+- editar,
+- ordenar,
+- desactivar.
+
+No existen categorías de actividad obligatorias fijadas por Pottery Gym.
+
+Las actividades utilizadas históricamente se desactivan; no se eliminan físicamente.
+
+### Clases y sesiones
+
+Configuración define valores predeterminados por actividad, por ejemplo:
+
+- duración predeterminada,
+- capacidad predeterminada.
+
+Estos valores son defaults.
+
+La sesión concreta conserva el valor operativo definitivo y puede diferir del predeterminado.
+
+### Horario general del taller
+
+Por cada día de la semana:
+
+- abierto / cerrado,
+- hora de inicio,
+- hora de fin.
+
+El horario general no crea sesiones.
+
+### Excepciones de horario
+
+Permitir:
+- festivos,
+- cierres especiales,
+- horarios especiales.
+
+### Gift Card
+
+Configuración contiene reglas generales de Gift Card, por ejemplo:
+
+- caducidad predeterminada.
+
+Las Gift Cards concretas se gestionan desde su propio módulo.
+
+### Plazo de cancelación
+
+**Cada taller configura su propio plazo de cancelación en horas.**
+
+No existe un valor fijo global de 8 horas.
+
+La lógica de cancelación y penalización debe consultar el valor configurado en el workshop.
+
+Ejemplos posibles:
+
+- 8 h,
+- 12 h,
+- 24 h,
+- 48 h.
+
+### No duplicar configuración
+
+Inventario se configura dentro de Inventario.
+
+Equipo se gestiona desde Gestión → Equipo.
+
+Profesores se gestionan desde Profesores.
+
+### Trazabilidad
+
+Registrar cambios relevantes como:
+
+- activity_created,
+- activity_deactivated,
+- workshop_timezone_changed,
+- workshop_hours_changed,
+- gift_card_expiration_changed,
+- cancellation_window_changed.
+
+No registrar aperturas de pantalla ni navegación.
+
+### Mobile First
+
+En móvil, Configuración se presenta como secciones independientes:
+
+- Datos del taller.
+- Región.
+- Actividades.
+- Clases y sesiones.
+- Gift Card.
+
+No usar un formulario único gigantesco.
+
+---
+
+# 15. Arquitectura de lectura / rendimiento
 
 ## Estado: APROBADO COMO DIRECCIÓN TÉCNICA
 
@@ -1152,7 +1297,7 @@ Nunca autorización.
 
 ---
 
-# 15. Arquitectura preparada para agentes / MCP
+# 16. Arquitectura preparada para agentes / MCP
 
 ## Estado: APROBADO COMO DIRECCIÓN
 
@@ -1259,7 +1404,7 @@ Enfoque recomendado:
 
 ---
 
-# 16. Reglas de despliegue y producción
+# 17. Reglas de despliegue y producción
 
 ## Estado: APROBADO COMO DIRECCIÓN
 
@@ -1294,13 +1439,7 @@ LOCAL
 
 ---
 
-## Configuración · regla de cancelación
-
-**APROBADO:** cada taller puede configurar su propio plazo de cancelación en horas. No existe un plazo fijo global de 8 horas para todos los talleres. La lógica de cancelación y penalización debe consultar el valor configurado en el workshop.
-
----
-
-# 17. Decisiones descartadas / eliminadas
+# 18. Decisiones descartadas / eliminadas
 
 ## Piezas
 
@@ -1320,7 +1459,7 @@ No reintroducir Piezas salvo nueva decisión explícita.
 
 ---
 
-# 18. Secciones pendientes de cerrar
+# 19. Secciones pendientes de cerrar
 
 - Configuración.
 - Revisión final de Alumnos.
@@ -1334,7 +1473,7 @@ No reintroducir Piezas salvo nueva decisión explícita.
 
 ---
 
-# 19. Método de trabajo
+# 20. Método de trabajo
 
 Para cada nueva sección:
 
