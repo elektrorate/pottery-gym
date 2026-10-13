@@ -509,9 +509,13 @@ const StudentList: React.FC<StudentListProps> = ({
       const matchesTier = categoryFilter !== 'membresia' || membershipTierFilter === 'todos' || membershipTier === membershipTierFilter;
       if (categoryFilter === 'archivados') return archived && matchesSearch;
       if (archived || !matchesSearch || !matchesCategory || !matchesTier) return false;
-      if (activeTab === 'expired') return lifecycle === 'expired';
-      if (activeTab === 'pending') return lifecycle === 'pending';
-      if (activeTab === 'active') return lifecycle === 'active';
+      // Los bonos temporales no tienen estados de membresía (al día,
+      // pendientes o vencidas); solo se consultan por categoría o búsqueda.
+      if (categoryFilter === 'membresia') {
+        if (activeTab === 'expired') return lifecycle === 'expired';
+        if (activeTab === 'pending') return lifecycle === 'pending';
+        if (activeTab === 'active') return lifecycle === 'active';
+      }
       return matchesSearch && matchesCategory && matchesTier;
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [students, activeTab, searchQuery, categoryFilter, membershipTierFilter, today]);
@@ -580,9 +584,9 @@ const StudentList: React.FC<StudentListProps> = ({
               </div>
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
                 {categoryFilter === 'membresia' && <label className="relative shrink-0"><span className="sr-only">Elegir plan</span><select value={membershipTierFilter} onChange={(event) => setMembershipTierFilter(event.target.value as MembershipTierFilter)} className="h-10 min-w-[190px] appearance-none border border-[#CFCAC5] bg-white px-3 pr-9 text-[13px] text-[#6F6A66] outline-none focus:border-[#C68952]"><option value="todos">Elegir plan</option>{(['plata', 'gold', 'platinum'] as MembershipTierFilter[]).map(tier => <option key={tier} value={tier}>{MEMBERSHIP_PLANS[tier].label}</option>)}</select><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#8B6B5E]">⌄</span></label>}
-                <div className="flex min-w-0 items-center overflow-x-auto no-scrollbar" role="tablist" aria-label="Estado de alumnos">
-                  {(['all', 'active', 'pending', 'expired'] as TabType[]).map((tab, index) => <React.Fragment key={tab}>{index > 0 && <span className="mx-2 h-5 w-px shrink-0 bg-[#9E9892]" aria-hidden="true" />}<button type="button" onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`shrink-0 py-2 text-[12px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'text-[#7B3F22]' : 'text-[#8B6B5E] hover:text-[#7B3F22]'}`}>{tab === 'all' ? 'Todos' : tab === 'active' ? 'Al día' : tab === 'expired' ? 'Vencidas' : 'Pendientes'}</button></React.Fragment>)}
-                </div>
+                {categoryFilter === 'membresia' && <div className="flex min-w-0 items-center overflow-x-auto no-scrollbar" role="tablist" aria-label="Estado de membresías">
+                  {(['all', 'active', 'pending', 'expired'] as TabType[]).map((tab, index) => <React.Fragment key={tab}>{index > 0 && <span className="mx-2 h-5 w-px shrink-0 bg-[#9E9892]" aria-hidden="true" />}<button type="button" onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`shrink-0 py-2 text-[12px] font-bold uppercase tracking-[0.12em] ${activeTab === tab ? 'text-[#7B3F22]' : 'text-[#8B6B5E] hover:text-[#7B3F22]'}`}>{tab === 'all' ? 'Todos' : tab === 'active' ? 'Al día' : tab === 'expired' ? 'Vencidas' : 'Pendientes'}</button></React.Fragment>)}
+                </div>}
               </div>
             </div>
           </section>
