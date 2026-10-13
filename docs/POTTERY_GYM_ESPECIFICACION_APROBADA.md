@@ -455,14 +455,20 @@ alumno archivado
 
 #### Alumno Temporal
 
-- Está activo mientras tenga sesiones/bonos disponibles.
-- Cuando consume todas sus sesiones/bonos, pasa automáticamente a **Archivado**.
+El alumno Temporal **solo tiene dos estados posibles**:
+
+- **Activo** → tiene sesiones/bonos disponibles.
+- **Archivado** → ya no tiene sesiones/bonos disponibles.
+
+No existe estado **Inactivo** para alumnos temporales.
 
 ```text
 TEMPORAL
 bonos > 0 → Activo
-bonos = 0 → Archivado automático
+bonos = 0 → Archivado
 ```
+
+El cambio a Archivado ocurre automáticamente cuando se agotan sus sesiones/bonos.
 
 #### Alumno de Gift Card
 
@@ -484,7 +490,11 @@ TIPO DE ALUMNO
 → Membresía / Temporal / Gift Card
 
 ESTADO DEL ALUMNO
-→ Activo / Inactivo / Archivado
+→ depende del tipo
+
+Membresía → Activo / Inactivo / Archivado
+Temporal → Activo / Archivado
+Gift Card → Activo / Archivado
 
 SALDO
 → sesiones o créditos disponibles
@@ -493,7 +503,9 @@ ESTADO DE MEMBRESÍA / GIFT CARD
 → estado comercial propio
 ```
 
-El estado del alumno no debe derivarse automáticamente del saldo salvo en los tipos **Temporal** y **Gift Card**, donde el agotamiento de sus sesiones provoca el archivado automático según las reglas anteriores.
+Para **Membresía**, el estado del alumno no se deriva del saldo.
+
+Para **Temporal** y **Gift Card**, el estado sí depende de que existan sesiones/bonos disponibles: con saldo disponible están Activos; al agotarse, pasan a Archivado automáticamente.
 
 ### Historial contextual del alumno
 
