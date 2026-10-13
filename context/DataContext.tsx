@@ -206,11 +206,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 const activityRoster = table === 'session_activity_block_students';
                 const exactCount = options.exactCount !== false;
                 const select = () => {
-                    // The child has no sede_id; disambiguate its two parent FKs and scope through the parent.
-                    let query = supabase.from(table).select(options.columns || (activityRoster
-                        ? '*,session_activity_blocks!session_activity_block_students_block_id_fkey!inner(sede_id)'
-                        : '*'), exactCount ? { count: 'exact' } : undefined);
-                    if (!isSuperAdmin && sedeId) query = query.eq(activityRoster ? 'session_activity_blocks.sede_id' : 'sede_id', sedeId);
+                    // The activity-roster child has no sede_id of its own. Do not
+                    // embed its parent here: the mixed-session migration replaced
+                    // the old FK relationship name, and RLS already scopes this
+                    // table through its activity block/session parent.
+                    let query = supabase.from(table).select(options.columns || '*', exactCount ? { count: 'exact' } : undefined);
+                    if (!activityRoster && !isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
                     if (table === 'students' && options.studentCategory) query = query.eq('student_category', options.studentCategory);
                     if (range && table === 'sessions') query = query.gte('date', range.start).lte('date', range.end);
                     return query;
@@ -295,9 +296,11 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             });
             const activityBlockStudentsMap: Record<string, any[]> = {};
             const activityBlocksById = new Map((activityBlocksRes.data || []).map((row: any) => [row.id, row] as const));
+            const sessionsById = new Map((sessionsRes.data || []).map((row: any) => [row.id, row] as const));
             (activityBlockStudentsRes.data || []).forEach((row: any) => {
                 const block = activityBlocksById.get(row.block_id);
-                if (!block || block.session_id !== row.session_id || block.sede_id !== row.session_activity_blocks?.sede_id
+                const session = sessionsById.get(row.session_id);
+                if (!block || !session || block.session_id !== row.session_id || block.sede_id !== session.sede_id
                     || !sessionStudentsMap[row.session_id]?.some(item => item.student_id === row.student_id)) {
                     throw new Error('El roster de actividades no coincide con el bloque, la sede o el alumno de la sesion. Recarga los datos.');
                 }
