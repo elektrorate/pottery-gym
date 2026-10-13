@@ -610,7 +610,7 @@ const StudentList: React.FC<StudentListProps> = ({
                   <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : cat === 'temporal' ? 'Bonos temporales' : isExpired ? 'Vencida' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
-            {hasMoreStudents && <div className="flex justify-center border-t border-[#EDE2D8] px-4 py-4"><button type="button" onClick={() => setVisibleLimit(limit => limit + 50)} className="min-h-10 rounded-lg border border-[#C68952] bg-white px-4 py-2 text-[12px] font-bold text-[#7B3F22] hover:bg-[#F7F1EB]">Cargar más alumnos ({filteredStudents.length - visibleStudents.length} restantes)</button></div>}
+            {hasMoreStudents && <div className="sticky bottom-0 z-10 flex justify-center border-t border-[#DDBFA4] bg-white/95 px-4 py-4 shadow-[0_-8px_20px_rgba(123,63,34,0.10)] backdrop-blur-sm"><button type="button" onClick={() => setVisibleLimit(limit => limit + 50)} aria-label={`Cargar ${Math.min(50, filteredStudents.length - visibleStudents.length)} alumnos más`} className="min-h-12 w-full max-w-md rounded-xl bg-[#7B3F22] px-5 py-3 text-[13px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_6px_14px_rgba(123,63,34,0.22)] transition-colors hover:bg-[#63321C] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2">Cargar más alumnos · {filteredStudents.length - visibleStudents.length} restantes</button></div>}
           </div>
         </div>
       </div>
