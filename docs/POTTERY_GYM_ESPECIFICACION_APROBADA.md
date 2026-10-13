@@ -22,7 +22,7 @@
   - RPC / Edge Functions para operaciones críticas.
   - TanStack Query por feature.
   - Vercel para frontend.
-- Diseño **Mobile First real**.
+- Diseño **exclusivamente móvil** como criterio por defecto del proyecto. Pottery Gym se diseña pensando en móvil desde el inicio; no se diseñan ni documentan variantes desktop salvo decisión futura explícita.
 - Multi-workshop real.
 - UUID como identidad de entidades.
 - No usar nombres como claves lógicas.
@@ -32,6 +32,19 @@
 - No duplicar lógica entre Dashboard, Calendario, API o agentes.
 - El servidor y RLS son la autoridad de acceso.
 - El frontend nunca se considera capa de seguridad.
+
+---
+
+## Regla transversal de interfaz móvil
+
+**APROBADO:** Pottery Gym se diseña únicamente para móvil en esta etapa.
+
+- Pensar primero y únicamente en pantallas móviles.
+- No diseñar layouts desktop.
+- No documentar drawers, sidebars o variantes específicas de escritorio.
+- Priorizar pantallas completas, listas verticales, navegación simple y acciones compactas.
+- Cualquier adaptación futura a tablet o desktop requerirá una decisión explícita posterior.
+- Esta regla aplica a todas las secciones funcionales y técnicas del proyecto.
 
 ---
 
@@ -78,7 +91,7 @@ Orden oficial:
 - Priorizar módulos de uso diario.
 - Evitar menús duplicados.
 - Gestión agrupa funciones administrativas.
-- Mobile First.
+- Diseño móvil como estándar del proyecto.
 - **Piezas queda eliminado del proyecto.**
 
 ---
@@ -539,12 +552,12 @@ Cargar sesiones por rango de fechas.
 
 No cargar historial completo innecesariamente.
 
-### Mobile First
+### Diseño móvil
 
 - Día prioritario.
 - Semana simplificada.
-- Detalle full-screen en móvil.
-- Drawer en desktop.
+- Detalle de sesión a pantalla completa.
+- No diseñar variante desktop en esta fase.
 
 ---
 
