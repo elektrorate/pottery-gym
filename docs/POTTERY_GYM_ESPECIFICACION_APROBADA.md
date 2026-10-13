@@ -461,59 +461,44 @@ Reglas:
 - Al agotarse → **Inactivo** automáticamente.
 - **Archivado** sigue siendo exclusivamente manual.
 
-### Categoría del alumno, actividad y Gift Card
+### Tipo de alumno y actividad
 
 ## Estado de este subpunto: APROBADO
 
-**APROBADO:** solo existen dos categorías de alumno:
+**APROBADO:** existen tres tipos de alumno independientes entre sí:
 
 ```text
 ALUMNO
 ├── Membresía
-└── Temporal
+├── Temporal
+└── Gift Card
 ```
 
-**Gift Card no es una categoría de alumno.** Es un bono/producto independiente que puede vincularse a un alumno sin cambiar su categoría.
+No se mezclan entre sí.
+
+Un alumno de **Gift Card** no es un alumno Temporal ni un alumno de Membresía.  
+Un alumno de **Membresía** no utiliza Gift Card como parte de su membresía.  
+Un alumno **Temporal** tampoco se define mediante Gift Card.
 
 ### Separación de conceptos
 
 ```text
-CATEGORÍA DEL ALUMNO
-→ Membresía / Temporal
+TIPO DE ALUMNO
+→ Membresía / Temporal / Gift Card
 
 ACTIVIDAD
 → Torno / Modelado / otra actividad configurada por el taller
 
 PLAN O BONO
-→ según la categoría del alumno
+→ depende del tipo de alumno
 
-GIFT CARD
-→ relación independiente, solo si existe
-
-ESTADO DEL ALUMNO
-→ depende de la categoría y de sus bonos disponibles
+ESTADO
+→ depende de las reglas de cada tipo
 ```
-
-No mezclar actividad, categoría y Gift Card.
-
-Ejemplo:
-
-```text
-Laura Pérez
-Categoría → Membresía
-Actividad → Torno
-Bono → Oro
-
-Además puede tener:
-Gift Card #CR-92018
-→ 2 sesiones
-```
-
-La Gift Card adicional no convierte a Laura en otro tipo de alumna ni sustituye su membresía.
 
 ### Alumno de Membresía
 
-El alumno de Membresía tiene tres estados:
+Tiene tres estados:
 
 - **Activo** → tiene sesiones/bonos disponibles.
 - **Inactivo** → se queda sin sesiones/bonos disponibles. Este cambio es automático.
@@ -530,7 +515,7 @@ Quedarse sin sesiones no archiva al alumno.
 
 ### Alumno Temporal
 
-El alumno Temporal solo tiene dos estados:
+Solo tiene dos estados:
 
 - **Activo** → tiene sesiones/bonos disponibles.
 - **Archivado** → ya no tiene sesiones/bonos disponibles.
@@ -543,28 +528,22 @@ bonos > 0 → Activo
 bonos = 0 → Archivado automático
 ```
 
-### Gift Card vinculada
+### Alumno Gift Card
 
-Gift Card mantiene sus propios estados:
+Es un tipo de alumno independiente.
 
-```text
-Activa
-Agotada
-Caducada
-```
+- **Activo** → su Gift Card tiene sesiones disponibles.
+- **Archivado** → ha consumido todas las sesiones de su Gift Card.
 
-La Gift Card no define por sí sola la categoría del alumno.
-
-Si un alumno Temporal utiliza una Gift Card como su acceso y al agotarse ya no tiene ningún otro bono o acceso disponible:
+No existe estado **Inactivo** para alumnos Gift Card.
 
 ```text
-Gift Card agotada
-+
-sin otro acceso disponible
-→ Alumno Temporal archivado
+GIFT CARD
+sesiones > 0 → Activo
+sesiones = 0 → Gift Card agotada + alumno archivado
 ```
 
-Si un alumno de Membresía posee además una Gift Card, el agotamiento de esa Gift Card **no cambia automáticamente su categoría** y no sustituye la lógica de su membresía.
+La Gift Card no se mezcla con Membresía ni Temporal.
 
 ### Historial contextual del alumno
 
