@@ -259,11 +259,13 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 'phase.critical.snapshot',
                 Promise.all([
                     // The first paint only needs a small, predictable page of
-                    // membership and temporary students. Loading both categories
-                    // prevents the temporary-bonus counter from flashing 0 while
-                    // phase 2 hydrates the complete roster.
+                    // Memberships remain paginated for the first paint. Temporary
+                    // students are loaded completely because the archived view
+                    // must include exhausted gift-card recipients (including
+                    // records beyond the first page), while this roster is small
+                    // compared with the membership history.
                     buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'membresia' }),
-                    buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'temporal' }),
+                    buildQuery('students', undefined, undefined, undefined, { exactCount: false, studentCategory: 'temporal' }),
                     buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
                     buildQuery('session_students', undefined, undefined, undefined, {
                         columns: 'session_id,student_id,student_name,attendance,gift_card_id,manual_credit_id',
