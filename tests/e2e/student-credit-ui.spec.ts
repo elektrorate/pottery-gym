@@ -78,7 +78,14 @@ const configure = (page: Page, detail: { fixture?: string; mode?: string; role?:
 const release = (page: Page, event = 'credit-test-release') => page.evaluate(event => window.dispatchEvent(new Event(event)), event);
 const panel = (page: Page) => page.getByRole('region', { name: 'Créditos manuales e incidencias', exact: true });
 const penalty = (page: Page) => panel(page).locator(`[data-penalty-id="${penaltyId}"]`);
-const open = (page: Page, id = studentId) => page.locator(`button.ui-list[data-student-id="${id}"]`).click();
+const open = async (page: Page, id = studentId) => {
+  const student = (await output(page, 'students')).find((person: { id: string }) => person.id === id);
+  expect(student).toBeDefined();
+  const category = student.archivedAt ? /^Archivados\s+\d+$/i
+    : (student.studentCategory ?? 'membresia') === 'membresia' ? /^Membresía\s+\d+$/i : /^Bonos temporales\s+\d+$/i;
+  await page.getByRole('tablist', { name: 'Categoría de alumnos', exact: true }).getByRole('button', { name: category }).click();
+  await page.locator(`button.ui-list[data-student-id="${id}"]`).click();
+};
 // Bypass the native maxlength to verify the state/intent guard too, not just HTML.
 const forceValue = (control: Locator, value: string) => control.evaluate((element, value) => {
   Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')!.set!.call(element, value);

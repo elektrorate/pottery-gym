@@ -25,11 +25,25 @@ test('single lifecycle tabs and dashboard share the same membership counts', asy
   await expect(page.getByRole('button', { name: /INACTIVO DIA SEIS/ })).toHaveCount(0);
   await page.getByRole('tab', { name: 'Vencidas', exact: true }).click();
   await expect(page.getByRole('button', { name: /INACTIVO DIA SEIS/ })).toBeVisible();
-  await page.getByRole('button', { name: /Temporal 1/ }).click();
+  await page.getByRole('button', { name: /^Bonos temporales\s+1$/i }).click();
   await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Todos' }).click();
-  await expect(page.locator('header').getByText('6', { exact: true })).toBeVisible();
+  await expect(page.locator('button.ui-list')).toHaveCount(1);
+  await expect(page.getByRole('tablist', { name: 'Estado de membresías', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
+  await expect(page.locator('button.ui-list')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /MEMBRESIA ARCHIVADA/ })).toBeVisible();
+  await page.getByRole('button', { name: /^Membresía\s+3$/i }).click();
+  await page.getByRole('tab', { name: 'Todos', exact: true }).click();
+  await expect(page.locator('button.ui-list')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /INACTIVO DIA SEIS/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toHaveCount(0);
+  const summary = page.locator('[aria-label="Resumen de alumnos"]');
+  await expect(summary.getByText('membresías', { exact: true }).locator('..')).toHaveText(/^3\s*membresías$/i);
+  await expect(summary.getByText('bonos temporales', { exact: true }).locator('..')).toHaveText(/^1\s*bonos temporales$/i);
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
   await expect(page.getByText('Activos de membresía').locator('..')).toContainText('1');
   await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
@@ -41,17 +55,27 @@ test('search persists while secondary filters stay scoped to the selected tab', 
   await page.getByRole('tab', { name: 'Al día', exact: true }).click();
   await expect(search).toHaveValue('SIN CLASES');
   await expect(page.locator('button.ui-list').filter({ hasText: 'ACTIVO SIN CLASES' })).toBeVisible();
-  await page.getByRole('button', { name: /Temporal 1/ }).click();
+  await page.getByRole('button', { name: /^Bonos temporales\s+1$/i }).click();
   await expect(page.locator('button.ui-list').filter({ hasText: 'TEMPORAL SIN CLASES' })).toBeVisible();
+  await expect(search).toHaveValue('SIN CLASES');
+  await expect(page.getByRole('combobox', { name: /^Elegir plan\b/i })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Limpiar búsqueda' }).click();
-  await page.getByRole('button', { name: /Membresía 3/ }).click();
-  await expect(page.getByRole('button', { name: 'Gold', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Membresía\s+3$/i }).click();
+  const plan = page.getByRole('combobox', { name: /^Elegir plan\b/i });
+  await expect(plan).toBeVisible();
   await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Gold', exact: true }).click();
+  await plan.selectOption('gold');
+  await expect(plan).toHaveValue('gold');
+  await page.getByRole('tab', { name: 'Al día', exact: true }).click();
   await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toBeVisible();
+  await expect(page.locator('button.ui-list')).toHaveCount(1);
   await page.getByRole('tab', { name: /Pendientes/ }).click();
-  await expect(page.getByRole('button', { name: 'Gold', exact: true })).toBeVisible();
+  await expect(plan).toBeVisible();
+  await expect(plan).toHaveValue('gold');
+  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toHaveCount(0);
+  await expect(page.locator('button.ui-list')).toHaveCount(1);
 });
 
 test('mobile layout keeps tabs and row state visible', async ({ page }) => {
@@ -73,7 +97,7 @@ test('new temporary has one class and an independent category/status', async ({ 
 });
 
 test('editing legacy temporary preserves already assigned classes', async ({ page }) => {
-  await page.getByRole('button', { name: /Archivados 2/ }).click();
+  await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
   await page.getByRole('button', { name: /TEMPORAL HISTORICO/ }).click();
   await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('3');
   await expect(page.getByLabel('Bonos restantes', { exact: true })).toHaveValue('3');
@@ -95,7 +119,7 @@ test('sixth-day transition updates an already open screen', async ({ page }) => 
 });
 
 test('deleting still requires confirmation and does not archive', async ({ page }) => {
-  await page.getByRole('button', { name: /Archivados 2/ }).click();
+  await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
   await page.getByRole('button', { name: /TEMPORAL HISTORICO/ }).click();
   await page.getByRole('button', { name: 'Eliminar alumno', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '¿Eliminar alumno?' });
@@ -113,7 +137,7 @@ test('period payment fields are protected and expired member can be reactivated 
   await expect(page.getByText(/El perfil no modifica categoría, plan, fechas, precio, clases ni pagos/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reactivar alumno manualmente' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
-  await page.getByRole('button', { name: /Archivados 2/ }).click();
+  await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
   await page.getByRole('button', { name: /MEMBRESIA ARCHIVADA/ }).click();
   await page.getByRole('button', { name: 'Reactivar alumno manualmente' }).click();
   await expect(page.getByTestId('saved')).toContainText('"archivedAt":""');
