@@ -650,28 +650,17 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     return map;
   }, [sessions]);
 
-  const getMonthlyDensity = (daySessions: ClassSession[]) => {
-    if (daySessions.length === 0) return 'low' as const;
-    if (daySessions.some(session => session.classType === 'feriado')) return 'full' as const;
-
-    const capacity = daySessions.reduce((total, session) => total + getSessionCapacity(session.classType), 0);
-    const occupied = daySessions.reduce((total, session) => total + getActiveRosterCount(session), 0);
-    const occupancy = capacity > 0 ? occupied / capacity : 0;
-
-    if (occupancy >= 0.9 || daySessions.length >= 4) return 'full' as const;
-    if (occupancy >= 0.55 || daySessions.length >= 3) return 'high' as const;
-    return 'medium' as const;
-  };
-
   const getMonthlyCalendarClass = (daySessions: ClassSession[]) => {
-    if (daySessions.some(session => session.classType === 'feriado')) return 'full' as const;
+    // A day without a scheduled session is neutral; occupancy colors only
+    // communicate the state of an existing session.
+    if (daySessions.length === 0) return 'empty' as const;
 
     const hasTorno = daySessions.some(session => session.classType === 'torno');
     const hasOtherSession = daySessions.some(session => session.classType !== 'torno');
 
     if (hasTorno && hasOtherSession) return 'mixed' as const;
     if (hasTorno) return 'torno' as const;
-    return getMonthlyDensity(daySessions);
+    return 'mesa' as const;
   };
 
   const renderDayView = () => {
@@ -876,10 +865,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
               <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-neutral-border pb-4 md:gap-x-7">
                 {[
-                  ['low', 'Baja'],
-                  ['medium', 'Media'],
-                  ['high', 'Alta'],
-                  ['full', 'Completa'],
+                  ['mesa', 'Mesa'],
                   ['torno', 'Torno'],
                   ['mixed', 'Mixto']
                 ].map(([density, label]) => (
@@ -904,6 +890,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   const daySessions = sessionsByDate[dayKey] || [];
                    const density = getMonthlyCalendarClass(daySessions);
                   const densityClass = `calendar-density-${density}`;
+                  const isPastSessionDay = daySessions.length > 0 && dayKey < formatDateKey(new Date());
                   const countLabel = daySessions.length === 1 ? '1 sesión' : `${daySessions.length} sesiones`;
                   return (
                     <button
