@@ -426,6 +426,75 @@ No se crea un registro de alumno vacío que obligue a un segundo proceso para co
 
 La definición exacta de qué campos son obligatorios u opcionales se cerrará dentro de la revisión final de Alumnos.
 
+### Tipo de alumno y estado
+
+**APROBADO:** distinguir tres tipos de relación del alumno con el taller:
+
+```text
+ALUMNO
+├── Membresía
+├── Temporal
+└── Gift Card
+```
+
+El **estado del alumno** es distinto del saldo de sesiones, créditos o bonos.
+
+#### Alumno de Membresía
+
+- Se mantiene **Activo** aunque tenga 0 sesiones/créditos disponibles.
+- Quedarse sin sesiones no lo archiva automáticamente.
+- Pasar a **Inactivo** o **Archivado** es una acción manual del Administrador/Owner.
+- El estado de la membresía y el estado del alumno no son la misma cosa.
+
+```text
+MEMBRESÍA
+0 créditos
+≠
+alumno archivado
+```
+
+#### Alumno Temporal
+
+- Está activo mientras tenga sesiones/bonos disponibles.
+- Cuando consume todas sus sesiones/bonos, pasa automáticamente a **Archivado**.
+
+```text
+TEMPORAL
+bonos > 0 → Activo
+bonos = 0 → Archivado automático
+```
+
+#### Alumno de Gift Card
+
+- Está activo mientras su Gift Card tenga sesiones disponibles.
+- Cuando consume todas las sesiones de la Gift Card y esta pasa a Agotada, el alumno pasa automáticamente a **Archivado**.
+
+```text
+GIFT CARD
+sesiones > 0 → Activo
+sesiones = 0 → Gift Card agotada + alumno archivado
+```
+
+### Separación de conceptos
+
+No confundir:
+
+```text
+TIPO DE ALUMNO
+→ Membresía / Temporal / Gift Card
+
+ESTADO DEL ALUMNO
+→ Activo / Inactivo / Archivado
+
+SALDO
+→ sesiones o créditos disponibles
+
+ESTADO DE MEMBRESÍA / GIFT CARD
+→ estado comercial propio
+```
+
+El estado del alumno no debe derivarse automáticamente del saldo salvo en los tipos **Temporal** y **Gift Card**, donde el agotamiento de sus sesiones provoca el archivado automático según las reglas anteriores.
+
 ### Historial contextual del alumno
 
 Incluye:
