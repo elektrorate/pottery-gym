@@ -47,6 +47,7 @@ interface DataContextType {
     capacityDefaults: WorkshopCapacityDefault[];
     isLoadingData: boolean;
     businessDataReady: boolean;
+    businessDataError: string | null;
     loadError: string | null;
 
     // Student CRUD
@@ -141,6 +142,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     );
     const [isLoadingData, setIsLoadingData] = useState(true);
     const [businessDataReady, setBusinessDataReady] = useState(false);
+    const [businessDataError, setBusinessDataError] = useState<string | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [ownedSedeIds, setOwnedSedeIds] = useState<string[]>([]);
     const hasLoadedOnceRef = useRef(false);
@@ -182,12 +184,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const loadAllData = useCallback(async () => {
         requireScope();
         const generation = ++loadGenerationRef.current;
-        const hadUsableSnapshot = hasLoadedOnceRef.current;
         // Removed sedeId guard: RLS on Supabase will filter by get_owned_sede_id()
         // This ensures staff users can load data even before sedeId resolves
         if (!hasLoadedOnceRef.current) setIsLoadingData(true);
         businessReadyRef.current = false;
         setBusinessDataReady(false);
+        setBusinessDataError(null);
         setLoadError(null);
 
         try {
@@ -243,7 +245,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 let timer: ReturnType<typeof setTimeout> | undefined;
                 try {
                     return await Promise.race([
-                        buildQuery(table, undefined, undefined, controller.signal),
+                        buildQuery(table, undefined, undefined, controller.signal, { exactCount: false }),
                         new Promise<typeof fallback>(resolve => {
                             timer = setTimeout(() => { controller.abort(); resolve(fallback); }, 4500);
                         })
@@ -278,7 +280,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     // compared with the membership history.
                     buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'membresia' }),
                     buildQuery('students', undefined, undefined, undefined, { exactCount: false, studentCategory: 'temporal' }),
-                    buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange)
+                    buildQuery('teachers', undefined, undefined, undefined, { exactCount: false }),
+                    buildQuery('sessions', undefined, calendarRange, undefined, { exactCount: false })
                 ])
             );
 
@@ -430,15 +433,20 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             try {
                 // Phase 2 is authoritative: full history, business state, funding and owner identity.
                 const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes, rosterRes] = await Promise.all([
-                buildQuery('students'), buildQuery('sessions'), buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
-                buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
+                    buildQuery('students', undefined, undefined, undefined, { exactCount: false }),
+                    buildQuery('sessions', undefined, undefined, undefined, { exactCount: false }),
+                    buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
+                buildQuery('students_effective_membership', undefined, undefined, undefined, { exactCount: false }),
+                buildQuery('student_membership_periods', undefined, undefined, undefined, { exactCount: false }),
                 buildQuery('session_activity_business_state', undefined, undefined, undefined, {
-                    columns: '*,funding_activity_type,funding_activity_block_id,activity_teacher_id,activity_capacity,activity_source_verified'
+                    columns: '*,funding_activity_type,funding_activity_block_id,activity_teacher_id,activity_capacity,activity_source_verified',
+                    exactCount: false
                 }),
                 readAllRows((offset, size) => withTimeout('sedes.owner.select',
                     supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session!.user.id).eq('is_active', true)
                         .order('id', { ascending: true }).range(offset, offset + size - 1), RELOAD_TIMEOUT_MS)),
-                buildQuery('student_credit_profile'), buildQuery('gift_cards'), rosterPromise
+                buildQuery('student_credit_profile', undefined, undefined, undefined, { exactCount: false }),
+                buildQuery('gift_cards', undefined, undefined, undefined, { exactCount: false }), rosterPromise
             ]);
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud mas reciente.');
             requireScope();
@@ -512,17 +520,16 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 setBusinessDataReady(true);
             } catch (error) {
                 if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) return;
-                // A later explicit refresh must still fail closed so callers can
-                // detect a stale/invalid backend contract. During the first load,
-                // only transient transport/timeout failures are recoverable: keep
-                // the phase-one snapshot visible and retry the enrichment next
-                // time, while contract/shape errors still fail closed.
-                const errorText = String((error as any)?.message || error || '').toLowerCase();
-                const recoverable = ['timeout', 'network', 'fetch', 'abort', 'transport', 'connection'].some(term => errorText.includes(term));
-                if (hadUsableSnapshot || !recoverable) throw error;
+                // Phase two is a separate domain. A timeout, RLS mismatch, or
+                // contract error in historical/financial hydration must not
+                // erase the already-published calendar/dashboard snapshot.
+                // Mutations remain disabled until this phase succeeds, and the
+                // caller can explicitly retry without repeating writes.
                 businessReadyRef.current = false;
                 setBusinessDataReady(false);
-                console.warn('Secondary business data hydration skipped:', error);
+                const message = error instanceof Error ? error.message : String(error || 'Error desconocido');
+                setBusinessDataError('Los datos avanzados todavía no están disponibles. Puedes reintentar sin perder la información visible.');
+                console.warn('Secondary business data hydration skipped:', message);
             }
         } catch (error) {
             if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) throw error;
@@ -562,6 +569,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setWorkshopSchedule([]); setWorkshopScheduleExceptions([]);
             setCapacityDefaults(Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
             setLoadError(null);
+            setBusinessDataError(null);
         }
         if (session) {
             // Always load when there's a session. RLS protects data at DB level.
@@ -822,7 +830,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         teachers: loadedScope === scope ? teachers : [], workshopSchedule: loadedScope === scope ? workshopSchedule : [],
         workshopScheduleExceptions: loadedScope === scope ? workshopScheduleExceptions : [],
         capacityDefaults: loadedScope === scope ? capacityDefaults : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })),
-        isLoadingData: loadedScope !== scope || isLoadingData, businessDataReady: loadedScope === scope && businessDataReady, loadError: loadedScope === scope ? loadError : null,
+        isLoadingData: loadedScope !== scope || isLoadingData, businessDataReady: loadedScope === scope && businessDataReady,
+        businessDataError: loadedScope === scope ? businessDataError : null,
+        loadError: loadedScope === scope ? loadError : null,
         addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
         approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
         getPendingStudentCreditOperation, retryPendingStudentCreditOperation,

@@ -103,7 +103,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
     const { profile } = useAuth();
-    const { loadError, loadAllData } = useData();
+    const { loadError, businessDataError, loadAllData } = useData();
 
     const handleLogout = async () => {
         await logoutAndRedirect('/login');
@@ -228,6 +228,14 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                             <span>{loadError}</span>
                             <button type="button" onClick={() => void loadAllData()} className="min-h-[40px] rounded-lg bg-white px-3 py-2 text-xs font-semibold text-[#9E3B2B] hover:bg-[#F8E1DA]">
                                 Reintentar
+                            </button>
+                        </div>
+                    )}
+                    {!loadError && businessDataError && (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E8D9CC] bg-[#FFF9F4] px-4 py-3 text-sm text-[#7B3F22]" role="status">
+                            <span>{businessDataError}</span>
+                            <button type="button" onClick={() => void loadAllData()} className="min-h-[40px] rounded-lg bg-[#7B3F22] px-3 py-2 text-xs font-semibold text-white hover:bg-[#63321C]">
+                                Reintentar datos avanzados
                             </button>
                         </div>
                     )}
