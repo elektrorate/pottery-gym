@@ -443,7 +443,7 @@ El **estado del alumno** es distinto del saldo de sesiones, créditos o bonos.
 
 - Se mantiene **Activo** aunque tenga 0 sesiones/créditos disponibles.
 - Quedarse sin sesiones no lo archiva automáticamente.
-- Pasar a **Inactivo** o **Archivado** es una acción manual del Administrador/Owner.
+- El paso a **Archivado** es siempre **manual**, realizado por el Administrador/Owner.
 - El estado de la membresía y el estado del alumno no son la misma cosa.
 
 ```text
