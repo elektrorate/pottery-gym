@@ -389,6 +389,43 @@ Resumen consume datos; no es fuente de verdad.
 - Actividad del taller es global.
 - Una operación real no se duplica para aparecer en ambos lugares.
 
+### Creación de alumno
+
+**APROBADO:** crear un alumno y crear su perfil inicial es una única operación.
+
+No existirán dos pasos separados de:
+
+```text
+Crear alumno
+→ guardar alumno vacío
+→ completar después categoría / actividad / perfil
+```
+
+El flujo será:
+
+```text
+ALUMNOS
+→ + NUEVO ALUMNO
+→ completar datos personales + perfil inicial del taller
+→ Guardar
+→ PERFIL DEL ALUMNO
+```
+
+En el alta se definen, dentro de la misma pantalla, tanto los datos básicos de la persona como su relación inicial con el taller, incluyendo la categoría y/o actividad o modalidad que corresponda.
+
+Después de guardarlo, el Administrador puede abrir el perfil y editar posteriormente los datos permitidos.
+
+Regla:
+
+```text
+CREAR ALUMNO = CREAR SU PERFIL INICIAL
+EDITAR PERFIL = MODIFICARLO POSTERIORMENTE
+```
+
+No se crea un registro de alumno vacío que obligue a un segundo proceso para completar su pertenencia al taller.
+
+La definición exacta de qué campos son obligatorios u opcionales se cerrará dentro de la revisión final de Alumnos.
+
 ### Historial contextual del alumno
 
 Incluye:
@@ -1474,7 +1511,6 @@ No reintroducir Piezas salvo nueva decisión explícita.
 
 # 19. Secciones pendientes de cerrar
 
-- Configuración.
 - Revisión final de Alumnos.
 - Modelo de datos V1 completo.
 - Matriz final de permisos / capabilities.
