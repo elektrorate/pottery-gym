@@ -557,10 +557,9 @@ const StudentList: React.FC<StudentListProps> = ({
     <div className="h-full flex flex-col overflow-hidden bg-[#F7F3EF] text-neutral-textMain" style={{ fontFamily: "'Outfit', sans-serif" }}>
       <div className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-6 lg:px-10 pt-5 sm:pt-7 pb-24">
         <div className="max-w-[1280px] mx-auto">
-          <header className="mb-4 grid grid-cols-1 gap-3 animate-fade-in md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <header className="animate-fade-in">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-[11px] font-bold text-[#8B6B5E] uppercase tracking-[0.18em] mb-2">Comunidad del taller</p>
                  <h1 className="ui-page-title text-[#7B3F22]" style={{ fontFamily: "'Outfit', sans-serif" }}>Alumnos</h1>
                  <p className="ui-secondary mt-2">Personas, bonos y actividad del taller.</p>
               </div>
@@ -568,33 +567,32 @@ const StudentList: React.FC<StudentListProps> = ({
                 <span className="text-lg leading-none">+</span><span className="hidden sm:inline">Nuevo alumno</span><span className="sm:hidden">Nuevo</span>
               </button>
             </div>
-            <div className="flex items-center gap-5 border-y border-[#DDBFA4]/60 py-2.5 text-[13.75px] md:border-y-0 md:border-l md:border-[#DDBFA4]/60 md:py-0 md:pl-5">
-              <span><strong className="mr-1 text-[20px] font-bold text-brand-pressed">{students.length}</strong><span className="font-medium text-neutral-textSec">alumnos</span></span>
-              <span className="h-5 w-px bg-neutral-border" />
-              <span><strong className="mr-1 text-[20px] font-bold text-brand-pressed">{categoryCounts.membresia}</strong><span className="font-medium text-neutral-textSec">membresías</span></span>
-              <span className="h-5 w-px bg-neutral-border" />
-              <span><strong className="mr-1 text-[20px] font-bold text-brand-pressed">{categoryCounts.temporal}</strong><span className="font-medium text-neutral-textSec">temporales</span></span>
-            </div>
           </header>
 
-          <section className="mb-4 md:grid md:grid-cols-[minmax(260px,1fr)_auto] md:items-center md:gap-3" aria-label="Filtros de alumnos">
-            <div className="relative mb-3 md:mb-0">
+          <div className="mt-5 flex items-center gap-6 border-y border-[#DDBFA4]/70 py-3.5 text-[13px]" aria-label="Resumen de alumnos">
+              <span><strong className="mr-1.5 text-[28px] leading-none font-bold text-[#F18B4B]">{categoryCounts.membresia}</strong><span className="font-medium text-neutral-textSec">membresías</span></span>
+              <span className="h-5 w-px bg-neutral-border" />
+              <span><strong className="mr-1.5 text-[28px] leading-none font-bold text-[#F18B4B]">{categoryCounts.temporal}</strong><span className="font-medium text-neutral-textSec">temporales</span></span>
+          </div>
+
+          <section className="mb-4 pt-4" aria-label="Filtros de alumnos">
+            <div className="relative">
               <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" /></svg>
-              <input value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} onBlur={() => setTimeout(() => setShowSuggestions(false), 150)} placeholder="Buscar por nombre o apellidos" aria-label="Buscar alumno por nombre o apellidos" className="w-full h-11 pl-10 pr-10 bg-white border border-[#DDBFA4] rounded-lg text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E]/70 outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15 transition-all" />
+              <input value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} onBlur={() => setTimeout(() => setShowSuggestions(false), 150)} placeholder="Buscar por nombre o apellidos" aria-label="Buscar alumno por nombre o apellidos" className="w-full h-12 pl-10 pr-10 bg-white border border-[#CFCAC5] rounded-xl text-[15px] text-[#7B3F22] placeholder:text-[#8B6B5E]/70 outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15 transition-all" />
               {searchQuery && <button type="button" onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8B6B5E] hover:text-[#7B3F22]" aria-label="Limpiar búsqueda">×</button>}
               {showSuggestions && suggestions.length > 0 && <div className="absolute left-0 right-0 mt-1 bg-white border border-[#DDBFA4] rounded-lg shadow-[0_8px_24px_rgba(123,63,34,0.12)] z-20 overflow-hidden">{suggestions.map(name => <button key={name} onMouseDown={() => { setSearchQuery(name); setShowSuggestions(false); }} className="w-full text-left px-4 py-3 text-[13px] text-[#7B3F22] hover:bg-[#F7F1EB] border-b last:border-0 border-[#F0E5DB]">{name}</button>)}</div>}
             </div>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="flex overflow-x-auto no-scrollbar border-b border-[#DDBFA4] gap-5" role="tablist" aria-label="Estado de alumnos">
-                 {(['all', 'active', 'pending', 'expired'] as TabType[]).map(tab => <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'all') setCategoryFilter('todos'); }} role="tab" aria-selected={activeTab === tab} className={`shrink-0 h-9 border-b-2 text-[12px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'border-[#7B3F22] text-[#7B3F22]' : 'border-transparent text-[#8B6B5E] hover:text-[#7B3F22]'}`}>{tab === 'all' ? 'Todos' : tab === 'active' ? 'Al día' : tab === 'expired' ? 'Vencidas' : 'Pendientes'}</button>)}
+            <div className="mt-4 border-t border-[#E5DED8] pt-4">
+              <div className="flex gap-2 overflow-x-auto no-scrollbar" role="tablist" aria-label="Categoría de alumnos">
+                {(['membresia', 'temporal', 'archivados'] as CategoryFilter[]).map(cat => <button key={cat} onClick={() => { setCategoryFilter(cat); setActiveTab('all'); }} className={`shrink-0 rounded-lg border px-3.5 py-2 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors ${categoryFilter === cat ? 'border-[#E99A65] bg-[#FFF6EE] text-[#7B3F22]' : 'border-[#E1DDD9] bg-white text-[#8B6B5E] hover:border-[#C68952]'}`}>{CATEGORY_LABELS[cat]} <span className="ml-1 opacity-60">{categoryCounts[cat] || 0}</span></button>)}
               </div>
-              <div className="flex gap-2 sm:ml-auto overflow-x-auto no-scrollbar">
-                 {(['membresia', 'temporal', 'archivados'] as CategoryFilter[]).map(cat => <button key={cat} onClick={() => { setCategoryFilter(cat); setActiveTab('all'); }} className={`shrink-0 px-3 h-8 rounded-md text-[12px] font-bold uppercase tracking-[0.08em] border transition-colors ${categoryFilter === cat ? 'bg-[#F0E2D6] border-[#C68952] text-[#7B3F22]' : 'bg-white border-[#DDBFA4] text-[#8B6B5E] hover:border-[#C68952]'}`}>{CATEGORY_LABELS[cat]} <span className="opacity-60">{categoryCounts[cat] || 0}</span></button>)}
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                {categoryFilter === 'membresia' && <label className="relative shrink-0"><span className="sr-only">Elegir plan</span><select value={membershipTierFilter} onChange={(event) => setMembershipTierFilter(event.target.value as MembershipTierFilter)} className="h-10 min-w-[190px] appearance-none border border-[#CFCAC5] bg-white px-3 pr-9 text-[13px] text-[#6F6A66] outline-none focus:border-[#C68952]"><option value="todos">Elegir plan</option>{(['plata', 'gold', 'platinum'] as MembershipTierFilter[]).map(tier => <option key={tier} value={tier}>{MEMBERSHIP_PLANS[tier].label}</option>)}</select><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#8B6B5E]">⌄</span></label>}
+                <div className="flex min-w-0 items-center overflow-x-auto no-scrollbar" role="tablist" aria-label="Estado de alumnos">
+                  {(['all', 'active', 'pending', 'expired'] as TabType[]).map((tab, index) => <React.Fragment key={tab}>{index > 0 && <span className="mx-2 h-5 w-px shrink-0 bg-[#9E9892]" aria-hidden="true" />}<button type="button" onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`shrink-0 py-2 text-[12px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'text-[#7B3F22]' : 'text-[#8B6B5E] hover:text-[#7B3F22]'}`}>{tab === 'all' ? 'Todos' : tab === 'active' ? 'Al día' : tab === 'expired' ? 'Vencidas' : 'Pendientes'}</button></React.Fragment>)}
+                </div>
               </div>
             </div>
-            {categoryFilter === 'membresia' && <div className="flex flex-wrap gap-1.5 mt-2">
-               {(['todos', 'plata', 'gold', 'platinum'] as MembershipTierFilter[]).map(tier => <button key={tier} onClick={() => setMembershipTierFilter(tier)} className={`px-2.5 h-7 rounded-md text-[12px] font-bold uppercase tracking-[0.08em] border transition-colors ${membershipTierFilter === tier ? 'bg-[#F0E2D6] border-[#C68952] text-[#7B3F22]' : 'bg-white border-[#DDBFA4] text-[#8B6B5E] hover:border-[#C68952]'}`}>{tier === 'todos' ? 'Todos' : MEMBERSHIP_PLANS[tier].label}</button>)}
-            </div>}
           </section>
 
           {legacyMembershipCount > 0 && onInitializeLegacyMemberships && <div className="mb-4 flex flex-col gap-2 rounded-lg border border-[#E8CABB] bg-[#FBF1EC] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
