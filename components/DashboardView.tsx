@@ -245,7 +245,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, onNav
     alertAudioContextRef.current?.close().catch(() => undefined);
   }, []);
 
-  const CATEGORY_LABELS: Record<string, string> = { membresia: 'Membresía', temporal: 'Temporal' };
+  const CATEGORY_LABELS: Record<string, string> = { membresia: 'Membresía', temporal: 'Bonos temporales' };
   const CATEGORY_COLORS: Record<string, string> = { membresia: 'bg-brand', temporal: 'bg-caramelo' };
 
   return (

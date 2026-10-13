@@ -255,13 +255,15 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // Phase 1: only the data required to render the dashboard/calendar.
             // Secondary domains are intentionally loaded below so inventory and
             // gift-card history cannot delay the first useful paint.
-            const [studentsRes, teachersRes, sessionsRes, sessionStudentsRes, activityBlocksRes, activityBlockStudentsRes] = await traceSupabaseQuery(
+            const [membershipStudentsRes, temporalStudentsRes, teachersRes, sessionsRes, sessionStudentsRes, activityBlocksRes, activityBlockStudentsRes] = await traceSupabaseQuery(
                 'phase.critical.snapshot',
                 Promise.all([
                     // The first paint only needs a small, predictable page of
-                    // membership students. The complete roster is hydrated
-                    // by phase 2 for calendars, reports and exports.
+                    // membership and temporary students. Loading both categories
+                    // prevents the temporary-bonus counter from flashing 0 while
+                    // phase 2 hydrates the complete roster.
                     buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'membresia' }),
+                    buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'temporal' }),
                     buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
                     buildQuery('session_students', undefined, undefined, undefined, {
                         columns: 'session_id,student_id,student_name,attendance,gift_card_id,manual_credit_id',
@@ -273,7 +275,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
 
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud más reciente.');
             requireScope();
-            if (studentsRes.error) throw studentsRes.error;
+            if (membershipStudentsRes.error) throw membershipStudentsRes.error;
+            if (temporalStudentsRes.error) throw temporalStudentsRes.error;
             if (teachersRes.error) throw teachersRes.error;
             if (sessionsRes.error) throw sessionsRes.error;
             if (sessionStudentsRes.error) throw sessionStudentsRes.error;
@@ -281,7 +284,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (activityBlockStudentsRes.error) throw activityBlockStudentsRes.error;
             // Membership projections are validated in phase 2. The calendar
             // snapshot only needs the base student identity and roster data.
-            const normalizedStudents: Student[] = (studentsRes.data || []).map(mapStudentRowToModel);
+            const normalizedStudents: Student[] = [...(membershipStudentsRes.data || []), ...(temporalStudentsRes.data || [])]
+                .map(mapStudentRowToModel);
 
             // Normalize session students
             const sessionStudentsMap: Record<string, any[]> = {};

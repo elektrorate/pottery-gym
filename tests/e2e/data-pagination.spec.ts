@@ -35,6 +35,7 @@ const postgrest = (tables: Tables, options: {
       const call: Call = { table, offset: Number(url.searchParams.get('offset') || 0),
         limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : null,
         order: url.searchParams.get('order'), exact: headers.get('prefer')?.includes('count=exact') ?? false };
+      expect(headers.get('prefer')).toBe(call.exact ? 'count=exact' : null);
       calls.push(call);
       const rows = tables[table].filter(row => row.sede_id === sedeId).slice();
       if (call.order) {
@@ -56,13 +57,13 @@ const postgrest = (tables: Tables, options: {
         headers: { 'content-range': `${range}/${page.count ?? '*'}` } });
     } }
   });
-  const query = (table: string, offset: number, limit: number) => {
-    let builder = client.from(table).select('*', { count: 'exact' }).eq('sede_id', sedeId);
+  const query = (table: string, offset: number, limit: number, requireExactCount = true) => {
+    let builder = client.from(table).select('*', requireExactCount ? { count: 'exact' } : {}).eq('sede_id', sedeId);
     for (const column of orderColumns[table] || ['id']) builder = builder.order(column, { ascending: true });
     return builder.range(offset, offset + limit - 1);
   };
-  return { calls, client, query, read: (table: string, pageSize?: number) =>
-    readAllRows((offset, limit) => query(table, offset, limit), pageSize) };
+  return { calls, client, query, read: (table: string, pageSize?: number, options: { requireExactCount?: boolean } = {}) =>
+    readAllRows((offset, limit) => query(table, offset, limit, options.requireExactCount !== false), pageSize, options) };
 };
 
 const fixture = () => {
@@ -164,6 +165,115 @@ for (const cap of [137, 1]) {
     expect(h.calls.every(call => call.exact && call.order === 'id.asc')).toBe(true);
   });
 }
+
+for (const cap of [2, 137, 1]) {
+  for (const count of [7, 1207]) {
+    test(`count-free reads complete ${count} rows under a server cap of ${cap} through an empty page`, async () => {
+      const rows = Array.from({ length: count }, (_, id) => ({ id, sede_id: sedeId,
+        legacy_raw_state: { original_index: id, unknown_legacy_field: `legacy-${id}` } }));
+      const h = postgrest({ students: [...rows].reverse().concat({ ...rows[0], sede_id: 'foreign' }) }, { cap });
+      const result = await h.read('students', 1000, { requireExactCount: false });
+      expect(result).toEqual({ data: rows, error: null });
+      expect(Object.keys(result).sort()).toEqual(['data', 'error']);
+      expect(h.calls).toEqual([...Array.from({ length: Math.ceil(count / cap) }, (_, page) => page * cap), count]
+        .map(offset => ({ table: 'students', offset, limit: 1000, order: 'id.asc', exact: false })));
+    });
+  }
+}
+
+test('count-free reads require an empty page after exact multiples and accept an initially empty dataset', async () => {
+  for (const [count, cap] of [[0, 1000], [6, 2], [2000, 1000]]) {
+    const rows = Array.from({ length: count }, (_, id) => ({ id, sede_id: sedeId }));
+    const h = postgrest({ students: rows }, { cap });
+    expect(await h.read('students', 1000, { requireExactCount: false })).toEqual({ data: rows, error: null });
+    expect(h.calls).toEqual(Array.from({ length: count / cap + 1 }, (_, page) => ({
+      table: 'students', offset: page * cap, limit: 1000, order: 'id.asc', exact: false
+    })));
+  }
+});
+
+test('count-free reads ignore absent, null, mismatched and invalid counts on every page', async () => {
+  const rows = Array.from({ length: 7 }, (_, id) => ({ id }));
+  for (const counts of [[], [null], [0, 99, 1, 10000, 7], ['7', -1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1]]) {
+    const calls: number[] = [];
+    const result = await readAllRows(async (offset, limit) => {
+      expect(limit).toBe(1000);
+      const count = counts.length ? { count: counts[calls.length % counts.length] as any } : {};
+      calls.push(offset);
+      return { data: rows.slice(offset, offset + 2), error: null, ...count };
+    }, 1000, { requireExactCount: false });
+    expect(result).toEqual({ data: rows, error: null });
+    expect(calls).toEqual([0, 2, 4, 6, 7]);
+  }
+});
+
+test('count-free malformed and oversized pages fail closed before or after loading rows', async () => {
+  for (const response of [null, undefined, { data: null, error: null }, { data: {}, error: null }, { error: null },
+    { data: Array.from({ length: 1001 }, (_, id) => ({ id })), error: null }]) {
+    for (const failureOffset of [0, 2]) {
+      const calls: number[] = [];
+      const result = await readAllRows(async (offset, limit) => {
+        calls.push(offset);
+        expect(limit).toBe(1000);
+        return offset === failureOffset ? response as any : { data: [{ id: 0 }, { id: 1 }], error: null };
+      }, 1000, { requireExactCount: false });
+      expect(result.data).toEqual([]);
+      expect(result.error).toMatchObject({ code: 'DATA_PAGINATION_ERROR' });
+      expect(calls).toEqual(failureOffset ? [0, 2] : [0]);
+    }
+  }
+});
+
+test('count-free page sizes retain the default and allow up to 1000 without starting invalid queries', async () => {
+  for (const pageSize of [undefined, 1, 500, 501, 1000]) {
+    const calls: number[] = [];
+    const result = await readAllRows(async (offset, limit) => {
+      calls.push(offset);
+      expect(limit).toBe(pageSize ?? 500);
+      return { data: offset ? [] : [{ id: 0 }], error: null };
+    }, pageSize, { requireExactCount: false });
+    expect(result).toEqual({ data: [{ id: 0 }], error: null });
+    expect(calls).toEqual([0, 1]);
+  }
+  for (const pageSize of [0, -1, 1.5, NaN, Infinity, 1001, Number.MAX_SAFE_INTEGER + 1]) {
+    let calls = 0;
+    const result = await readAllRows(async () => { calls++; return { data: [], error: null }; }, pageSize,
+      { requireExactCount: false });
+    expect(result.data).toEqual([]);
+    expect(result.error).toMatchObject({ code: 'DATA_PAGINATION_ERROR' });
+    expect(calls).toBe(0);
+  }
+});
+
+test('count-free page errors, throws and rejections discard all rows, including failures on the final empty request', async () => {
+  const error = { code: 'PGRST000', message: 'Roster page unavailable', details: null, hint: null };
+  const timeout = new Error('session_students.select: timeout');
+  const failures: Array<{ fail: () => PromiseLike<Page>; expected: any }> = [
+    { fail: () => Promise.resolve({ data: [{ id: 'untrusted' }], error }), expected: error },
+    { fail: () => { throw error; }, expected: error },
+    { fail: () => Promise.reject(timeout), expected: timeout },
+    { fail: () => Promise.reject(null), expected: expect.objectContaining({ code: 'DATA_PAGINATION_ERROR' }) }
+  ];
+  const rows = Array.from({ length: 4 }, (_, id) => ({ id }));
+  for (const { fail, expected } of failures) {
+    for (const failureOffset of [0, 2, 4]) {
+      const calls: number[] = [];
+      const result = await readAllRows((offset, limit) => {
+        calls.push(offset);
+        expect(limit).toBe(1000);
+        return offset === failureOffset ? fail() : Promise.resolve({ data: rows.slice(offset, offset + 2), error: null });
+      }, 1000, { requireExactCount: false });
+      expect(result.data).toEqual([]);
+      if (expected === error || expected === timeout) expect(result.error).toBe(expected);
+      else expect(result.error).toEqual(expected);
+      expect(calls).toEqual(Array.from({ length: failureOffset / 2 + 1 }, (_, page) => page * 2));
+    }
+  }
+  const h = postgrest({ session_students: rows.map(row => ({ ...row, sede_id: sedeId })) }, { cap: 2,
+    respond: (call, page) => call.offset === 4 ? { data: null, error } : page });
+  expect(await h.read('session_students', 1000, { requireExactCount: false })).toEqual({ data: [], error });
+  expect(h.calls.map(call => [call.offset, call.limit, call.exact])).toEqual([[0, 1000, false], [2, 1000, false], [4, 1000, false]]);
+});
 
 test('small custom pages complete an exact multiple without requesting an extra empty page', async () => {
   const h = postgrest({ students: Array.from({ length: 6 }, (_, id) => ({ id, sede_id: sedeId })) });

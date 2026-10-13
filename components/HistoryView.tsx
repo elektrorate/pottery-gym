@@ -12,7 +12,7 @@ interface HistoryViewProps {
 // Constantes de categorías
 const CATEGORY_LABELS: Record<string, string> = {
   membresia: 'Membresía',
-  temporal: 'Temporal'
+  temporal: 'Bonos temporales'
 };
 
 const CATEGORY_COLORS: Record<string, string> = {

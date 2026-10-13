@@ -1,7 +1,7 @@
 /**
  * Exact counts are retained for consistency-sensitive domains. Large read-only
- * snapshots can opt out: those pages stop when the server returns fewer rows
- * than requested, avoiding the expensive COUNT(*) performed by PostgREST.
+ * snapshots can opt out: those pages advance by the returned rows until an
+ * empty page, avoiding COUNT(*) without assuming the server's row limit.
  */
 export const readAllRows = async (
     queryFactory: (offset: number, limit: number) => PromiseLike<{ data: any[] | null; error: any; count?: number | null }>,
@@ -45,7 +45,7 @@ export const readAllRows = async (
             data.push(...page.data);
             if (requireExactCount) {
                 if (data.length === expectedCount) return { data, error: null };
-            } else if (page.data.length < limit) {
+            } else if (page.data.length === 0) {
                 return { data, error: null };
             }
         }

@@ -7,7 +7,7 @@ import { ConfirmModal } from './shared/ConfirmModal';
 // ─── Category visual helpers ───
 const CATEGORY_LABELS: Record<string, string> = {
   membresia: 'Membresía',
-  temporal: 'Temporal'
+  temporal: 'Bonos temporales'
 };
 const CATEGORY_BADGE: Record<string, string> = {
   membresia: 'bg-brand/10 text-brand border-brand/20',
