@@ -441,10 +441,22 @@ El **estado del alumno** es distinto del saldo de sesiones, créditos o bonos.
 
 #### Alumno de Membresía
 
-- Se mantiene **Activo** aunque tenga 0 sesiones/créditos disponibles.
-- Quedarse sin sesiones no lo archiva automáticamente.
-- El paso a **Archivado** es siempre **manual**, realizado por el Administrador/Owner.
-- El estado de la membresía y el estado del alumno no son la misma cosa.
+El alumno de Membresía tiene tres estados:
+
+- **Activo** → tiene sesiones/bonos disponibles.
+- **Inactivo** → se queda sin sesiones/bonos disponibles. Este cambio es automático.
+- **Archivado** → solo se aplica manualmente por el Administrador/Owner.
+
+```text
+MEMBRESÍA
+bonos > 0 → Activo
+bonos = 0 → Inactivo automático
+Archivado → solo manual
+```
+
+Quedarse sin sesiones no archiva al alumno.
+
+El estado de la membresía y el estado del alumno no son la misma cosa.
 
 ```text
 MEMBRESÍA
@@ -503,9 +515,9 @@ ESTADO DE MEMBRESÍA / GIFT CARD
 → estado comercial propio
 ```
 
-Para **Membresía**, el estado del alumno no se deriva del saldo.
+Para **Membresía**, el saldo sí determina automáticamente si el alumno está **Activo** o **Inactivo**: con bonos disponibles está Activo y al agotarse pasa a Inactivo. El estado **Archivado** nunca se asigna automáticamente; solo se aplica manualmente.
 
-Para **Temporal** y **Gift Card**, el estado sí depende de que existan sesiones/bonos disponibles: con saldo disponible están Activos; al agotarse, pasan a Archivado automáticamente.
+Para **Temporal** y **Gift Card**, el estado depende de que existan sesiones/bonos disponibles: con saldo disponible están Activos; al agotarse, pasan a Archivado automáticamente.
 
 ### Historial contextual del alumno
 
