@@ -436,8 +436,12 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
             }).catch(error => console.warn('Secondary data load skipped:', error));
 
-            // Phase 2 is authoritative: full history, business state, funding and owner identity.
-            const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes] = await Promise.all([
+            // Phase 2 enriches the already-published snapshot. It is intentionally
+            // non-fatal: a slow/failed historical projection must not erase the
+            // usable first paint or show the global "no data" error.
+            try {
+                // Phase 2 is authoritative: full history, business state, funding and owner identity.
+                const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes] = await Promise.all([
                 buildQuery('students'), buildQuery('sessions'), buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
                 buildQuery('session_activity_business_state', undefined, undefined, undefined, {
@@ -494,8 +498,22 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setSessions(enhancedSessions); setStudents(enhancedStudents); setGiftCards(normalizedGiftCards);
             setOwnedSedeIds(ownerIds);
             ownedSedeIdsRef.current = ownerIds;
-            businessReadyRef.current = true;
-            setBusinessDataReady(true);
+                businessReadyRef.current = true;
+                setBusinessDataReady(true);
+            } catch (error) {
+                if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) return;
+                // A later explicit refresh must still fail closed so callers can
+                // detect a stale/invalid backend contract. During the first load,
+                // only transient transport/timeout failures are recoverable: keep
+                // the phase-one snapshot visible and retry the enrichment next
+                // time, while contract/shape errors still fail closed.
+                const errorText = String((error as any)?.message || error || '').toLowerCase();
+                const recoverable = ['timeout', 'network', 'fetch', 'abort', 'transport', 'connection'].some(term => errorText.includes(term));
+                if (hasLoadedOnceRef.current || !recoverable) throw error;
+                businessReadyRef.current = false;
+                setBusinessDataReady(false);
+                console.warn('Secondary business data hydration skipped:', error);
+            }
         } catch (error) {
             if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) throw error;
             businessReadyRef.current = false;
