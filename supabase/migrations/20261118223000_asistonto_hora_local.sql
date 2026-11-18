@@ -59,7 +59,7 @@ begin
           'date', to_char(s.start_time at time zone 'UTC', 'YYYY-MM-DD'),
           'start', to_char(s.start_time at time zone 'UTC', 'HH24:MI'), 'classType', s.class_type) j
         from public.session_students e join public.sessions s on s.id = e.session_id
-        where e.student_id = st.id and s.sede_id = p_sede_id and e.cancelled_at is null and s.end_time >= ((now() at time zone 'Europe/Madrid') at time zone 'UTC')
+        where e.student_id = st.id and s.sede_id = p_sede_id and e.cancelled_at is null and s.end_time >= now()
         order by s.start_time limit 10) x),
     'bonos', (select coalesce(jsonb_agg(jsonb_build_object('code', g.code, 'status', g.status,
         'sessionsRemaining', greatest(0, coalesce(g.num_classes, 0) - coalesce(g.sessions_used, 0)), 'expiryDate', g.expiry_date)
