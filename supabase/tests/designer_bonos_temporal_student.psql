@@ -1,0 +1,110 @@
+\set ON_ERROR_STOP on
+-- Runs against a disposable database with all migrations applied (never a live project).
+set client_min_messages = warning;
+create or replace function pg_temp.check(ok boolean, label text) returns void language plpgsql as $$
+begin if not coalesce(ok, false) then raise exception 'FAIL: %', label; end if; raise notice 'PASS: %', label; end $$;
+create or replace function pg_temp.rejects(sql text, expected text, label text) returns void language plpgsql as $$
+declare msg text; state text;
+begin
+  begin execute sql; exception when others then get stacked diagnostics msg = message_text, state = returned_sqlstate;
+    if msg ~* expected or state = expected then raise notice 'PASS: %', label; return; end if;
+    raise exception 'FAIL: % (unexpected error % %)', label, state, msg;
+  end;
+  raise exception 'FAIL: % (no error)', label;
+end $$;
+
+insert into auth.users(id,email) values
+  ('00000000-0000-0000-0000-0000000000b1','owner@example.invalid'),
+  ('00000000-0000-0000-0000-0000000000b9','outsider@example.invalid');
+insert into public.profiles(id,email,role) values
+  ('00000000-0000-0000-0000-0000000000b1','owner@example.invalid','tallerista'),
+  ('00000000-0000-0000-0000-0000000000b9','outsider@example.invalid','tallerista');
+insert into public.sedes(id,name,slug,owner_id,is_active) values
+  ('30000000-0000-0000-0000-0000000000b1','designer sede','bonos-designer','00000000-0000-0000-0000-0000000000b1',true);
+
+grant usage on schema private to authenticated;
+set client_min_messages = notice;
+
+-- Owner of the sede (authenticated JWT).
+set request.jwt.claim.sub = '00000000-0000-0000-0000-0000000000b1';
+set request.jwt.claim.role = 'authenticated';
+set role authenticated;
+create temp table created as
+select * from public.designer_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000b1',
+  jsonb_build_object('code','CR-181126-RD-JD-T1','buyer','Rolando Diaz','recipient','Julian Diaz','buyer_phone','+34600000000',
+    'dedication','Feliz cumpleaños','validity_months',12,'num_classes',1,'type','modelado','payment_status','pending',
+    'extra_commentary','Duración de la clase: 2,5 h','external_reference','CR-181126-RD-JD-T1',
+    -- Server-managed fields are ignored by the wrapper.
+    'status','consumed','sessions_used',5,'expiry_date','2030-01-01','sede_id','30000000-0000-0000-0000-0000000000a1',
+    'external_metadata', jsonb_build_object('source','pottery-designer','cardData', jsonb_build_object('title','TARJETA DE REGALO'))),
+  jsonb_build_object('full_name','Julian Diaz','notes','Alumno temporal creado desde el diseñador de bonos (bono CR-181126-RD-JD-T1).'));
+reset role;
+
+select pg_temp.check((select count(*) = 1 from created), 'authenticated sede user creates one bono');
+select pg_temp.check((select code = 'CR-181126-RD-JD-T1' and sede_id = '30000000-0000-0000-0000-0000000000b1' and validity_months = 12
+  and status = 'pending' and sessions_used = 0 and expiry_date = (activated_at + interval '12 months')::date
+  and buyer_phone = '+34600000000' and external_metadata->>'source' = 'pottery-designer'
+  and external_metadata->'cardData'->>'title' = 'TARJETA DE REGALO' from created), 'same code, own sede, 12 months, server-managed fields ignored');
+select pg_temp.check((select s.student_category = 'temporal' and s.sede_id = c.sede_id and s.full_name = 'Julian Diaz'
+  from created c join public.students s on s.id = c.recipient_student_id), 'new temporal student linked by id');
+
+-- Outsider (no access to the sede): rejected, nothing created.
+create temp table before_out as select (select count(*) from public.students) s, (select count(*) from public.gift_cards) g;
+grant select on before_out to authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-0000000000b9';
+set role authenticated;
+select pg_temp.rejects($q$select public.designer_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000b1',
+  '{"code":"CR-X-1","buyer":"X","recipient":"Otra","validity_months":12,"num_classes":1}'::jsonb, '{"full_name":"Otra"}'::jsonb)$q$,
+  'No autorizado', 'user without sede access rejected');
+reset role;
+-- No JWT at all.
+reset request.jwt.claim.sub;
+set role authenticated;
+select pg_temp.rejects($q$select public.designer_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000b1',
+  '{"code":"CR-X-2","buyer":"X","recipient":"Otra","validity_months":12,"num_classes":1}'::jsonb, '{}'::jsonb)$q$,
+  'No autorizado', 'no session rejected');
+reset role;
+set role anon;
+select pg_temp.rejects($q$select public.designer_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000b1','{}'::jsonb,'{}'::jsonb)$q$,
+  'permission denied', 'anon cannot execute');
+reset role;
+
+-- Owner again: duplicate code and refunded payment rejected without orphans.
+set request.jwt.claim.sub = '00000000-0000-0000-0000-0000000000b1';
+set role authenticated;
+select pg_temp.rejects($q$select public.designer_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000b1',
+  '{"code":"CR-181126-RD-JD-T1","buyer":"X","recipient":"Otra Persona","validity_months":12,"num_classes":1}'::jsonb,
+  '{"full_name":"Otra Persona"}'::jsonb)$q$, '23505', 'duplicate code rejected with 23505');
+select pg_temp.rejects($q$select public.designer_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000b1',
+  '{"code":"CR-X-3","buyer":"X","recipient":"Otra Persona","validity_months":12,"num_classes":1,"payment_status":"refunded"}'::jsonb,
+  '{"full_name":"Otra Persona"}'::jsonb)$q$, 'pending or paid', 'refunded on create rejected');
+-- Paid on create is active.
+select pg_temp.check((select status = 'active' and payment_status = 'paid' from public.designer_create_gift_card_with_temporal_student(
+  '30000000-0000-0000-0000-0000000000b1',
+  '{"code":"CR-X-4","buyer":"X","recipient":"Pagado Ya","validity_months":12,"num_classes":4,"payment_status":"paid"}'::jsonb,
+  '{"full_name":"Pagado Ya"}'::jsonb)), 'paid on create is active');
+reset role;
+select pg_temp.check((select count(*) from public.students) = (select s + 1 from before_out)
+  and (select count(*) from public.gift_cards) = (select g + 1 from before_out), 'rejected creates leave no orphan student or card');
+
+-- Existing student chosen in the designer: plain insert under RLS (own sede).
+set request.jwt.claim.sub = '00000000-0000-0000-0000-0000000000b1';
+set role authenticated;
+insert into public.gift_cards(sede_id, recipient_student_id, code, buyer, recipient, num_classes, type, validity_months, payment_status, external_metadata)
+values ('30000000-0000-0000-0000-0000000000b1', (select recipient_student_id from created), 'CR-X-5', 'Rolando Diaz', 'Julian Diaz', 2, 'modelado', 12, 'pending',
+  '{"source":"pottery-designer","designerStatus":"created"}'::jsonb);
+select pg_temp.check((select code = 'CR-X-5' and validity_months = 12 from public.gift_cards where code = 'CR-X-5'), 'existing student: insert in own sede');
+-- «Enviado» lives in external_metadata (editable); cancel uses the normal RPC.
+update public.gift_cards set external_metadata = external_metadata || '{"designerStatus":"sent"}'::jsonb where code = 'CR-X-5';
+select pg_temp.check((select external_metadata->>'designerStatus' = 'sent' from public.gift_cards where code = 'CR-X-5'), 'designer status sent saved');
+select pg_temp.check((select status = 'cancelled' from public.cancel_gift_card((select id from public.gift_cards where code = 'CR-X-5'))), 'cancel_gift_card as sede user');
+reset role;
+-- Outsider cannot read or write the sede bonos.
+set request.jwt.claim.sub = '00000000-0000-0000-0000-0000000000b9';
+set role authenticated;
+select pg_temp.check((select count(*) = 0 from public.gift_cards), 'outsider sees no gift cards');
+select pg_temp.rejects($q$insert into public.gift_cards(sede_id, recipient_student_id, code, buyer, recipient, num_classes, type, validity_months)
+  values ('30000000-0000-0000-0000-0000000000b1', (select recipient_student_id from created), 'CR-X-6', 'X', 'Julian Diaz', 1, 'modelado', 12)$q$,
+  'row-level security|permission denied|42501', 'outsider insert rejected');
+reset role;
+select 'ALL DESIGNER BONOS TESTS PASSED' as result;

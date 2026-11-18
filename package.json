@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",
-    "test:unit": "node --test tests/gift-card-ops.test.mjs tests/bonos-write.test.mjs tests/local-staging-runtime.test.mjs tests/local-staging-restore-rehearsal.test.mjs tests/functional-review.test.mjs",
+    "test:unit": "node --test tests/gift-card-ops.test.mjs tests/bonos-write.test.mjs tests/bonos-designer.test.mjs tests/local-staging-runtime.test.mjs tests/local-staging-restore-rehearsal.test.mjs tests/functional-review.test.mjs",
     "test:local": "node tests/run-local-regression.mjs",
     "test:sql:gift-cards": "node supabase/tests/run-gift-card-integrity.mjs",
     "test:sql:sessions": "node supabase/tests/run-atomic-session-operations.mjs",
@@ -16,6 +16,7 @@
     "test:sql:policy": "node supabase/tests/run-session-business-policy.mjs",
     "test:sql:manual-credits": "node supabase/tests/run-manual-credit-reconciliation-settlement.mjs",
     "test:sql:external-bonos": "node supabase/tests/run-external-bonos-temporal-student.mjs",
+    "test:sql:designer-bonos": "node supabase/tests/run-designer-bonos-temporal-student.mjs",
     "test:sql:mixed-sessions": "node supabase/tests/run-atomic-mixed-session-integrity.mjs",
     "staging:setup": "node scripts/local-staging-setup.mjs",
     "staging:policy-setup": "node scripts/local-staging-policy-setup.mjs",
@@ -28,7 +29,9 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
     "@types/qrcode": "^1.5.6",
+    "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
+    "lucide-react": "^0.563.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
@@ -39,6 +42,7 @@
     "@playwright/test": "^1.64.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
