@@ -708,3 +708,31 @@ test('stale optional responses cannot overwrite optional rows belonging to a new
   expect((await snapshot(page)).inventory.map((item: any) => item.id)).toEqual(['new-inventory']);
   expect((await snapshot(page))).toMatchObject({ ready: true, owner: false, error: null });
 });
+
+
+test('optional initial read failure is visible and its retry reads only that section', async ({ page }) => {
+  const backend=backends.get(page)!;backend.failures.set('inventory_items',{code:'42501',message:'permission denied'});
+  backend.rows.inventory_items=[{id:'stock-a',sede_id:'sede-a',name:'Arcilla'}];
+  await open(page);await ready(page);
+  await expect.poll(async()=> (await snapshot(page)).sectionLoads.inventory_items?.status).toBe('error');
+  await expect(page.getByTestId('inventory-content')).toHaveCount(0);
+  await expect(page.getByTestId('inventory-section').getByRole('alert')).toContainText('Error de carga');
+  const before=backend.reads.length;backend.failures.delete('inventory_items');
+  await page.getByTestId('inventory-section').getByRole('button',{name:'Reintentar esta sección'}).click();
+  await expect(page.getByTestId('inventory-content')).toHaveText('Arcilla');
+  expect(backend.reads.slice(before).every(read=>read.table==='inventory_items')).toBe(true);
+  expect(backend.mutations).toEqual([]);
+});
+
+test('failed optional refresh retains verified rows and a successful retry clears the stale warning',async({page})=>{
+  const backend=backends.get(page)!;backend.rows.inventory_items=[{id:'stock-a',sede_id:'sede-a',name:'Arcilla'}];
+  await open(page);await ready(page);await expect(page.getByTestId('inventory-content')).toHaveText('Arcilla');
+  backend.failures.set('inventory_items',{code:'57014',message:'timeout'});
+  await run(page,'retrySection',['inventory_items']);
+  await expect(page.getByTestId('inventory-content')).toHaveText('Arcilla');
+  await expect(page.getByTestId('inventory-section').getByRole('alert')).toContainText('última información');
+  expect((await snapshot(page)).sectionLoads.inventory_items).toMatchObject({status:'error',hasData:true});
+  backend.failures.delete('inventory_items');await run(page,'retrySection',['inventory_items']);
+  await expect(page.getByTestId('inventory-section').getByRole('alert')).toHaveCount(0);
+  expect(backend.mutations).toEqual([]);
+});

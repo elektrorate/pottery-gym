@@ -1,0 +1,4 @@
+import {useState} from 'react';
+const day=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Madrid'}).format(new Date());
+export const useData=()=>({sessions:[{id:'class-demo',date:day,startTime:'19:00',endTime:'21:00',classType:'mesa',privateReason:'IMPORTACIÓN: ESTE TEXTO NO DEBE APARECER EN EL RESUMEN',students:['Alumno ficticio']}],isLoadingData:false,loadError:null});
+export function useWorkshopActivities(){const[rows,setRows]=useState<any[]>([]);return{activities:rows,ready:true,loading:false,error:null,pending:null,load:async()=>{},retry:async()=>{},save:async(input:any,current:any)=>{setRows(old=>current?old.map(a=>a.id===current.id?{...input,id:a.id,revision:a.revision+1}:a):[...old,{...input,id:crypto.randomUUID(),revision:0}]);},remove:async(current:any)=>setRows(old=>old.map(a=>a.id===current.id?{...a,deletedAt:new Date().toISOString()}:a)),restore:async(current:any)=>setRows(old=>old.map(a=>a.id===current.id?{...a,deletedAt:undefined}:a))};}

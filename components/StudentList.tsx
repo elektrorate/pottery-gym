@@ -1,3 +1,4 @@
+import { hasVerifiedMembership, needsStudentReview, studentBalanceLabel } from '../utils/studentPresentation';
 import { showError } from '../context/toast';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Student, AssignedClass, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent } from '../types';
@@ -10,6 +11,7 @@ import type { ManualCreditIntent, PenaltySettlementIntent, SessionBusinessIntent
 interface StudentListProps {
   students: Student[];
   detailsLoading?: boolean;
+  reviewOnly?: boolean;
   onAddStudent: (student: Omit<Student, 'id'>) => Promise<void>;
   onRenew: (intent: RenewalIntent) => Promise<void>;
   onConfirmPayment: (studentId: string, periodId: string) => Promise<void>;
@@ -240,7 +242,7 @@ const getMonthCalendarDays = (monthKey: string): Array<number | null> => {
 
 const StudentList: React.FC<StudentListProps> = ({
   students,
-  detailsLoading = false,
+  detailsLoading = false, reviewOnly = false,
   onAddStudent,
   onRenew,
   onConfirmPayment, onActivateMembership, onAdjustClasses, canAdjustClasses = true,
@@ -273,7 +275,7 @@ const StudentList: React.FC<StudentListProps> = ({
   const pendingIntents = useRef(new PendingMembershipIntentStore());
   const renewalIntentRef = useRef<RenewalIntent | null>(null);
   const adjustmentIntentRef = useRef<ClassAdjustmentIntent | null>(null);
-  const [renewalTier, setRenewalTier] = useState<MembershipTier>('gold');
+  const [renewalTier, setRenewalTier] = useState<MembershipTier | ''>('');
   const [adjustmentDelta, setAdjustmentDelta] = useState(-1);
   const [adjustmentNeedsReview, setAdjustmentNeedsReview] = useState(false);
   const managedEdit = Boolean(editingStudent && isManagedMembership(editingStudent));
@@ -325,7 +327,7 @@ const StudentList: React.FC<StudentListProps> = ({
     adjustmentIntentRef.current = pendingIntents.current.get<ClassAdjustmentIntent>(`adjust:${student.id}`);
     setAdjustmentNeedsReview(false);
     setAdjustmentDelta(adjustmentIntentRef.current?.delta ?? -1);
-    setRenewalTier(renewalIntentRef.current?.membershipTier ?? inferMembershipTier(student.membershipTier, student.price));
+    setRenewalTier(renewalIntentRef.current?.membershipTier ?? (hasVerifiedMembership(student) ? student.membershipTier! : ''));
     setShowPersonalInfo(false);
     const membershipTier = inferMembershipTier(student.membershipTier, student.price);
     const isTemporal = student.studentCategory === 'temporal';
@@ -447,7 +449,7 @@ const StudentList: React.FC<StudentListProps> = ({
   };
 
   const handleRenewMembership = async () => {
-    if (!editingStudent || isSubmitting) return;
+    if (!editingStudent || isSubmitting || !renewalTier || !hasVerifiedMembership(editingStudent)) return;
     setIsSubmitting(true);
     try {
       renewalIntentRef.current ||= createRenewalIntent(editingStudent.id, renewalTier);
@@ -506,7 +508,8 @@ const StudentList: React.FC<StudentListProps> = ({
       const cat = s.studentCategory || 'membresia';
       const matchesCategory = categoryFilter === 'todos' || cat === categoryFilter;
       const membershipTier = inferMembershipTier(s.membershipTier, s.price);
-      const matchesTier = categoryFilter !== 'membresia' || membershipTierFilter === 'todos' || membershipTier === membershipTierFilter;
+      if (reviewOnly && !needsStudentReview(s)) return false;
+      const matchesTier = categoryFilter !== 'membresia' || membershipTierFilter === 'todos' || hasVerifiedMembership(s) && membershipTier === membershipTierFilter;
       if (categoryFilter === 'archivados') return archived && matchesSearch;
       if (archived || !matchesSearch || !matchesCategory || !matchesTier) return false;
       // Los bonos temporales no tienen estados de membresía (al día,
@@ -518,7 +521,7 @@ const StudentList: React.FC<StudentListProps> = ({
       }
       return matchesSearch && matchesCategory && matchesTier;
     }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [students, activeTab, searchQuery, categoryFilter, membershipTierFilter, today]);
+  }, [students, activeTab, searchQuery, categoryFilter, membershipTierFilter, today, reviewOnly]);
 
   useEffect(() => {
     setVisibleLimit(50);
@@ -602,12 +605,12 @@ const StudentList: React.FC<StudentListProps> = ({
               const cat = s.studentCategory || 'membresia';
               const membershipTier = inferMembershipTier(s.membershipTier, s.price);
               const initials = `${s.name.charAt(0)}${s.surname?.charAt(0) || ''}`.toUpperCase();
-              const percentage = Math.min(100, (s.classesRemaining / (s.bonosAsignados || 4)) * 100);
+              const percentage = hasVerifiedMembership(s) ? Math.min(100, (s.classesRemaining / s.bonosAsignados!) * 100) : 0;
                return <button key={s.id} data-student-id={s.id} onClick={() => handleEditClick(s)} className="ui-list w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-3 md:gap-4 items-center px-4 md:px-5 py-3.5 border-b last:border-0 border-[#EDE2D8] hover:bg-[#FCF8F4] focus:outline-none focus:bg-[#FCF8F4] transition-colors group">
-                  <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{s.name} {s.surname}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{s.classType || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : CATEGORY_LABELS[cat] || cat}</span></span></div>
-                  <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{s.classType || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? MEMBERSHIP_PLANS[membershipTier].label : CATEGORY_LABELS[cat] || cat}</span></div>
-                  <div className="text-right md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados || 4}</span></strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
-                  <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : cat === 'temporal' ? 'Bonos temporales' : isExpired ? 'Vencida' : isPending ? 'Pendiente' : 'Activo'}</span>
+                  <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{s.name} {s.surname}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{s.classType || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' && !hasVerifiedMembership(s) ? 'Plan por confirmar · Por verificar' : CATEGORY_LABELS[cat] || cat}</span></span></div>
+                  <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{s.classType || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? (hasVerifiedMembership(s) ? MEMBERSHIP_PLANS[membershipTier].label : 'Plan por confirmar') : CATEGORY_LABELS[cat] || cat}</span></div>
+                  <div className="max-w-[112px] text-right md:max-w-none md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{hasVerifiedMembership(s) ? <>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados}</span></> : <span className="block whitespace-normal text-[12px] leading-snug">{studentBalanceLabel(s)}</span>}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
+                  <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : cat === 'temporal' ? 'Bonos temporales' : isExpired ? 'Vencida' : needsStudentReview(s) ? 'Por verificar' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
             {hasMoreStudents && <div className="flex justify-center border-t border-[#EDE2D8] px-4 py-4"><button type="button" onClick={() => setVisibleLimit(limit => limit + 50)} className="min-h-10 rounded-lg border border-[#C68952] bg-white px-4 py-2 text-[12px] font-bold text-[#7B3F22] hover:bg-[#F7F1EB]">Cargar más alumnos ({filteredStudents.length - visibleStudents.length} restantes)</button></div>}
@@ -623,10 +626,11 @@ const StudentList: React.FC<StudentListProps> = ({
               <div className="space-y-5">
                <section><button type="button" onClick={() => setShowPersonalInfo(value => !value)} aria-expanded={showPersonalInfo} className="w-full flex items-center justify-between gap-3 mb-3 text-left"><span><h4 className="text-[14px] font-bold text-[#7B3F22]">Información personal</h4><span className="text-[11px] text-[#8B6B5E]">Datos de contacto</span></span><span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#8B6B5E]">{showPersonalInfo ? 'Ocultar' : 'Mostrar'} <span className="ml-1">{showPersonalInfo ? '−' : '+'}</span></span></button>{showPersonalInfo && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre" aria-label="Nombre" className="h-11 px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /><input value={form.surname} onChange={(e) => setForm({ ...form, surname: e.target.value })} placeholder="Apellidos" aria-label="Apellidos" className="h-11 px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email" aria-label="Email" className="h-11 px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15 sm:col-span-2" /><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Teléfono" aria-label="Teléfono" className="h-11 px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15 sm:col-span-2" /></div>}</section>
                <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as 'membresia' | 'temporal')} aria-label="Categoría del alumno" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos temporales</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="number" value={form.price} onChange={(e) => setForm({ ...form, price: parseInt(e.target.value) })} placeholder="Cuota" aria-label="Cuota" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div></section>
-                {form.studentCategory === 'membresia' && <div className="grid grid-cols-3 gap-1.5 mt-2">
+                {form.studentCategory === 'membresia' && (!editingStudent || hasVerifiedMembership(editingStudent)) && <div className="grid grid-cols-3 gap-1.5 mt-2">
                     {(['plata', 'gold', 'platinum'] as MembershipTier[]).map(tier => <button key={tier} type="button" disabled={managedEdit} onClick={() => requestMembershipTierChange(tier)} className={`min-h-11 rounded-lg border px-2 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors ${form.membershipTier === tier ? 'border-brand bg-brand text-white shadow-sm' : 'border-neutral-border bg-white text-neutral-textMain hover:border-brand hover:text-brand'}`}><span>{MEMBERSHIP_PLANS[tier].label}</span><span className={`block text-[11px] font-medium normal-case tracking-normal ${form.membershipTier === tier ? 'text-white/90' : 'text-neutral-textSec'}`}>{MEMBERSHIP_PLANS[tier].price}€ · {MEMBERSHIP_PLANS[tier].bonuses} bonos</span></button>)}
                </div>}
 
+               {editingStudent && (editingStudent.studentCategory ?? 'membresia') === 'membresia' && !hasVerifiedMembership(editingStudent) ? <p className="rounded-lg border border-neutral-border p-3 text-sm">{studentBalanceLabel(editingStudent)}. Plan por confirmar. Este dato de origen no acredita un período ni un pago.</p> : <>
                <fieldset disabled={managedEdit || form.studentCategory === 'membresia'} className="border-t border-[#E6D8CB] pt-3">
                  <div className="flex items-baseline justify-between mb-2">
                   <h4 className="text-[14px] font-bold text-[#7B3F22]">Bonos</h4>
@@ -655,6 +659,7 @@ const StudentList: React.FC<StudentListProps> = ({
                     {form.studentCategory === 'membresia' && <p className="text-[12px] text-[#8B6B5E]">Membresía pendiente durante los cinco días posteriores al vencimiento y vencida desde el sexto. Renovar no confirma el pago ni reactiva una ficha archivada.</p>}
                 </div>
               </fieldset>
+               </>}
               {managedEdit && <p className="text-sm">El perfil no modifica categoría, plan, fechas, precio, clases ni pagos. Usa las acciones de período. No se puede revertir un pago confirmado ni eliminar el historial; el archivo manual sigue disponible.</p>}
             </div>
 
@@ -703,13 +708,13 @@ const StudentList: React.FC<StudentListProps> = ({
                    {period.paymentStatus !== 'paid' && <button type="button" disabled={isSubmitting} onClick={() => void runMembershipAction(() => onConfirmPayment(liveEditingStudent.id, period.id))}>Confirmar pago de este período</button>}
                  </div>)}
                  {!liveEditingStudent.effectivePeriodId && <div className="space-y-2">
-                   <p>Registro legado: el período se inicializa solo mediante una acción explícita.</p>
-                   <button type="button" disabled={isSubmitting} onClick={() => void runMembershipAction(() => onActivateMembership(liveEditingStudent.id))}>Inicializar período</button>
+                   <p>Registro legado: confirma el plan y las fechas antes de inicializar un período. El precio y el saldo no determinan el plan.</p>
+                   <button type="button" disabled={isSubmitting || !liveEditingStudent.membershipTier || !liveEditingStudent.expiryDate} onClick={() => void runMembershipAction(() => onActivateMembership(liveEditingStudent.id))}>Inicializar período</button>
                  </div>}
-                 <label>Plan del próximo período <select value={renewalTier} disabled={isSubmitting || !!renewalIntentRef.current} onChange={event => setRenewalTier(event.target.value as MembershipTier)}>{Object.entries(MEMBERSHIP_PLANS).map(([tier, plan]) => <option key={tier} value={tier}>{plan.label} · {plan.price}€ · {plan.bonuses} clases</option>)}</select></label>
+                 <label>Plan del próximo período <select value={renewalTier} disabled={isSubmitting || !!renewalIntentRef.current} onChange={event => setRenewalTier(event.target.value as MembershipTier)}><option value="">Selecciona un plan confirmado</option>{Object.entries(MEMBERSHIP_PLANS).map(([tier, plan]) => <option key={tier} value={tier}>{plan.label} · {plan.price}€ · {plan.bonuses} clases</option>)}</select></label>
                  <p>Renovar programa un único sucesor pendiente; conserva las clases y el pago actuales hasta su inicio.</p>
-                 <button type="button" disabled={isSubmitting} onClick={handleRenewMembership}>Programar renovación / reintentar</button>
-                 <p>Saldo actual del período: {liveEditingStudent.classesRemaining} / {liveEditingStudent.bonosAsignados ?? 'desconocido'}</p>
+                 <button type="button" disabled={isSubmitting || !renewalTier || !hasVerifiedMembership(liveEditingStudent)} onClick={handleRenewMembership}>Programar renovación / reintentar</button>
+                 <p>{studentBalanceLabel(liveEditingStudent)}</p>
                   {canAdjustClasses ? <>
                   {adjustmentNeedsReview && <button type="button" disabled={isSubmitting} onClick={() => { pendingIntents.current.clear(`adjust:${liveEditingStudent.id}`); adjustmentIntentRef.current = null; setAdjustmentNeedsReview(false); }}>Revisé el período y saldo: crear un nuevo intento</button>}
                  <label>Ajuste explícito de clases <input type="number" value={adjustmentDelta} disabled={isSubmitting || !!adjustmentIntentRef.current} onChange={event => setAdjustmentDelta(Number(event.target.value))} /></label>

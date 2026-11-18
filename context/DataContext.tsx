@@ -25,6 +25,7 @@ import { attachAttendanceHistory } from '../utils/attendanceHistory';
 import { attachSessionBusinessState } from '../utils/sessionBusiness';
 import { attachStudentCreditProfiles } from '../utils/studentCredits';
 import { getWorkshopDate } from '../utils/studentLifecycle';
+import { secondarySections, nextSectionState, describeLoadError, type SecondarySection, type SectionLoads } from '../utils/sectionLoading';
 
 const normalizeAttendanceStatus = (value: unknown): 'present' | 'absent' | undefined => {
     const status = String(value || '').trim().toLowerCase();
@@ -48,6 +49,9 @@ interface DataContextType {
     isLoadingData: boolean;
     businessDataReady: boolean;
     loadError: string | null;
+
+    sectionLoads: SectionLoads;
+    retrySection: (section: SecondarySection) => Promise<void>;
 
     // Student CRUD
     addStudent: (student: Omit<Student, 'id'>) => Promise<void>;
@@ -142,6 +146,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const [isLoadingData, setIsLoadingData] = useState(true);
     const [businessDataReady, setBusinessDataReady] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [sectionLoads, setSectionLoads] = useState<SectionLoads>({});
+    const sectionLoaderRef = useRef<{ scope: string; load: (section: SecondarySection) => Promise<void> } | null>(null);
+    const secondaryGenerationRef = useRef(0);
     const [ownedSedeIds, setOwnedSedeIds] = useState<string[]>([]);
     const hasLoadedOnceRef = useRef(false);
     const operationLockRef = useRef(false);
@@ -236,22 +243,6 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             // Optional domains must not hold the calendar hostage. They are
             // retried on the next refresh, while the critical roster/session
             // snapshot can render as soon as it is available.
-            const optionalQuery = async (table: string) => {
-                const controller = new AbortController();
-                const fallback = { data: [], error: null };
-                let timer: ReturnType<typeof setTimeout> | undefined;
-                try {
-                    return await Promise.race([
-                        buildQuery(table, undefined, undefined, controller.signal),
-                        new Promise<typeof fallback>(resolve => {
-                            timer = setTimeout(() => { controller.abort(); resolve(fallback); }, 4500);
-                        })
-                    ]).catch(() => fallback);
-                } finally {
-                    clearTimeout(timer);
-                }
-            };
-
             // Phase 1: only the data required to render the dashboard/calendar.
             // Secondary domains are intentionally loaded below so inventory and
             // gift-card history cannot delay the first useful paint.
@@ -358,6 +349,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     teacherId: row.teacher_id || undefined,
                     teacherSubstituteId: row.teacher_substitute_id || undefined,
                     completedAt: row.completed_at || undefined,
+                    importedCompleted: typeof row.imported_completed === 'boolean' ? row.imported_completed : undefined,
+                    importSource: row.import_source || undefined,
                     workshopName: row.workshop_name || undefined,
                     privateReason: row.private_reason || undefined,
                     sessionAudience: row.session_audience || undefined
@@ -394,47 +387,43 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setIsLoadingData(false);
             hasLoadedOnceRef.current = true;
 
-            // Optional domains never determine whether a durable intent can be cleared.
+            // Independent reads retain their last successful data on failure.
             let movementsByGiftCard: Record<string, GiftCardMovement[]> = {};
-                void traceSupabaseQuery('phase.secondary.snapshot', Promise.all([
-                optionalQuery('pieces'), optionalQuery('gift_card_movements'),
-                optionalQuery('inventory_items'), optionalQuery('inventory_movements'),
-                optionalQuery('workshop_schedules'), optionalQuery('workshop_capacity_defaults'),
-                optionalQuery('workshop_schedule_exceptions')
-            ])).then(([piecesRes, giftCardMovementsRes, inventoryRes, movementsRes, scheduleRes, capacityDefaultsRes, exceptionsRes]) => {
-                if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) return;
-                const normalizedPieces: CeramicPiece[] = (piecesRes.data || []).map((row: any) => ({
-                    id: row.id, owner: row.owner_name, description: row.description, status: row.status,
-                    glazeType: row.glaze_type || undefined, deliveryDate: row.delivery_date || undefined,
-                    notes: row.notes || undefined, extraCommentary: row.extra_commentary || undefined, createdAt: row.created_at || undefined
-                }));
-                const giftCardMovements: GiftCardMovement[] = (giftCardMovementsRes.data || []).map((row: any) => ({
-                    id: row.id, giftCardId: row.gift_card_id, sessionId: row.session_id || undefined,
-                    studentId: row.student_id || undefined, type: row.movement_type, sessionsDelta: row.sessions_delta,
-                    note: row.note || undefined, createdAt: row.created_at
-                }));
-                movementsByGiftCard = giftCardMovements.reduce<Record<string, GiftCardMovement[]>>((groups, movement) => {
-                    (groups[movement.giftCardId] ||= []).push(movement); return groups;
-                }, {});
-                setPieces(normalizedPieces);
-                setGiftCards(current => current.map(card => ({ ...card, movements: movementsByGiftCard[card.id] || [] })));
-                setInventoryItems((inventoryRes.data || []) as InventoryItem[]);
-                setInventoryMovements((movementsRes.data || []) as InventoryMovement[]);
-                setWorkshopSchedule((scheduleRes.data || []).map((row: any) => ({
-                    id: row.id, dayOfWeek: Number(row.day_of_week), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open),
-                    opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : ''
-                })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex));
-                const loadedCapacityDefaults = (capacityDefaultsRes.error ? [] : (capacityDefaultsRes.data || []))
-                    .filter((row: any) => row.class_type !== 'feriado')
-                    .map((row: any) => ({ id: row.id, classType: row.class_type as CapacityActivity, capacity: Number(row.capacity) }));
-                setCapacityDefaults(loadedCapacityDefaults.length
-                    ? loadedCapacityDefaults
-                    : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
-                setWorkshopScheduleExceptions((exceptionsRes.error ? [] : (exceptionsRes.data || [])).map((row: any) => ({
-                    id: row.id, exceptionDate: String(row.exception_date).slice(0, 10), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open),
-                    opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '', reason: row.reason || undefined
-                })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex));
-            }).catch(error => console.warn('Secondary data load skipped:', error));
+            const secondaryGeneration = ++secondaryGenerationRef.current;
+            const secondaryCurrent = () => secondaryGeneration === secondaryGenerationRef.current && scopeRef.current === scope && activeRef.current;
+            const sectionVersions: Partial<Record<SecondarySection, number>> = {};
+            const loadSection = async (table: SecondarySection) => {
+                if (!secondaryCurrent()) return;
+                const version = sectionVersions[table] = (sectionVersions[table] || 0) + 1;
+                const isCurrentSection = () => secondaryCurrent() && sectionVersions[table] === version;
+                setSectionLoads(previous => ({ ...previous, [table]: nextSectionState(previous[table]) }));
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), RELOAD_TIMEOUT_MS);
+                try {
+                    const result = await buildQuery(table, undefined, undefined, controller.signal);
+                    if (!isCurrentSection()) return;
+                    if (result.error) throw result.error;
+                    const rows = result.data || [];
+                    switch (table) {
+                      case 'pieces': setPieces(rows.map((row: any) => ({ id: row.id, owner: row.owner_name, description: row.description, status: row.status, glazeType: row.glaze_type || undefined, deliveryDate: row.delivery_date || undefined, notes: row.notes || undefined, extraCommentary: row.extra_commentary || undefined, createdAt: row.created_at || undefined }))); break;
+                      case 'inventory_items': setInventoryItems(rows as InventoryItem[]); break;
+                      case 'inventory_movements': setInventoryMovements(rows as InventoryMovement[]); break;
+                      case 'gift_card_movements': {
+                        const mapped: GiftCardMovement[] = rows.map((row: any) => ({ id: row.id, giftCardId: row.gift_card_id, sessionId: row.session_id || undefined, studentId: row.student_id || undefined, type: row.movement_type, sessionsDelta: row.sessions_delta, note: row.note || undefined, createdAt: row.created_at }));
+                        movementsByGiftCard = mapped.reduce<Record<string, GiftCardMovement[]>>((groups, movement) => { (groups[movement.giftCardId] ||= []).push(movement); return groups; }, {});
+                        setGiftCards(current => current.map(card => ({ ...card, movements: movementsByGiftCard[card.id] || [] }))); break;
+                      }
+                      case 'workshop_schedules': setWorkshopSchedule(rows.map((row: any) => ({ id: row.id, dayOfWeek: Number(row.day_of_week), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open), opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '' })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.slotIndex - b.slotIndex)); break;
+                      case 'workshop_capacity_defaults': setCapacityDefaults(rows.filter((row: any) => row.class_type !== 'feriado').map((row: any) => ({ id: row.id, classType: row.class_type as CapacityActivity, capacity: Number(row.capacity) }))); break;
+                      case 'workshop_schedule_exceptions': setWorkshopScheduleExceptions(rows.map((row: any) => ({ id: row.id, exceptionDate: String(row.exception_date).slice(0, 10), slotIndex: Number(row.slot_index ?? 0), isOpen: Boolean(row.is_open), opensAt: row.opens_at ? String(row.opens_at).slice(0, 5) : '', closesAt: row.closes_at ? String(row.closes_at).slice(0, 5) : '', reason: row.reason || undefined })).sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate) || a.slotIndex - b.slotIndex)); break;
+                    }
+                    setSectionLoads(previous => ({ ...previous, [table]: { status: 'ready', hasData: true, updatedAt: new Date().toISOString() } }));
+                } catch (error) {
+                    if (isCurrentSection()) setSectionLoads(previous => ({ ...previous, [table]: { ...previous[table], status: 'error', hasData: previous[table]?.hasData ?? false, error: describeLoadError(error) } }));
+                } finally { clearTimeout(timer); }
+            };
+            sectionLoaderRef.current = { scope, load: loadSection };
+            void Promise.all(secondarySections.map(loadSection));
 
             // Phase 2 is authoritative: full history, business state, funding and owner identity.
             const [fullStudentsRes, fullSessionsRes, sessionContractRes, giftContractRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes] = await Promise.all([
@@ -451,7 +440,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (generation !== loadGenerationRef.current) throw new Error('Recarga reemplazada por una solicitud mas reciente.');
             requireScope();
             if (sessionContractRes.error || giftContractRes.error) {
-                throw new Error('El backend no tiene los contratos de bonos y asistencia atomica. Requiere una actualizacion coordinada autorizada.');
+                throw sessionContractRes.error || giftContractRes.error;
             }
             for (const result of [fullStudentsRes, fullSessionsRes, effectiveRes, periodsRes, businessRes, ownerRes, creditProfileRes, giftRes]) {
                 if (result.error) throw result.error;
@@ -500,12 +489,11 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) throw error;
             businessReadyRef.current = false;
             setBusinessDataReady(false);
-            studentsRef.current = []; giftCardsRef.current = [];
+            // Keep previously verified data visible, but writes remain disabled.
             ownedSedeIdsRef.current = [];
-            setStudents([]);
-            setGiftCards([]); setOwnedSedeIds([]);
+            setOwnedSedeIds([]);
             console.error('Supabase load error', error);
-            setLoadError('No se pudieron cargar los datos. Comprueba la conexión, los permisos y las migraciones de esta versión del backend.');
+            setLoadError(describeLoadError(error));
             throw error;
         } finally {
             if (generation === loadGenerationRef.current) {
@@ -534,6 +522,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             setWorkshopSchedule([]); setWorkshopScheduleExceptions([]);
             setCapacityDefaults(Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })));
             setLoadError(null);
+            setSectionLoads({}); sectionLoaderRef.current = null; ++secondaryGenerationRef.current;
         }
         if (session) {
             // Always load when there's a session. RLS protects data at DB level.
@@ -787,7 +776,15 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         }
     };
 
+    const retrySection = useCallback(async (section: SecondarySection) => {
+        requireScope();
+        const loader = sectionLoaderRef.current;
+        if (!loader || loader.scope !== scope) throw new Error('Recarga la sesión antes de reintentar.');
+        await loader.load(section);
+    }, [requireScope, scope]);
+
     const value: DataContextType = {
+        sectionLoads: loadedScope === scope ? sectionLoads : {}, retrySection,
         students: loadedScope === scope ? students : [], sessions: loadedScope === scope ? sessions : [],
         pieces: loadedScope === scope ? pieces : [], giftCards: loadedScope === scope ? giftCards : [],
         inventoryItems: loadedScope === scope ? inventoryItems : [], inventoryMovements: loadedScope === scope ? inventoryMovements : [],

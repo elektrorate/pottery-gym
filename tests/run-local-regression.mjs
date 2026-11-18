@@ -7,7 +7,7 @@ import path from 'node:path';
 // Deliberately excludes operations.spec.ts: it requires a separately approved
 // isolated real backend, and must never fall back to the configured remote URL.
 const files = [
-  'student-lifecycle', 'student-lifecycle-ui', 'student-membership-ops',
+  'agenda-hook-integrity', 'session-details-ui', 'student-lifecycle', 'student-lifecycle-ui', 'student-membership-ops',
   'domain-read', 'session-atomic-ops', 'attendance-history',
   'gift-card-ui', 'calendar-atomic-ui', 'dashboard-integrity-ui', 'business-policy-ui', 'session-policy-ops',
   'student-credit-ui', 'student-credit-ops', 'student-credit-projection', 'session-manual-credit-ops', 'calendar-manual-credit-ui',
@@ -20,7 +20,7 @@ try {
   await server.listen();
   const exitCode = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url)),
-      'test', ...files, '--reporter=list'], { cwd: root, stdio: 'inherit',
+      'test', ...files, '--reporter=list', ...process.argv.slice(2)], { cwd: root, stdio: 'inherit',
       env: { ...process.env, BASE_URL: server.resolvedUrls.local[0] } });
     child.once('error', reject);
     child.once('exit', code => resolve(code ?? 1));

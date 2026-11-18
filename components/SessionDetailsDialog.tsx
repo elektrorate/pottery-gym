@@ -1,0 +1,48 @@
+import React, { useRef, useState } from 'react';
+import type { ClassSession, Teacher, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
+import { getScheduleConflictReason } from '../utils/workshopSchedule';
+
+export default function SessionDetailsDialog({ session, mode, teachers, schedule, exceptions, readOnly, onSave, onClose }: {
+  session: ClassSession; mode: 'teacher' | 'schedule'; teachers: Teacher[]; schedule: WorkshopScheduleDay[]; exceptions: WorkshopScheduleException[]; readOnly: boolean;
+  onSave: (id: string, updates: Partial<ClassSession>) => Promise<boolean | void>; onClose: () => void;
+}) {
+  const [form, setForm] = useState({ teacherId: session.teacherId || '', date: session.date, startTime: session.startTime, endTime: session.endTime });
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const frozen = useRef<Partial<ClassSession> | null>(null);
+  const [locked, setLocked] = useState(false); const busyRef = useRef(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); if (busyRef.current || readOnly) return;
+    if (!frozen.current) {
+      if (!Number.isSafeInteger(session.revision)) { setError('Recarga la sesión antes de guardar.'); return; }
+      if (mode === 'schedule') {
+        if (!form.date || !form.startTime || !form.endTime || form.startTime >= form.endTime) { setError('Indica una fecha y un horario válidos.'); return; }
+        const changed = form.date !== session.date || form.startTime !== session.startTime || form.endTime !== session.endTime;
+        const conflict = changed && getScheduleConflictReason({ ...session, ...form }, schedule, exceptions);
+        if (conflict) { setError(conflict + '. Revisa el horario del taller.'); return; }
+      }
+      frozen.current = Object.freeze(mode === 'teacher' ? { teacherId: form.teacherId, revision: session.revision } : { date: form.date, startTime: form.startTime, endTime: form.endTime, revision: session.revision });
+      setLocked(true);
+    }
+    busyRef.current = true; setBusy(true); setError('');
+    try {
+      const result = await onSave(session.id, frozen.current);
+      if (result === false) throw new Error('No se confirmó el guardado. Reintenta los mismos datos.');
+      onClose();
+    } catch (e: any) { setError(e.message || 'No se pudo confirmar el guardado. Reintenta los mismos datos.'); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+  const inputClass = 'mt-1 w-full rounded-lg border border-neutral-border bg-white px-3 py-2.5 text-sm text-neutral-textMain';
+  return <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-label={mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}>
+    <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-neutral-border bg-white p-5 shadow-xl">
+      <h2 className="text-lg font-semibold text-neutral-textMain">{mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}</h2>
+      <p className="my-3 text-sm text-neutral-textHelper">{session.date} · {session.startTime}–{session.endTime}. Los alumnos, el saldo y la asistencia se conservan.</p>
+      <fieldset disabled={readOnly || busy || locked} className="space-y-3">
+        {mode === 'teacher' ? <label className="block text-sm">Profesor<select value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} className={inputClass}><option value="">Sin asignar</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name} {teacher.surname}</option>)}</select></label> : <>
+          <label className="block text-sm">Fecha<input required type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className={inputClass}/></label>
+          <div className="grid grid-cols-2 gap-3"><label className="text-sm">Inicio<input required type="time" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} className={inputClass}/></label><label className="text-sm">Fin<input required type="time" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} className={inputClass}/></label></div>
+        </>}
+      </fieldset>
+      {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+      <div className="mt-5 flex justify-end gap-2"><button disabled={busy} type="button" onClick={onClose} className="min-h-10 rounded-lg border border-neutral-border px-3 text-sm">{locked ? 'Cerrar y conservar intento' : 'Cancelar'}</button><button disabled={busy || readOnly} type="submit" className="min-h-10 rounded-lg bg-brand px-4 text-sm font-semibold text-white">{busy ? 'Guardando…' : locked ? 'Reintentar el mismo guardado' : 'Guardar'}</button></div>
+    </form>
+  </div>;
+}

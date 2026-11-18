@@ -1,3 +1,6 @@
+import { withTimeout } from '../context/data/shared';
+import WorkshopRecoveryCopy from './WorkshopRecoveryCopy';
+import { readAllRows } from '../context/data/readAllRows';
 import { showError } from '../context/toast';
 import React, { useEffect, useState } from 'react';
 import { useData } from '../context/DataContext';
@@ -83,7 +86,7 @@ const defaultWorkshopSchedule = (): WorkshopScheduleDay[] => scheduleDayLabels.m
 
 
 const SettingsView: React.FC = () => {
-  const { students, sessions, pieces, giftCards, teachers, inventoryItems, inventoryMovements, updateSession, workshopSchedule, updateWorkshopSchedule, capacityDefaults } = useData();
+  const { students, sessions, pieces, giftCards, teachers, inventoryItems, inventoryMovements, updateSession, workshopSchedule, updateWorkshopSchedule, capacityDefaults, sectionLoads, businessDataReady } = useData();
   const { profile, sedeId } = useAuth();
 
   // Config states — persisted in localStorage
@@ -241,6 +244,9 @@ const SettingsView: React.FC = () => {
     setIsExporting(true);
 
     try {
+      if (!businessDataReady) throw new Error('Espera a que se carguen los datos de negocio antes de exportar.');
+      const required = mode === 'all' ? ['pieces','gift_card_movements','inventory_items','inventory_movements','workshop_schedules','workshop_capacity_defaults','workshop_schedule_exceptions'] : mode === 'pieces' ? ['pieces'] : mode === 'inventory' ? ['inventory_items','inventory_movements'] : mode === 'giftcards' ? ['gift_card_movements'] : [];
+      if (required.some(key => sectionLoads[key as keyof typeof sectionLoads]?.status !== 'ready')) throw new Error('Hay secciones sin cargar o con error. Reintenta su carga antes de exportar.');
       const wb = XLSX.utils.book_new();
       const today = new Date().toISOString().slice(0, 10);
 
@@ -361,11 +367,16 @@ const SettingsView: React.FC = () => {
         // These tables are not needed by the daily UI, so load them only for the full backup.
         const extraTables = ['payments', 'packages', 'student_assigned_classes', 'sedes', 'sede_members', 'workshop_schedules', 'workshop_capacity_defaults', 'workshop_schedule_exceptions'] as const;
         const extraRows = await Promise.all(extraTables.map(async table => {
-          const { data, error } = await supabase.from(table).select('*');
-          if (error) {
-            console.warn(`Backup: no se pudo exportar ${table}:`, error.message);
-            return { table, rows: [] as Record<string, unknown>[] };
-          }
+          if (!sedeId) throw new Error('Selecciona el taller antes de exportar.');
+          const child = table === 'packages' || table === 'student_assigned_classes';
+          const studentIds = students.filter(student => student.sedeId === sedeId).map(student => student.id);
+          if (child && studentIds.length === 0) return { table, rows: [] };
+          const { data, error } = await readAllRows((offset,size) => {
+            let query = supabase.from(table).select('*', { count: 'exact' });
+            query = table === 'sedes' ? query.eq('id', sedeId) : child ? query.in('student_id', studentIds) : query.eq('sede_id', sedeId);
+            return withTimeout('export.' + table, query.order('id').range(offset,offset+size-1));
+          });
+          if (error) throw new Error('No se pudo exportar '+table+': '+error.message);
           return {
             table,
             rows: (data || []).map(row => Object.fromEntries(
@@ -377,14 +388,14 @@ const SettingsView: React.FC = () => {
       }
 
       const fileName = mode === 'all'
-        ? `backup_completo_${today}.xlsx`
+        ? `exportacion_taller_${today}.xlsx`
         : `backup_${mode}_${today}.xlsx`;
       XLSX.writeFile(wb, fileName);
       setExportDone(mode === 'all' ? 'completo' : mode);
       setTimeout(() => setExportDone(''), 3000);
     } catch (err) {
       console.error('Export error:', err);
-      showError('Error al exportar datos.');
+      showError(err instanceof Error ? err.message : 'Error al exportar datos.');
     } finally {
       setIsExporting(false);
     }
@@ -720,8 +731,10 @@ const SettingsView: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               )}
-              {exportDone === 'completo' ? '✓ Descargado' : 'Backup completo'}
+              {exportDone === 'completo' ? '✓ Descargado' : 'Exportar Excel (todas las secciones)'}
             </button>
+
+            <WorkshopRecoveryCopy />
 
             {/* Individual */}
             <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 mt-3">
@@ -739,7 +752,7 @@ const SettingsView: React.FC = () => {
                   disabled={isExporting}
                   className={`min-h-[44px] p-2.5 ${item.color} rounded-[10px] border font-semibold text-[12px] hover:shadow-sm active:scale-[0.97] transition-all disabled:opacity-50 flex flex-col items-center gap-0.5`}
                 >
-                  <span className="text-[16px] font-bold leading-none">{item.count}</span>
+                  <span className="text-[16px] font-bold leading-none">{(item.key === 'pieces' ? sectionLoads.pieces?.status === 'ready' : item.key === 'inventory' ? sectionLoads.inventory_items?.status === 'ready' : businessDataReady) ? item.count : '—'}</span>
                   <span className="leading-tight">{exportDone === item.key ? '✓' : item.label}</span>
                 </button>
               ))}
@@ -751,7 +764,7 @@ const SettingsView: React.FC = () => {
         <div className="mt-1 px-4 py-3 bg-neutral-sec border border-neutral-border rounded-2xl">
           <p className="text-[13px] text-neutral-textSec leading-relaxed">
              <strong className="text-neutral-textMain">Nota:</strong> Los datos del taller, horarios y capacidades se guardan en Supabase por sede.
-             Las preferencias generales se guardan localmente y los backups se descargan en formato .xlsx.
+             Las preferencias generales se guardan localmente y las exportaciones Excel son de consulta. La copia JSON para recuperar datos se genera por separado.
           </p>
         </div>
       </div>

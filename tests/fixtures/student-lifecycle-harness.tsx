@@ -4,7 +4,7 @@ import StudentList from '../../components/StudentList';
 import DashboardView from '../../components/DashboardView';
 import type { ClassSession, Student } from '../../types';
 
-const base: Student = { id: '', name: '', phone: '', studentCategory: 'membresia', status: 'membresia', paymentStatus: 'paid', expiryDate: '2026-10-10', classesRemaining: 4, bonosAsignados: 4 };
+const base: Student = { effectivePeriodId:'confirmed-period', membershipTier:'gold', id: '', name: '', phone: '', studentCategory: 'membresia', status: 'membresia', paymentStatus: 'paid', expiryDate: '2026-10-10', classesRemaining: 4, bonosAsignados: 4 };
 const fixtures: Student[] = [
   { ...base, id: 'active', name: 'ACTIVO SIN CLASES', expiryDate: '2026-11-01', classesRemaining: 0 },
   { ...base, id: 'pending', name: 'PENDIENTE DIA CINCO', expiryDate: '2026-10-11', paymentStatus: 'pending' },

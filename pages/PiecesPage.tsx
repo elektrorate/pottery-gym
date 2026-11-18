@@ -1,3 +1,4 @@
+import SectionLoadBoundary from '../components/shared/SectionLoadBoundary';
 import React from 'react';
 import { useData } from '../context/DataContext';
 import PiecesToCollect from '../components/PiecesToCollect';
@@ -14,6 +15,7 @@ const PiecesPage: React.FC = () => {
     }
 
     return (
+        <SectionLoadBoundary sections={["pieces"]}>
         <PiecesToCollect
             pieces={pieces}
             students={students}
@@ -21,6 +23,7 @@ const PiecesPage: React.FC = () => {
             onUpdatePiece={updatePiece}
             onDeletePiece={deletePiece}
         />
+        </SectionLoadBoundary>
     );
 };
 

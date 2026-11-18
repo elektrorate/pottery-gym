@@ -1,3 +1,4 @@
+import SectionLoadBoundary from '../components/shared/SectionLoadBoundary';
 import React from 'react';
 import { useData } from '../context/DataContext';
 import SettingsView from '../components/SettingsView';
@@ -13,7 +14,7 @@ const SettingsPage: React.FC = () => {
         );
     }
 
-    return <SettingsView />;
+    return <SectionLoadBoundary sections={["workshop_schedules","workshop_capacity_defaults","workshop_schedule_exceptions"]}><SettingsView /></SectionLoadBoundary>;
 };
 
 export default SettingsPage;

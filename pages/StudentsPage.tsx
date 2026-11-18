@@ -24,7 +24,7 @@ const StudentsPage: React.FC = () => {
         if (selected) {
             setSelectedStudentId(selected);
             // Clear the param after reading it
-            setSearchParams({}, { replace: true });
+            const next = new URLSearchParams(searchParams); next.delete('selected'); setSearchParams(next, { replace: true });
         }
     }, [searchParams, setSearchParams]);
 
@@ -47,6 +47,7 @@ const StudentsPage: React.FC = () => {
     return (
         <StudentList
             students={students}
+            reviewOnly={searchParams.get('review') === '1'}
             detailsLoading={!businessDataReady}
             onAddStudent={addStudent}
             onRenew={renewStudent}

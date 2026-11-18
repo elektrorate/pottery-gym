@@ -1,3 +1,4 @@
+import SectionLoadBoundary from '../components/shared/SectionLoadBoundary';
 import React, { useEffect, useRef, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -57,6 +58,7 @@ const GiftCardsPage: React.FC = () => {
                     Cargando datos...
                 </div>
             ) : loadError ? <p role="alert">{loadError}</p> : (
+                <SectionLoadBoundary sections={['gift_card_movements']}>
                 <GiftCardView
                     giftCards={giftCards}
                     students={students}
@@ -67,6 +69,7 @@ const GiftCardsPage: React.FC = () => {
                     onConfirmGiftCardPayment={confirmGiftCardPayment}
                     onDeleteGiftCard={deleteGiftCard}
                 />
+                </SectionLoadBoundary>
             ))}
         </div>
     );
