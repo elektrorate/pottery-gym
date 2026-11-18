@@ -1,0 +1,235 @@
+-- Asistonto API assertions. Runs on a disposable DB after the full migration chain and the
+-- unchanged local-staging synthetic seed (see run-asistonto-api.mjs). Never a live project.
+\set ON_ERROR_STOP on
+set client_min_messages = notice;
+
+create function public.t_assert(ok boolean, msg text) returns void language plpgsql as $$
+begin
+  if ok is not true then raise exception 'FAIL: %', msg; end if;
+  raise notice 'PASS: %', msg;
+end $$;
+-- Runs SQL as the CURRENT role and requires a failure with the given SQLSTATE.
+create function public.t_reject(q text, code text, msg text) returns void language plpgsql as $$
+declare got text;
+begin
+  begin execute q; exception when others then got := sqlstate; end;
+  if got is distinct from code then raise exception 'FAIL: % (expected %, got %)', msg, code, coalesce(got, 'success'); end if;
+  raise notice 'PASS: % [%]', msg, code;
+end $$;
+grant execute on function public.t_assert(boolean, text), public.t_reject(text, text, text) to anon, authenticated, service_role;
+create table public.t_state(k text primary key, v text);
+grant all on public.t_state to service_role, authenticated;
+
+-- Fixture: integration actor (Auth user that owns/belongs to nothing), extra sessions.
+insert into auth.users(id, email) values ('00000000-0000-0000-0000-0000000000a5', 'asistonto-actor@pottery.local');
+insert into private.asistonto_integration_actor(sede_id, user_id, enabled)
+  values ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000a5', true);
+-- A temporal student without enrollments, and a cap-2 session with one seat taken (staff context).
+do $$
+declare d date := (now() at time zone 'UTC')::date + 2;
+begin
+  perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', true);
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  execute 'set local role authenticated';
+  insert into public.students (id, sede_id, full_name, name, surname, email, student_category, membership_tier, class_type, status)
+    values ('10000000-0000-0000-0000-0000000000b1', '30000000-0000-0000-0000-000000000001', 'Bea Uno', 'Bea', 'Uno',
+      'bea@pottery.local', 'membresia', 'gold', 'Modelado', 'active'),
+           ('10000000-0000-0000-0000-0000000000b2', '30000000-0000-0000-0000-000000000001', 'Ben Dos', 'Ben', 'Dos',
+      'ben@pottery.local', 'membresia', 'gold', 'Modelado', 'active');
+  perform public.confirm_student_membership_payment(current_membership_period_id) from public.students
+    where id in ('10000000-0000-0000-0000-0000000000b1', '10000000-0000-0000-0000-0000000000b2');
+  perform public.save_session_reservation('20000000-0000-0000-0000-0000000000c1', gen_random_uuid(), 0,
+    '30000000-0000-0000-0000-000000000001', jsonb_build_object('date', d::text, 'start_time', d::text || 'T10:00:00Z',
+      'end_time', d::text || 'T12:00:00Z', 'class_type', 'torno', 'capacity', 2,
+      'teacher_id', '70000000-0000-0000-0000-000000000001', 'session_audience', 'membresia'),
+    array['10000000-0000-0000-0000-000000000001']::uuid[], '{}'::jsonb);
+end $$;
+reset role;
+
+-- 1) Grants: only service_role reaches the entry points; nobody reads private tables.
+set role anon;
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{}')$q$, '42501', 'anon cannot read');
+reset role;
+set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}';
+set role authenticated;
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{}')$q$, '42501', 'authenticated staff cannot read via asistonto');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve','{}')$q$, '42501', 'authenticated staff cannot write via asistonto');
+select public.t_reject($q$select * from private.asistonto_drafts$q$, '42501', 'authenticated cannot see drafts');
+select public.t_reject($q$insert into private.asistonto_actor_context values (pg_backend_pid(), txid_current(), '30000000-0000-0000-0000-000000000001', auth.uid())$q$, '42501', 'authenticated cannot forge the integration marker');
+select public.t_reject($q$select private.asistonto_read_bonos('30000000-0000-0000-0000-000000000001','{}')$q$, '42501', 'authenticated cannot call private readers');
+reset role;
+reset request.jwt.claims;
+
+set request.jwt.claims = '{"role":"service_role"}';
+set role service_role;
+select public.t_reject($q$select * from private.asistonto_audit$q$, '42501', 'service_role cannot read audit table directly');
+select public.t_reject($q$select private.session_employee_sede('30000000-0000-0000-0000-000000000001')$q$, '42501', 'service_role cannot call session helpers directly');
+
+-- 2) Reads: shape, sede filter, PII minimisation, limits.
+select public.t_assert((public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{}')->>'count')::int = 2, 'bonos lists own-sede cards only');
+select public.t_assert(public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{"code":"staging-temp"}')#>>'{data,code}' = 'STAGING-TEMP', 'bono lookup by code (case-insensitive)');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{"code":"NOPE-0000"}')$q$, 'AS404', 'unknown code is 404');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000002','bonos','{"code":"STAGING-TEMP"}')$q$, 'AS404', 'other sede cannot see this card');
+select public.t_assert(public.asistonto_read('30000000-0000-0000-0000-000000000001','calendario',
+  jsonb_build_object('from', current_date::text, 'to', (current_date + 3)::text))->'data' @> '[{"id":"20000000-0000-0000-0000-000000000001","capacity":2,"reserved":2,"available":0}]', 'calendario shows capacity and reserved seats');
+select public.t_assert(not (public.asistonto_read('30000000-0000-0000-0000-000000000001','calendario',
+  jsonb_build_object('from', current_date::text, 'to', (current_date + 3)::text))::text like '%20000000-0000-0000-0000-000000000004%'), 'calendario excludes other sede sessions');
+select public.t_assert(jsonb_array_length(public.asistonto_read('30000000-0000-0000-0000-000000000001','clases','{}')#>'{data,weeklySchedule}') = 7, 'clases returns weekly schedule');
+select public.t_assert((public.asistonto_read('30000000-0000-0000-0000-000000000001','alumnos','{"q":"alex"}')->>'count')::int = 2, 'alumnos search');
+select public.t_assert((public.asistonto_read('30000000-0000-0000-0000-000000000001','alumnos','{"q":"other"}')->>'count')::int = 0, 'alumnos excludes other sede');
+select public.t_assert((public.asistonto_read('30000000-0000-0000-0000-000000000001','alumnos','{"q":"%%%"}')->>'count')::int = 0, 'LIKE wildcards are escaped');
+select public.t_assert(public.asistonto_read('30000000-0000-0000-0000-000000000001','alumno','{"id":"10000000-0000-0000-0000-000000000001"}')#>>'{data,name}' = 'Alex Perez', 'alumno detail');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','alumno','{"id":"10000000-0000-0000-0000-000000000003"}')$q$, 'AS404', 'alumno of other sede is 404');
+do $$
+declare
+  txt text := concat_ws(' ',
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{}'),
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','calendario', jsonb_build_object('from', current_date::text, 'to', (current_date + 3)::text)),
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','clases','{}'),
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','alumnos','{"q":"ale"}'),
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','alumnos','{"q":"pat"}'),
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','alumno','{"id":"10000000-0000-0000-0000-000000000001"}'),
+    public.asistonto_read('30000000-0000-0000-0000-000000000001','alumno','{"id":"10000000-0000-0000-0000-000000000002"}'));
+begin
+  perform public.t_assert(txt !~* '(@|email|phone|buyer|notes|internal|metadata|dedication|birth|observ|price)', 'no PII or private fields in any read response');
+end $$;
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','calendario','{"from":"2026-01-01","to":"2026-03-01"}')$q$, 'AS400', 'calendario range capped at 31 days');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','calendario','{"from":"ayer"}')$q$, 'AS400', 'calendario rejects bad dates');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','alumnos','{"q":"al"}')$q$, 'AS400', 'alumnos needs 3 chars');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{"limit":101}')$q$, 'AS400', 'limit capped at 100');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','bonos','{"buyer":"x"}')$q$, 'AS400', 'unknown read params rejected');
+select public.t_reject($q$select public.asistonto_read('30000000-0000-0000-0000-000000000001','service_role','{}')$q$, 'AS400', 'unknown op rejected');
+select public.t_reject($q$select public.asistonto_read('39999999-0000-0000-0000-000000000001','bonos','{}')$q$, 'AS403', 'unknown sede rejected');
+
+-- 3) Write roles and state machine.
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','draft','{"kind":"student.create","payload":{"name":"X"}}')$q$, 'AS403', 'RIO cannot draft');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','erick','draft','{}')$q$, 'AS403', 'unknown actor rejected');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – no usar","numClasses":1,"status":"active"}}')$q$, 'AS400', 'unknown payload fields rejected');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – no usar","numClasses":1,"validityMonths":5}}')$q$, 'AS400', 'invalid validity rejected');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – no usar","numClasses":1,"code":"STAGING-TEMP"}}')$q$, 'AS409', 'existing code rejected at draft');
+
+-- W1 happy path + idempotency.
+insert into public.t_state select 'w1', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – no usar","numClasses":2,"paymentStatus":"paid","buyerEmail":"rio@pottery.local"}}')#>>'{data,draftId}';
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit','{"draftId":"%s"}')$q$, (select v from t_state where k='w1')), 'AS403', 'commit without approval is 403');
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','approve','{"draftId":"%s","approvalRef":"t1u"}')$q$, (select v from t_state where k='w1')), 'AS403', 'asistonto cannot approve');
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve','{"draftId":"%s"}')$q$, (select v from t_state where k='w1')), 'AS400', 'approval needs approvalRef');
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000002','rio','approve','{"draftId":"%s","approvalRef":"t1u"}')$q$, (select v from t_state where k='w1')), 'AS404', 'draft not visible from other sede');
+select public.t_assert(public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve',
+  jsonb_build_object('draftId', (select v from t_state where k='w1'), 'approvalRef', 't1u'))#>>'{data,status}' = 'approved', 'RIO approves with reference');
+select public.t_assert((public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve',
+  jsonb_build_object('draftId', (select v from t_state where k='w1'), 'approvalRef', 't1u'))->>'replayed')::boolean, 'repeat approval is a replay');
+insert into public.t_state select 'w1c', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='w1')))::text;
+select public.t_assert((select v::jsonb from t_state where k='w1c')#>>'{data,result,bono,recipient}' = 'PRUEBA RIO – no usar'
+  and (select v::jsonb from t_state where k='w1c')#>>'{data,result,bono,numClasses}' = '2', 'W1 commit creates the bono');
+select public.t_assert(not ((select v from t_state where k='w1c') ~* '(@|buyer|email)'), 'W1 commit response has no buyer data');
+select public.t_assert((public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='w1')))->>'replayed')::boolean, 'second commit is an idempotent replay');
+reset role;
+select public.t_assert((select count(*) from public.gift_cards where external_reference = 'asistonto:' || (select v from t_state where k='w1')) = 1, 'exactly one card per draft');
+select public.t_assert((select s.student_category = 'temporal' and g.external_metadata->>'approval_ref' = 't1u' and g.payment_status = 'paid'
+  from public.gift_cards g join public.students s on s.id = g.recipient_student_id
+  where g.external_reference = 'asistonto:' || (select v from t_state where k='w1')), 'W1 links a new temporal student and records approvalRef');
+set role service_role;
+
+-- Discard + expiry.
+insert into public.t_state select 'disc', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"student.create","payload":{"name":"PRUEBA RIO – no usar"}}')#>>'{data,draftId}';
+select public.t_assert(public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','discard',
+  jsonb_build_object('draftId', (select v from t_state where k='disc')))#>>'{data,status}' = 'discarded', 'drafts can be discarded');
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve','{"draftId":"%s","approvalRef":"t2u"}')$q$, (select v from t_state where k='disc')), 'AS409', 'discarded draft cannot be approved');
+insert into public.t_state select 'exp', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"student.create","payload":{"name":"PRUEBA RIO – no usar"}}')#>>'{data,draftId}';
+insert into public.t_state select 'exp2', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"student.create","payload":{"name":"PRUEBA RIO – no usar"}}')#>>'{data,draftId}';
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve', jsonb_build_object('draftId', (select v from t_state where k='exp2'), 'approvalRef', 't3u'));
+reset role;
+update private.asistonto_drafts set created_at = created_at - interval '25 hours', expires_at = expires_at - interval '25 hours',
+  approved_at = case when approved_at is null then null else approved_at - interval '25 hours' end
+  where id in ((select v::uuid from t_state where k='exp'), (select v::uuid from t_state where k='exp2'));
+set role service_role;
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve','{"draftId":"%s","approvalRef":"t2u"}')$q$, (select v from t_state where k='exp')), 'AS410', 'expired draft cannot be approved (24h)');
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit','{"draftId":"%s"}')$q$, (select v from t_state where k='exp2')), 'AS410', 'expired approved draft cannot be committed');
+
+-- W2 happy path.
+insert into public.t_state select 'w2', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"student.create","payload":{"name":"PRUEBA RIO","surname":"no usar","email":"Prueba@Pottery.Local","phone":"+34 600 000 000"}}')#>>'{data,draftId}';
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve', jsonb_build_object('draftId', (select v from t_state where k='w2'), 'approvalRef', 't4u'));
+insert into public.t_state select 'w2s', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='w2')))#>>'{data,result,studentId}';
+reset role;
+select public.t_assert((select full_name = 'PRUEBA RIO no usar' and student_category = 'temporal' and email = 'prueba@pottery.local'
+  and sede_id = '30000000-0000-0000-0000-000000000001' and current_membership_period_id is null
+  from public.students where id = (select v::uuid from t_state where k='w2s')), 'W2 creates one temporal student in the sede');
+set role service_role;
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"student.create","payload":{"name":"X","email":"no-at-sign"}}')$q$, 'AS400', 'W2 validates email');
+
+-- W3: capacity checked at draft AND enforced again at commit by the existing RPC.
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"session.book","payload":{"sessionId":"20000000-0000-0000-0000-000000000001","studentId":"10000000-0000-0000-0000-000000000004"}}')$q$, 'AS409', 'full session rejected at draft');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"session.book","payload":{"sessionId":"20000000-0000-0000-0000-000000000004","studentId":"10000000-0000-0000-0000-000000000004"}}')$q$, 'AS404', 'other sede session is 404');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"session.book","payload":{"sessionId":"20000000-0000-0000-0000-0000000000c1","studentId":"10000000-0000-0000-0000-000000000001"}}')$q$, 'AS409', 'already enrolled rejected');
+insert into public.t_state select 'b1', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"session.book","payload":{"sessionId":"20000000-0000-0000-0000-0000000000c1","studentId":"10000000-0000-0000-0000-0000000000b1"}}')#>>'{data,draftId}';
+insert into public.t_state select 'b2', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"session.book","payload":{"sessionId":"20000000-0000-0000-0000-0000000000c1","studentId":"10000000-0000-0000-0000-0000000000b2"}}')#>>'{data,draftId}';
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve', jsonb_build_object('draftId', (select v from t_state where k='b1'), 'approvalRef', 't5u'));
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve', jsonb_build_object('draftId', (select v from t_state where k='b2'), 'approvalRef', 't5u'));
+select public.t_assert((public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='b1')))#>>'{data,result,reserved}')::int = 2, 'W3 book fills the last seat');
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit','{"draftId":"%s"}')$q$, (select v from t_state where k='b2')), 'P0001', 'existing capacity rule blocks the over-capacity commit');
+select public.t_assert((public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='b1')))->>'replayed')::boolean, 'W3 commit replay is idempotent');
+reset role;
+select public.t_assert((select count(*) from public.session_students where session_id = '20000000-0000-0000-0000-0000000000c1') = 2
+  and (select status from private.asistonto_drafts where id = (select v::uuid from t_state where k='b2')) = 'approved', 'failed commit leaves no enrollment and keeps the draft approved');
+select public.t_assert((select created_by from public.session_operation_receipts where request_key = (select v::uuid from t_state where k='b1'))
+  = '00000000-0000-0000-0000-0000000000a5', 'reservation receipt is attributed to the integration actor');
+select public.t_assert((select count(*) from private.asistonto_actor_context) = 0, 'integration marker is removed after commit');
+set role service_role;
+
+-- W3 cancel.
+insert into public.t_state select 'c1', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"session.cancel","payload":{"sessionId":"20000000-0000-0000-0000-0000000000c1","studentId":"10000000-0000-0000-0000-0000000000b1","reason":"Pide anular"}}')#>>'{data,draftId}';
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve', jsonb_build_object('draftId', (select v from t_state where k='c1'), 'approvalRef', 't6u'));
+select public.t_assert((public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='c1')))#>>'{data,result,reserved}')::int = 1, 'W3 cancel frees the seat');
+reset role;
+select public.t_assert((select cancelled_at is not null and cancelled_by = '00000000-0000-0000-0000-0000000000a5' and cancellation_reason like 'Pide anular (OK: t6u)%'
+  from public.session_students where session_id = '20000000-0000-0000-0000-0000000000c1' and student_id = '10000000-0000-0000-0000-0000000000b1'), 'cancel uses the existing business action with auditable reason');
+
+-- Actor safety: not provisioned / application user.
+update private.asistonto_integration_actor set enabled = false;
+set role service_role;
+insert into public.t_state select 'b3', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"session.book","payload":{"sessionId":"20000000-0000-0000-0000-0000000000c1","studentId":"10000000-0000-0000-0000-0000000000b2"}}')#>>'{data,draftId}';
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve', jsonb_build_object('draftId', (select v from t_state where k='b3'), 'approvalRef', 't7u'));
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit','{"draftId":"%s"}')$q$, (select v from t_state where k='b3')), 'AS409', 'session writes need a provisioned actor');
+reset role;
+update private.asistonto_integration_actor set enabled = true;
+insert into public.profiles(id, email, full_name, role) values ('00000000-0000-0000-0000-0000000000a5', 'asistonto-actor@pottery.local', 'Asistonto', 'tallerista') on conflict (id) do nothing;
+insert into public.sede_members(sede_id, user_id, role) values ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000a5', 'staff');
+set role service_role;
+select public.t_reject(format($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit','{"draftId":"%s"}')$q$, (select v from t_state where k='b3')), 'AS403', 'actor that is an app user is refused');
+reset role;
+delete from public.sede_members where user_id = '00000000-0000-0000-0000-0000000000a5';
+set request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000a5","role":"authenticated"}';
+set role authenticated;
+select public.t_assert(not private.session_employee_sede('30000000-0000-0000-0000-000000000001'), 'actor has no session access outside an asistonto commit');
+reset role;
+reset request.jwt.claims;
+
+-- Audit is insert-only and has no PII.
+select public.t_reject($q$update private.asistonto_audit set actor = 'rio'$q$, '42501', 'audit rows cannot be updated');
+select public.t_reject($q$delete from private.asistonto_audit$q$, '42501', 'audit rows cannot be deleted');
+select public.t_assert((select count(*) from private.asistonto_audit where operation = 'commit') = 4, 'every commit is audited once');
+select public.t_assert(not exists (select 1 from private.asistonto_audit where detail::text ~* '(@|PRUEBA|Alex|Bea|Ben)'), 'audit holds identifiers only');
+
+-- Test-record hygiene: the PRUEBA bono is cancelled afterwards, as in production tests.
+set request.jwt.claims = '{"role":"service_role"}';
+set role service_role;
+select public.external_cancel_gift_card('30000000-0000-0000-0000-000000000001',
+  (select id from public.gift_cards where external_reference = 'asistonto:' || (select v from t_state where k='w1')));
+select public.t_assert((select status from public.gift_cards where external_reference = 'asistonto:' || (select v from t_state where k='w1')) = 'cancelled', 'PRUEBA bono cancelled after the test');
+reset role;
+do $$ begin raise notice 'ALL ASISTONTO API TESTS PASSED'; end $$;

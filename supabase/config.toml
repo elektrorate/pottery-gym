@@ -20,3 +20,9 @@ verify_jwt = false
 
 [functions.admin-create-user]
 verify_jwt = false
+
+[functions.asistonto-read]
+verify_jwt = false
+
+[functions.asistonto-write]
+verify_jwt = false
