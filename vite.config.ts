@@ -36,11 +36,24 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
-              // Bonos designer only (before the react rule: «lucide-react» contains «react»).
-              if (id.includes('html2canvas') || id.includes('lucide-react')) {
+              // PDF/icon libs for the Casa Rosier designer (before the react
+              // rule: «lucide-react» contains «react»).
+              if (
+                id.includes('html2canvas') ||
+                id.includes('jspdf') ||
+                id.includes('canvg') ||
+                id.includes('lucide-react')
+              ) {
                 return 'vendor-bonos-designer';
               }
-              if (id.includes('react') || id.includes('react-dom')) {
+              // Keep scheduler with react/react-dom to avoid a circular chunk
+              // (TypeError: Cannot set properties of undefined (setting 'unstable_now')).
+              if (
+                id.includes(`${path.sep}react${path.sep}`) ||
+                id.includes(`${path.sep}react-dom${path.sep}`) ||
+                id.includes(`${path.sep}scheduler${path.sep}`) ||
+                id.includes('react-router')
+              ) {
                 return 'vendor-react';
               }
               if (id.includes('@supabase')) {
