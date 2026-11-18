@@ -138,7 +138,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                             </div>
                         </div>
 
-                        <nav className="menu-typography-110 space-y-1 flex-1 overflow-y-auto no-scrollbar py-2">
+                        <nav className="menu-typography-110 space-y-1 min-h-0 flex-1 overflow-y-auto py-2">
                             {filteredNavItems.map((item, index) => (
                                 <React.Fragment key={item.path}>
                                     {(index === 0 || filteredNavItems[index - 1]?.section !== item.section) && (
@@ -173,20 +173,16 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                             ))}
                         </nav>
 
-                         <div className="mt-4 pt-4 border-t border-neutral-border shrink-0">
+                         <div className="mt-2 pt-2 border-t border-neutral-border shrink-0">
                             {!isStaff && (
                                  <button
                                      onClick={() => navigate('/settings')}
-                                     className={`mb-3 w-full flex items-center gap-3 px-3.5 min-h-[44px] rounded-[10px] transition-colors duration-200 group ${location.pathname === '/settings' ? 'bg-brand text-white' : 'text-neutral-textSec hover:bg-neutral-alt hover:text-brand'}`}
+                                     className={`mb-1 w-full flex items-center gap-3 px-3.5 min-h-[44px] rounded-[10px] transition-colors duration-200 group ${location.pathname === '/settings' ? 'bg-brand text-white' : 'text-neutral-textSec hover:bg-neutral-alt hover:text-brand'}`}
                                  >
                                      <svg className="w-5 h-5 shrink-0 transition-transform duration-200 group-hover:rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.2 3.5a6.9 6.9 0 0 0-.1-1.1l2-1.5-2-3.4-2.4 1a7.2 7.2 0 0 0-1.9-1.1L15.5 3h-4l-.4 2.9a7.2 7.2 0 0 0-1.9 1.1l-2.4-1-2 3.4 2 1.5a6.9 6.9 0 0 0 0 2.2l-2 1.5 2 3.4 2.4-1a7.2 7.2 0 0 0 1.9 1.1l.4 2.9h4l.4-2.9a7.2 7.2 0 0 0 1.9-1.1l2.4 1 2-3.4-2-1.5c.1-.4.1-.7.1-1.1Z" /></svg>
                                      <span className={`text-[14px] truncate ${location.pathname === '/settings' ? 'font-semibold' : 'font-medium'}`}>Administración del taller</span>
                                  </button>
                              )}
-                             <div className="mb-3 flex items-center gap-2 rounded-xl bg-neutral-sec px-3 py-2.5">
-                                <div className="h-2 w-2 rounded-full bg-emerald-500" />
-                                 <span className="text-[12px] font-semibold text-neutral-textSec">Sistema operativo</span>
-                            </div>
                             <button
                                 onClick={handleLogout}
                                 className="w-full flex items-center gap-3 px-3.5 min-h-[44px] rounded-[10px] text-neutral-textHelper hover:text-brand hover:bg-neutral-alt transition-colors"
