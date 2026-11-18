@@ -573,7 +573,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       showError(`La sesión admite como máximo ${capacity} alumnos.`);
       return;
     }
-    if ((workshopSchedule.length > 0 || workshopScheduleExceptions.length > 0) && sessionForm.classType !== 'feriado') {
+    const persistedSession = editingSessionId ? sessions.find(session => session.id === editingSessionId) : undefined;
+    const scheduleChanged = !persistedSession
+      || persistedSession.date !== sessionForm.date
+      || persistedSession.startTime !== sessionForm.startTime
+      || persistedSession.endTime !== sessionForm.endTime
+      || (persistedSession.classType === 'feriado' && sessionForm.classType !== 'feriado');
+    if (scheduleChanged && (workshopSchedule.length > 0 || workshopScheduleExceptions.length > 0) && sessionForm.classType !== 'feriado') {
       const conflictReason = getScheduleConflictReason(
         { date: sessionForm.date, startTime: sessionForm.startTime, endTime: sessionForm.endTime, classType: sessionForm.classType },
         workshopSchedule,
