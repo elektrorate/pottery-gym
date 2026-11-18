@@ -1,3 +1,4 @@
+import { getStudentSessionStatus } from '../utils/recordPresentation';
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Student, ClassSession, CeramicPiece, GiftCard } from '../types';
@@ -244,10 +245,10 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
   const virtualStudents = visibleStudents.slice(virtualStartIndex, virtualEndIndex);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-neutral-base px-6 py-4">
-      <div className="flex-1 overflow-hidden flex flex-col lg:flex-row gap-6 pb-6">
+    <div className="h-full min-h-0 overflow-y-auto lg:overflow-hidden bg-neutral-base px-4 py-4 pb-28 lg:px-6 lg:pb-4">
+      <div className="min-h-full lg:h-full flex flex-col lg:flex-row gap-6 pb-6">
         {/* BARRA LATERAL DE ALUMNOS */}
-        <aside className="w-full lg:w-96 flex flex-col shrink-0 bg-white rounded-2xl border border-neutral-border soft-shadow overflow-hidden">
+        <aside className="w-full max-h-[45vh] lg:max-h-none lg:w-80 flex flex-col shrink-0 bg-white rounded-2xl border border-neutral-border soft-shadow overflow-hidden">
           <div className="p-4 border-b border-neutral-border bg-neutral-sec/40 space-y-3">
             <h3 className="text-[15px] font-bold text-neutral-textMain">Listado de Alumnos</h3>
             {/* Búsqueda */}
@@ -340,7 +341,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
         </aside>
 
         {/* CONTENIDO DEL HISTORIAL */}
-        <main className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-6">
+        <main className="min-h-0 shrink-0 lg:shrink lg:flex-1 lg:overflow-y-auto custom-scrollbar pr-2 space-y-6">
           {studentDetails ? (
             <div className="animate-fade-in space-y-6">
               {/* CABECERA ALUMNO */}
@@ -484,17 +485,15 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                       </div>
                     ) : (
                       studentDetails.sessions.map(s => {
-                        const attendanceKey = studentDetails.fullName.toUpperCase();
-                        const nameKey = studentDetails.student.name.toUpperCase();
-                        const status = s.attendance?.[attendanceKey] || s.attendance?.[nameKey] || 'pending';
+                        const status = getStudentSessionStatus(s, studentDetails.student.id, [studentDetails.fullName, studentDetails.student.name]);
                         return (
                           <div key={s.id} className="bg-white p-4 rounded-2xl border border-neutral-border flex justify-between items-center gap-3 group hover:border-arena transition-all">
                             <div className="flex flex-col">
                               <p className="text-[15px] font-semibold text-neutral-textMain">{formatSessionDate(s.date)}</p>
                               <p className="text-[13px] text-neutral-textSec mt-0.5">{s.startTime} - {s.endTime} • {s.classType}</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold shrink-0 ${status === 'present' ? 'bg-[#DFF0E4] text-[#20663B] border border-[#BFDECB]' : status === 'absent' ? 'bg-[#F8E1DA] text-[#9E3B2B] border border-[#EFC9BE]' : 'bg-neutral-alt text-neutral-textHelper border border-neutral-border'}`}>
-                              {status === 'present' ? 'Asistió' : status === 'absent' ? 'Faltó' : 'Pendiente'}
+                            <div className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold shrink-0 ${status === 'Asistió' ? 'bg-[#DFF0E4] text-[#20663B] border border-[#BFDECB]' : status === 'Faltó' ? 'bg-[#F8E1DA] text-[#9E3B2B] border border-[#EFC9BE]' : 'bg-neutral-alt text-neutral-textHelper border border-neutral-border'}`}>
+                              {status}
                             </div>
                           </div>
                         );

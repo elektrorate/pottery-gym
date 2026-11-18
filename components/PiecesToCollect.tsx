@@ -39,6 +39,8 @@ const PieceCard: React.FC<PieceCardProps> = ({ piece, studentCategory, groupName
     setIsUpdating(true);
     try {
       await onUpdateStatus(piece.id, action.next);
+    } catch (error: any) {
+      showError(error?.message || 'No se pudo actualizar la pieza.');
     } finally {
       setIsUpdating(false);
     }
@@ -259,13 +261,14 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
     if (isSubmitting) return;
     if (!form.owner) { showError('Por favor selecciona un propietario.'); return; }
     setIsSubmitting(true);
-    // Close modal immediately — Supabase operations run in background
-    setShowModal(false);
-    setIsSubmitting(false);
-    if (editingPiece?.id) {
-      onUpdatePiece(editingPiece.id, form);
-    } else {
-      onAddPiece(form);
+    try {
+      if (editingPiece?.id) await onUpdatePiece(editingPiece.id, form);
+      else await onAddPiece(form);
+      setShowModal(false);
+    } catch (error: any) {
+      showError(error?.message || 'No se pudo guardar. Revisa los datos e inténtalo de nuevo.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

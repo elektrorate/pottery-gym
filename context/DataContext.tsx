@@ -441,7 +441,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 buildQuery('students'), buildQuery('sessions'), buildQuery('session_operation_receipts', 0), buildQuery('gift_card_operation_receipts', 0),
                 buildQuery('students_effective_membership'), buildQuery('student_membership_periods'),
                 buildQuery('session_activity_business_state', undefined, undefined, undefined, {
-                    columns: '*,funding_activity_type,funding_activity_block_id,activity_teacher_id,activity_capacity,activity_source_verified'
+                    columns: '*', exactCount: false
                 }),
                 readAllRows((offset, size) => withTimeout('sedes.owner.select',
                     supabase.from('sedes').select('id', { count: 'exact' }).eq('owner_id', session!.user.id).eq('is_active', true)
@@ -652,13 +652,13 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         await sessionOps.applySessionBusinessOperation(getOpsContext(), intent);
     };
 
-    const addTeacher = async (t: Omit<Teacher, 'id'>) => teacherOps.addTeacher(getOpsContext(), t);
-    const updateTeacher = async (id: string, u: Partial<Teacher>) => teacherOps.updateTeacher(getOpsContext(), id, u);
-    const deleteTeacher = async (id: string) => teacherOps.deleteTeacher(getOpsContext(), id);
+    const addTeacher = async (t: Omit<Teacher, 'id'>) => teacherOps.addTeacher(getOpsContext(false), t);
+    const updateTeacher = async (id: string, u: Partial<Teacher>) => teacherOps.updateTeacher(getOpsContext(false), id, u);
+    const deleteTeacher = async (id: string) => teacherOps.deleteTeacher(getOpsContext(false), id);
 
-    const addPiece = async (p: Omit<CeramicPiece, 'id'>) => pieceOps.addPiece(getOpsContext(), p);
-    const updatePiece = async (id: string, u: Partial<CeramicPiece>) => pieceOps.updatePiece(getOpsContext(), id, u);
-    const deletePiece = async (id: string) => pieceOps.deletePiece(getOpsContext(), id);
+    const addPiece = async (p: Omit<CeramicPiece, 'id'>) => pieceOps.addPiece(getOpsContext(false), p);
+    const updatePiece = async (id: string, u: Partial<CeramicPiece>) => pieceOps.updatePiece(getOpsContext(false), id, u);
+    const deletePiece = async (id: string) => pieceOps.deletePiece(getOpsContext(false), id);
 
     const addGiftCard = async (c: Omit<GiftCard, 'id' | 'createdAt'>) => giftCardOps.addGiftCard(getOpsContext(), c);
     const updateGiftCard = async (id: string, u: Partial<GiftCard>) => giftCardOps.updateGiftCard(getOpsContext(), id, u, giftCardsRef.current);
@@ -674,11 +674,11 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const redeemGiftCardSession = async (giftCardId: string, sessionId: string, studentId?: string) => giftCardOps.redeemGiftCardSession(getOpsContext(), giftCardId, sessionId, studentId);
     const reverseGiftCardSession = async (giftCardId: string | undefined, sessionId: string, studentId?: string) => giftCardOps.reverseGiftCardSession(getOpsContext(), giftCardId || '', sessionId, studentId);
 
-    const addInventoryItem = async (i: InventoryItem) => inventoryOps.addInventoryItem(getOpsContext(), i);
-    const updateInventoryItem = async (id: string, u: Partial<InventoryItem>) => inventoryOps.updateInventoryItem(getOpsContext(), id, u);
-    const archiveInventoryItem = async (id: string) => inventoryOps.archiveInventoryItem(getOpsContext(), id);
-    const deleteInventoryItem = async (id: string) => inventoryOps.deleteInventoryItem(getOpsContext(), id);
-    const addInventoryMovement = async (m: Omit<InventoryMovement, 'id'>) => inventoryOps.addInventoryMovement(getOpsContext(), m);
+    const addInventoryItem = async (i: InventoryItem) => inventoryOps.addInventoryItem(getOpsContext(false), i);
+    const updateInventoryItem = async (id: string, u: Partial<InventoryItem>) => inventoryOps.updateInventoryItem(getOpsContext(false), id, u);
+    const archiveInventoryItem = async (id: string) => inventoryOps.archiveInventoryItem(getOpsContext(false), id);
+    const deleteInventoryItem = async (id: string) => inventoryOps.deleteInventoryItem(getOpsContext(false), id);
+    const addInventoryMovement = async (m: Omit<InventoryMovement, 'id'>) => inventoryOps.addInventoryMovement(getOpsContext(false), m);
 
     const updateWorkshopSchedule = async (schedule: WorkshopScheduleDay[]) => {
         requireBusinessData();

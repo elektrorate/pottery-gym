@@ -53,6 +53,8 @@ const navItems = [
     },
 ];
 
+navItems.push({ path: '/pieces', label: 'Piezas', section: 'TALLER', icon: <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M5 9h14l-2 11H7L5 9ZM8 9V4h8v5" strokeWidth="2" /></svg> });
+
 const mobilePrimaryPaths = ['/dashboard', '/calendar', '/students', '/giftcards', '/agenda'];
 const mobilePrimaryLabels: Record<string, string> = {
     '/dashboard': 'Dashboard',
@@ -72,7 +74,7 @@ const menuConfig = [
             { path: '/history', label: 'Historial' }
         ]
     },
-    { group: 'TALLER', items: [{ path: '/inventory', label: 'Inventario' }] },
+    { group: 'TALLER', items: [{ path: '/pieces', label: 'Piezas' }, { path: '/inventory', label: 'Inventario' }] },
     { group: 'COMERCIAL', items: [{ path: '/giftcards', label: 'Bonos Regalo' }] },
     { group: 'EQUIPO DE TRABAJO', items: [{ path: '/team', label: 'Equipo de Trabajo' }, { path: '/teachers', label: 'Profesores' }] },
     { group: 'SISTEMA', items: [{ path: '/settings', label: 'Administración del taller' }] }

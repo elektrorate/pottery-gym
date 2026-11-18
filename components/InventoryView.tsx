@@ -1,6 +1,6 @@
 import { showError, showWarning } from '../context/toast';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, InventoryItemStatus, MovementType, InventoryMovement, StructuredFormula, FormulaComponent, ColorFamily, GlazeFinish } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
 
@@ -27,6 +27,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
   const [itemToDelete, setItemToDelete] = useState<{ id: string; name: string } | null>(null);
   const [isSubmittingItem, setIsSubmittingItem] = useState(false);
   const [isSubmittingMovement, setIsSubmittingMovement] = useState(false);
+  const movementRequest = useRef<{ fingerprint: string; key: string; expectedQuantity: number } | null>(null);
   const [itemForm, setItemForm] = useState({
     category: 'glaze' as InventoryCategory,
     name: '',
@@ -238,6 +239,8 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
     setIsSubmittingItem(true);
     try {
       if (await submitItem()) setCurrentSubView('list');
+    } catch (error: any) {
+      showError(error?.message || 'No se pudo guardar el material.');
     } finally {
       setIsSubmittingItem(false);
     }
@@ -260,14 +263,28 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       return;
     }
     const quantity = Number(movementForm.quantity);
+    if (movementForm.type !== 'adjust' && !Number.isFinite(quantity)) { showError('Indica una cantidad válida.'); return; }
+    if (movementForm.type === 'out' && quantity > selectedItem.current_quantity) {
+      showError('La salida no puede superar las existencias disponibles.');
+      return;
+    }
+    if (movementForm.type === 'adjust' && (!Number.isFinite(Number(movementForm.new_quantity)) || Number(movementForm.new_quantity) < 0)) {
+      showError('El saldo ajustado debe ser un número mayor o igual a cero.'); return;
+    }
     const newQuantity = movementForm.type === 'adjust'
       ? Number(movementForm.new_quantity)
       : movementForm.type === 'in'
         ? selectedItem.current_quantity + quantity
-        : Math.max(0, selectedItem.current_quantity - quantity);
+        : selectedItem.current_quantity - quantity;
     setIsSubmittingMovement(true);
     try {
+      const fingerprint = JSON.stringify([selectedItem.id, movementForm]);
+      if (movementRequest.current?.fingerprint !== fingerprint) {
+        movementRequest.current = { fingerprint, key: crypto.randomUUID(), expectedQuantity: selectedItem.current_quantity };
+      }
       await onAddMovement({
+        requestKey: movementRequest.current.key,
+        expectedQuantity: movementRequest.current.expectedQuantity,
         item_id: selectedItem.id,
         type: movementForm.type,
         quantity: movementForm.type === 'adjust' ? undefined : quantity,
@@ -278,10 +295,14 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
         notes: movementForm.notes || undefined
       });
       setShowMovementForm(false);
+      movementRequest.current = null;
       setMovementForm({
         type: 'in', quantity: 0, new_quantity: 0, unit: selectedItem.unit || 'kg',
         reason: '', date: new Date().toISOString().split('T')[0], notes: ''
       });
+    } catch (error: any) {
+      showError(error?.message || 'No se pudo registrar el movimiento.');
+      if (error?.code === '40001') movementRequest.current = null;
     } finally {
       setIsSubmittingMovement(false);
     }

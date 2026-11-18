@@ -29,7 +29,8 @@ const finish = async (page: Page, id: string) => {
   return (await snapshot(page)).results[id];
 };
 const draft = () => { const { id, ...session } = structuredClone(scopeSession); return { ...session, activityBlocks: session.activityBlocks!.map(({ id, ...block }) => block) }; };
-const movement = { item_id: 'item', type: 'entrada', quantity: 3, new_quantity: 5 };
+const movement = { item_id: 'item', type: 'in', quantity: 3, new_quantity: 5,
+  requestKey: 'inventory-key', expectedQuantity: 2, reason: 'Fixture', unit: 'kg', date: '2026-11-17' };
 const business = { operation: 'cancel_reservation', sessionId: 'session', studentId: 'student-mesa',
   requestKey: 'business-key', expectedRevision: 7, reason: 'Explicit correction' };
 let server: ViteDevServer;
@@ -90,7 +91,18 @@ test.beforeEach(async ({ page }) => {
         response.data = request.single ? selected[0] || null : selected;
       }
     } else if (!error && request.kind === 'rpc') {
-      if (request.name === 'reverse_gift_card_session') {
+      if (request.name === 'record_inventory_movement') {
+        const replay = backend.receipts.get(request.args.p_request_id);
+        if (replay) response.data = replay;
+        else {
+          const item = backend.rows.inventory_items.find(row => row.id === request.args.p_item_id)!;
+          item.current_quantity += request.args.p_quantity;
+          response.data = { id: request.args.p_request_id, item_id: item.id, new_quantity: item.current_quantity };
+          backend.rows.inventory_movements.push(response.data);
+          backend.receipts.set(request.args.p_request_id, response.data);
+          backend.mutations.push(structuredClone(request));
+        }
+      } else if (request.name === 'reverse_gift_card_session') {
         response.data = { id: request.args.p_gift_card_id, sede_id: 'sede-a', num_classes: 3, sessions_used: 0 };
         backend.mutations.push(structuredClone(request));
       } else if (['save_session_reservation', 'save_session_attendance', 'cancel_session_reservation'].includes(request.name)) {
@@ -191,7 +203,7 @@ const staleAfter = async (page: Page, name: string, args: any[], heldLabel: stri
 };
 
 const delayed: Array<[string, any[], string]> = [
-  ['addInventoryMovement', [movement], 'inventory_movements.insert'],
+  ['addInventoryMovement', [movement], 'record_inventory_movement'],
   ['deleteTeacher', ['teacher'], 'sessions.update.teacher_id'],
   ['reverseGiftCardSession', ['', 'session', 'student-mesa'], 'session_students.select'],
   ['addSession', [draft()], 'save_session_reservation'],
@@ -212,7 +224,7 @@ for (const [heldLabel, change] of [['save_session_reservation', 'actor-return'],
   });
 }
 for (const [name, args, heldLabel] of [
-  ['addInventoryMovement', [movement], 'inventory_items.update'],
+  ['addInventoryMovement', [movement], 'record_inventory_movement'],
   ['deleteInventoryItem', ['item'], 'inventory_items.delete'],
   ['deleteTeacher', ['teacher'], 'sessions.update.teacher_substitute_id'],
   ['deleteTeacher', ['teacher'], 'teachers.delete'],
@@ -233,7 +245,7 @@ test('valid scope preserves inventory quantity and parallel teacher unlink/delet
   expect(await finish(page, await start(page, 'deleteTeacher', ['teacher']))).toMatchObject({ ok: true });
   expect(backend.rows.teachers).toEqual([]);
   expect(backend.rows.sessions[0]).toMatchObject({ teacher_id: null, teacher_substitute_id: null });
-  expect(backend.calls.map(label)).toEqual(['inventory_movements.insert', 'inventory_items.update', 'refresh',
+  expect(backend.calls.map(label)).toEqual(['record_inventory_movement', 'refresh',
     'sessions.update.teacher_id', 'sessions.update.teacher_substitute_id', 'teachers.delete']);
 });
 

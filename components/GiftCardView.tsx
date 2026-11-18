@@ -1,3 +1,4 @@
+import { getGiftCardLifecycle, type GiftCardLifecycle } from '../utils/recordPresentation';
 import React, { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
@@ -72,11 +73,11 @@ const statusMeta: Record<NonNullable<GiftCard['status']>, { label: string; class
   cancelled: { label: 'Anulado', className: 'bg-[#F7E3DF] text-[#9C4235]' }
 };
 
-type GiftCardTab = 'active' | 'archived';
-type GiftCardLifecycle = 'active' | 'consumed' | 'expired' | 'cancelled';
+type GiftCardTab = 'pending' | 'active' | 'archived';
 type DurationFilter = 'all' | 'missing' | number;
 
 const lifecycleMeta: Record<GiftCardLifecycle, { label: string; className: string }> = {
+  pending: statusMeta.pending,
   active: { label: 'Activo', className: 'bg-[#E7F0E8] text-[#47704D]' },
   consumed: { label: 'Consumido', className: 'bg-[#E3EDF6] text-[#2B5C86]' },
   expired: { label: 'Caducado', className: 'bg-[#F7E3DF] text-[#9C4235]' },
@@ -92,16 +93,7 @@ const getEffectiveExpiryDate = (card: GiftCard) => {
   return baseDate && card.validityMonths ? addMonths(baseDate, card.validityMonths) : undefined;
 };
 
-const getLifecycleStatus = (card: GiftCard, today: string): GiftCardLifecycle => {
-  if (card.status === 'consumed' || card.consumedAt) return 'consumed';
-  if (card.status === 'cancelled') return 'cancelled';
-  // The server balance is net of reversals; historical movements are not a current balance.
-  const hasFullConsumption = card.status === 'exhausted'
-    || (card.sessionsUsed || 0) >= card.numClasses;
-  if (hasFullConsumption) return 'consumed';
-  const expiryDate = getEffectiveExpiryDate(card);
-  return card.status === 'expired' || (expiryDate ? expiryDate < today : false) ? 'expired' : 'active';
-};
+const getLifecycleStatus = (card: GiftCard, today: string): GiftCardLifecycle => getGiftCardLifecycle(card, today, getEffectiveExpiryDate(card));
 
 const getFirstConsumptionDate = (card: GiftCard) => card.consumedAt || card.movements
   ?.filter(movement => movement.type === 'redeem' && movement.sessionsDelta > 0)
@@ -202,10 +194,10 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
   }, [giftCards, today]);
 
   const tabCounts = useMemo(() => {
-    const counts: Record<GiftCardTab, number> = { active: 0, archived: 0 };
+    const counts: Record<GiftCardTab, number> = { pending: 0, active: 0, archived: 0 };
     giftCards.forEach(card => {
-      if (lifecycleByCard[card.id] === 'active') counts.active += 1;
-      else counts.archived += 1;
+      const lifecycle = lifecycleByCard[card.id];
+      counts[lifecycle === 'pending' || lifecycle === 'active' ? lifecycle : 'archived'] += 1;
     });
     return counts;
   }, [giftCards, lifecycleByCard]);
@@ -213,8 +205,9 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
   const filteredGiftCards = useMemo(() => {
     const query = normalizeSearchValue(searchQuery);
     return giftCards.filter(card => {
-      const isActive = lifecycleByCard[card.id] === 'active';
-      if (activeTab === 'active' ? !isActive : isActive) return false;
+      const lifecycle = lifecycleByCard[card.id];
+      const cardTab = lifecycle === 'pending' || lifecycle === 'active' ? lifecycle : 'archived';
+      if (activeTab !== cardTab) return false;
       if (query && !normalizeSearchValue(card.buyer || '').includes(query)) return false;
       if (durationFilter === 'missing' && card.validityMonths !== undefined) return false;
       if (typeof durationFilter === 'number' && card.validityMonths !== durationFilter) return false;
@@ -302,6 +295,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
         if (Object.keys(updates).length) await onUpdateGiftCard(editingCard.id, updates);
       } else {
         await onAddGiftCard({ ...cardData, recipientStudentId: form.recipientStudentId, validityMonths: form.validityMonths, paymentStatus: form.paymentStatus });
+        setActiveTab(form.paymentStatus === 'paid' ? 'active' : 'pending');
       }
       setShowModal(false);
     } catch (error) {
@@ -402,7 +396,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
              </label>
            </div>
            <div className="flex gap-2 overflow-x-auto border-b border-[#DDBFA4] pb-0 no-scrollbar" role="tablist" aria-label="Estado de tarjetas">
-              {(['active', 'archived'] as GiftCardTab[]).map(tab => <button key={tab} type="button" onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`min-h-9 shrink-0 border-b-2 px-3 text-[11px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'border-brand text-brand' : 'border-transparent text-neutral-textHelper hover:text-brand'}`}>{tab === 'active' ? 'Activos' : 'Archivados'} <span className="ml-1 opacity-70">{tabCounts[tab]}</span></button>)}
+              {(['pending', 'active', 'archived'] as GiftCardTab[]).map(tab => <button key={tab} type="button" onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`min-h-9 shrink-0 border-b-2 px-3 text-[11px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'border-brand text-brand' : 'border-transparent text-neutral-textHelper hover:text-brand'}`}>{tab === 'pending' ? 'Pendientes' : tab === 'active' ? 'Activos' : 'Archivados'} <span className="ml-1 opacity-70">{tabCounts[tab]}</span></button>)}
            </div>
          </section>
          <section className="overflow-hidden rounded-[16px] border border-[#E8D9CC] bg-white"><div className="hidden grid-cols-[minmax(220px,1.6fr)_minmax(100px,.7fr)_minmax(120px,.8fr)_minmax(160px,.9fr)_auto] gap-4 border-b border-[#EDE2D8] bg-[#F8EEE5] px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-[#8B6B5E] md:grid"><span>Comprador / destinatario</span><span>Experiencia</span><span>Saldo</span><span>Estado</span><span></span></div>{filteredGiftCards.length === 0 ? <div className="py-14 text-center"><p className="text-[14px] font-semibold text-[#3F2E27]">No hay tarjetas que coincidan</p><p className="ui-secondary mt-1">Prueba a cambiar la búsqueda, duración o pestaña activa.</p></div> : filteredGiftCards.map(card => <GiftCardItem key={card.id} card={card} lifecycleStatus={lifecycleByCard[card.id]} onEdit={handleEditClick} />)}</section>

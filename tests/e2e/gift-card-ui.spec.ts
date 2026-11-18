@@ -52,7 +52,19 @@ const fillNew = async (page: Page) => {
   await page.getByLabel('Teléfono', { exact: true }).fill('600000000');
   await page.getByLabel('Email', { exact: true }).fill('buyer@example.test');
 };
-const open = (page: Page, recipient: string) => page.getByRole('button').filter({ hasText: recipient }).click();
+const open = async (page: Page, recipient: string) => {
+  if (recipient === 'Pago pendiente') await page.getByRole('tab', { name: /Pendientes/ }).click();
+  await page.getByRole('button').filter({ hasText: recipient }).click();
+};
+
+test('pending cards are separated from active cards and retain their pending label', async ({ page }) => {
+  const row = page.getByRole('button').filter({ hasText: 'Pago pendiente' });
+  await expect(row).toHaveCount(0);
+  await page.getByRole('tab', { name: /Pendientes/ }).click();
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('Pendiente');
+  await expect(row).not.toContainText('Activo');
+});
 const protectedFields = ['status', 'paymentStatus', 'sessionsUsed', 'sessionsRemaining', 'consumedAt', 'activatedAt', 'expiryDate'];
 
 test('name/email never auto-select or auto-create a recipient, even with duplicate names', async ({ page }) => {

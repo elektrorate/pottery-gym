@@ -375,6 +375,8 @@ export type GlazeFinish = 'mate' | 'satinado' | 'brillo';
 
 export interface InventoryMovement {
   id: string;
+  requestKey?: string;
+  expectedQuantity?: number;
   item_id: string;
   type: MovementType;
   quantity?: number;

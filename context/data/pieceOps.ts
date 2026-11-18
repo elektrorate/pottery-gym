@@ -17,7 +17,7 @@ export const addPiece = async (ctx: OpsContext, newPiece: Omit<CeramicPiece, 'id
         const { data, error } = await withTimeout('pieces.insert',
             supabase.from('pieces').insert(payload).select().single()
         );
-        if (error) { showError(`No se pudo crear la pieza. ${error.message || ''}`); return; }
+        if (error) throw error;
 
         // IMMEDIATE optimistic UI update
         if (data) {
@@ -31,9 +31,10 @@ export const addPiece = async (ctx: OpsContext, newPiece: Omit<CeramicPiece, 'id
             ctx.setPieces(prev => [newPieceWithId, ...prev]);
         }
         // Background reload (UI already has the piece)
-        ctx.safeReload();
+        void ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
         showError(`No se pudo crear la pieza. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+        throw err;
     }
 };
 
@@ -44,21 +45,22 @@ export const updatePiece = async (ctx: OpsContext, id: string, updates: Partial<
 
     const payload: Record<string, any> = {
         owner_name: updates.owner, description: updates.description, status: updates.status,
-        glaze_type: updates.glazeType || null, delivery_date: updates.deliveryDate || null,
-        notes: updates.notes || null, extra_commentary: updates.extraCommentary || null
+        glaze_type: updates.glazeType === undefined ? undefined : updates.glazeType || null,
+        delivery_date: updates.deliveryDate === undefined ? undefined : updates.deliveryDate || null,
+        notes: updates.notes === undefined ? undefined : updates.notes || null,
+        extra_commentary: updates.extraCommentary === undefined ? undefined : updates.extraCommentary || null
     };
     Object.keys(payload).forEach(k => { if (payload[k] === undefined) delete payload[k]; });
     try {
         const { error } = await withTimeout('pieces.update', supabase.from('pieces').update(payload).eq('id', id));
         if (error) {
-            ctx.setPieces(previousPieces); // REVERT
-            showError(`No se pudo actualizar la pieza. ${error.message || ''}`);
-            return;
+            throw error;
         }
-        ctx.safeReload();
+        void ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
         ctx.setPieces(previousPieces); // REVERT
         showError(`No se pudo actualizar la pieza. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+        throw err;
     }
 };
 

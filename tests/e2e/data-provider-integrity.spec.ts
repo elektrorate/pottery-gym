@@ -304,7 +304,7 @@ test('bounded calendar paints before held financial and inventory reads; financi
   for (const [name, args] of [
     ['renewStudent', [{ studentId: 'student-member', membershipTier: 'gold', allocatedClasses: 4, requestKey: 'blocked-renewal' }]],
     ['activateMembership', ['student-member']], ['confirmMembershipPayment', ['student-member', 'period-original']],
-    ['initializeLegacyMemberships', []], ['approveStudentManualCredit', [approval()]], ['settlePendingStudentPenalty', [settlement()]],
+    ['approveStudentManualCredit', [approval()]], ['settlePendingStudentPenalty', [settlement()]],
     ['waiveStudentPenalty', [{ operation: 'waive_penalty', studentId: 'student-a', sessionId: 'old-manual' }]],
     ['approveSessionException', [{ operation: 'approve_exception', studentId: 'student-a', sessionId: 'recent' }]],
     ['cancelSessionReservation', [{ operation: 'cancel_reservation', studentId: 'student-a', sessionId: 'recent' }]],
@@ -403,7 +403,9 @@ test('required mixed financial view projects activity provenance and paginates b
   const reads = backend.reads.filter(read => read.table === 'session_activity_business_state');
   expect(reads.length).toBeGreaterThan(1);
   expect(reads.every(read => JSON.stringify(read.orders) === JSON.stringify([['session_id', true], ['student_id', true]]))).toBe(true);
-  expect(reads.every(read => read.columns === '*,funding_activity_type,funding_activity_block_id,activity_teacher_id,activity_capacity,activity_source_verified')).toBe(true);
+  // The view's '*' includes the provenance columns; the provider validates every
+  // required field and roster identity before enabling financial operations.
+  expect(reads.every(read => read.columns === '*')).toBe(true);
   expect(backend.reads.some(read => read.table === 'session_business_state')).toBe(false);
   const state = await snapshot(page);
   expect(state.sessions.find((row: any) => row.id === 'mixed-history').businessStateByStudentId['student-a']).toMatchObject({

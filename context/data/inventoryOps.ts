@@ -17,10 +17,10 @@ export const addInventoryItem = async (ctx: OpsContext, item: InventoryItem) => 
     try {
         const { error } = await withTimeout('inventory_items.insert', supabase.from('inventory_items').insert(payload));
         ctx.assertScope();
-        if (error) { showError(`No se pudo crear el item. ${error.message || ''}`); return; }
-        ctx.safeReload();
+        if (error) throw error;
+        void ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
-        showError(`No se pudo crear el item. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+        throw new Error(`No se pudo crear el material. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
     }
 };
 
@@ -43,11 +43,11 @@ export const updateInventoryItem = async (ctx: OpsContext, id: string, updates: 
     try {
         const { error } = await withTimeout('inventory_items.update', supabase.from('inventory_items').update(payload).eq('id', id));
         ctx.assertScope();
-        if (error) { showError(`No se pudo actualizar el item. ${error.message || ''}`); return; }
+        if (error) throw error;
         ctx.setInventoryItems(prev => prev.map(i => i.id === id ? { ...i, ...updates } : i));
-        ctx.safeReload();
+        void ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
-        showError(`No se pudo actualizar el item. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+        throw new Error(`No se pudo actualizar el material. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
     }
 };
 
@@ -70,44 +70,33 @@ export const deleteInventoryItem = async (ctx: OpsContext, id: string) => {
     try {
         const { error } = await withTimeout('inventory_items.delete', supabase.from('inventory_items').delete().eq('id', id));
         ctx.assertScope();
-        if (error) { showError(`No se pudo eliminar el item. ${error.message || ''}`); ctx.safeReload(); return; }
+        if (error) { showError(`No se pudo eliminar el item. ${error.message || ''}`); void ctx.safeReload().catch(() => undefined); return; }
     } catch (err: any) {
         showError(`No se pudo eliminar el item. ${err?.message || ''}`);
         ctx.assertScope();
-        ctx.safeReload();
+        void ctx.safeReload().catch(() => undefined);
     }
 };
 
 export const addInventoryMovement = async (ctx: OpsContext, movement: Omit<InventoryMovement, 'id'>) => {
     ctx.assertScope();
-    const payload: any = {
-        inventory_item_id: movement.item_id, item_id: movement.item_id,
-        type: movement.type, quantity: movement.quantity,
-        new_quantity: movement.new_quantity, unit: movement.unit || null,
-        reason: movement.reason || null, date: movement.date || null,
-        notes: movement.notes || null,
-    };
-    if (ctx.sedeId) payload.sede_id = ctx.sedeId;
-    try {
-        const { error } = await withTimeout('inventory_movements.insert', supabase.from('inventory_movements').insert(payload));
-        ctx.assertScope();
-        if (error) { showError(`No se pudo registrar el movimiento. ${error.message || ''}`); return; }
-        if (movement.new_quantity !== undefined) {
-            const { error: itemError } = await withTimeout(
-                'inventory_items.quantity_update',
-                supabase.from('inventory_items').update({ current_quantity: movement.new_quantity }).eq('id', movement.item_id)
-            );
-            ctx.assertScope();
-            if (itemError) {
-                showError(`El movimiento se registró, pero no se pudo actualizar la existencia. ${itemError.message || ''}`);
-                return;
-            }
-            ctx.setInventoryItems(prev => prev.map(item =>
-                item.id === movement.item_id ? { ...item, current_quantity: movement.new_quantity! } : item
-            ));
-        }
-        ctx.safeReload();
-    } catch (err: any) {
-        showError(`No se pudo registrar el movimiento. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+    if (!movement.requestKey || !Number.isFinite(movement.expectedQuantity)) throw new Error('Recarga el material antes de registrar el movimiento.');
+    const { data, error } = await withTimeout('inventory.record_movement', supabase.rpc('record_inventory_movement', {
+        p_request_id: movement.requestKey, p_item_id: movement.item_id, p_type: movement.type,
+        p_quantity: movement.type === 'adjust' ? null : movement.quantity,
+        p_new_quantity: movement.type === 'adjust' ? movement.new_quantity : null,
+        p_unit: movement.unit, p_reason: movement.reason, p_date: movement.date,
+        p_notes: movement.notes || null, p_expected_quantity: movement.expectedQuantity
+    }));
+    ctx.assertScope();
+    if (error) {
+        if (error.code === '40001') void ctx.safeReload().catch(() => undefined);
+        throw error;
     }
+    if (!data || data.id !== movement.requestKey || data.item_id !== movement.item_id || !Number.isFinite(Number(data.new_quantity))) {
+        throw new Error('No se pudo confirmar el movimiento. Reintenta los mismos datos.');
+    }
+    ctx.setInventoryItems(prev => prev.map(item => item.id === data.item_id ? { ...item, current_quantity: Number(data.new_quantity) } : item));
+    ctx.setInventoryMovements(prev => [data, ...prev.filter(row => row.id !== data.id)]);
+    void ctx.safeReload().catch(() => undefined);
 };

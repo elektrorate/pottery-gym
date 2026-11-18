@@ -1,3 +1,4 @@
+import { sessionBusinessErrorMessage } from '../utils/recordPresentation';
 import { showError } from '../context/toast';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -430,7 +431,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       if (rolledBack && error?.code === '40001' && attempt.id) {
         setRefreshConflict({ kind, id: attempt.id, revision });
       }
-      setSaveError(`${error?.message || 'No se pudo guardar la sesión.'}${rolledBack
+      setSaveError(`${sessionBusinessErrorMessage(error)}${rolledBack
         ? error.code === '40001' ? ' La sesión cambió. Revisa los datos recargados antes de guardar.' : ''
         : ' Resultado sin confirmar. Reintenta los mismos datos antes de editar o cerrar.'}`);
     } finally {

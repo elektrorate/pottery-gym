@@ -13,10 +13,10 @@ export const addTeacher = async (ctx: OpsContext, newTeacher: Omit<Teacher, 'id'
     try {
         const { error } = await withTimeout('teachers.insert', supabase.from('teachers').insert(payload));
         ctx.assertScope();
-        if (error) { showError(`No se pudo crear el profesor. ${error.message || ''}`); return; }
-        ctx.safeReload();
+        if (error) throw error;
+        void ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
-        showError(`No se pudo crear el profesor. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+        throw new Error(`No se pudo crear el profesor. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
     }
 };
 
@@ -31,11 +31,11 @@ export const updateTeacher = async (ctx: OpsContext, id: string, updates: Partia
     try {
         const { error } = await withTimeout('teachers.update', supabase.from('teachers').update(payload).eq('id', id));
         ctx.assertScope();
-        if (error) { showError(`No se pudo actualizar el profesor. ${error.message || ''}`); return; }
+        if (error) throw error;
         ctx.setTeachers(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
-        ctx.safeReload();
+        void ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
-        showError(`No se pudo actualizar el profesor. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
+        throw new Error(`No se pudo actualizar el profesor. ${err?.message || 'Conexión lenta, intenta de nuevo.'}`);
     }
 };
 
@@ -54,6 +54,6 @@ export const deleteTeacher = async (ctx: OpsContext, id: string) => {
     } catch (err: any) {
         showError(`${err.message || 'Error inesperado al eliminar profesor.'}`);
         ctx.assertScope();
-        ctx.safeReload();
+        void ctx.safeReload().catch(() => undefined);
     }
 };
