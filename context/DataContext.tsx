@@ -489,7 +489,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             if (generation !== loadGenerationRef.current || scopeRef.current !== scope || !activeRef.current) throw error;
             businessReadyRef.current = false;
             setBusinessDataReady(false);
-            // Keep previously verified data visible, but writes remain disabled.
+            // Critical financial/authorization snapshots must fail closed. Preserve pending
+            // operation intents separately, but never display stale balances as current.
+            studentsRef.current = []; sessionsRef.current = []; giftCardsRef.current = [];
+            setStudents([]); setSessions([]); setGiftCards([]);
             ownedSedeIdsRef.current = [];
             setOwnedSedeIds([]);
             console.error('Supabase load error', error);
