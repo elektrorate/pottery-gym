@@ -19,7 +19,7 @@ const AgendaPage: React.FC = () => {
   const activities = useMemo<Activity[]>(() => [...localActivities, ...sessions.map(session => ({
     id: 'session:' + session.id, sessionId: session.id,
     title: session.workshopName || session.classType, date: session.date, time: session.startTime,
-    description: [session.startTime + '–' + session.endTime, session.students.length ? 'Alumnos: ' + session.students.join(', ') : '', session.privateReason || ''].filter(Boolean).join(' · ')
+    description: 'Clase de ' + session.startTime + ' a ' + session.endTime
   }))], [localActivities, sessions]);
   const [selectedDate, setSelectedDate] = useState(today);
   const [dayModalOpen, setDayModalOpen] = useState(false);
