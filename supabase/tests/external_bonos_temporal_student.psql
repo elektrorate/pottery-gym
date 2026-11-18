@@ -1,0 +1,94 @@
+\set ON_ERROR_STOP on
+-- Runs against a disposable database with all migrations applied (never a live project).
+set client_min_messages = warning;
+create or replace function pg_temp.check(ok boolean, label text) returns void language plpgsql as $$
+begin if not coalesce(ok, false) then raise exception 'FAIL: %', label; end if; raise notice 'PASS: %', label; end $$;
+create or replace function pg_temp.rejects(sql text, expected text, label text) returns void language plpgsql as $$
+declare msg text; state text;
+begin
+  begin execute sql; exception when others then get stacked diagnostics msg = message_text, state = returned_sqlstate;
+    if msg ~* expected or state = expected then raise notice 'PASS: %', label; return; end if;
+    raise exception 'FAIL: % (unexpected error % %)', label, state, msg;
+  end;
+  raise exception 'FAIL: % (no error)', label;
+end $$;
+
+insert into auth.users(id,email) values ('00000000-0000-0000-0000-0000000000a1','owner@example.invalid');
+insert into public.profiles(id,email,role) values ('00000000-0000-0000-0000-0000000000a1','owner@example.invalid','tallerista');
+insert into public.sedes(id,name,slug,owner_id,is_active) values
+  ('30000000-0000-0000-0000-0000000000a1','api sede','bonos-api','00000000-0000-0000-0000-0000000000a1',true),
+  ('30000000-0000-0000-0000-0000000000a2','closed sede','bonos-closed','00000000-0000-0000-0000-0000000000a1',false);
+
+set client_min_messages = notice;
+-- service_role is the only grantee (the edge function uses the service role key).
+set role service_role;
+select pg_temp.check(true, 'service_role session');
+create temp table created as
+select * from public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1',
+  jsonb_build_object('code','test-cr-0001','buyer','Rolando Diaz','recipient','Julian Diaz','buyer_phone','+34600000000',
+    'dedication','Feliz cumpleaños','validity_months',12,'num_classes',1,'type','modelado','payment_status','pending',
+    'extra_commentary','Duración de la clase: 2.5 h','external_reference','TEST-CR-0001',
+    'external_metadata', jsonb_build_object('source','bono-gift-card','classDurationHours',2.5)),
+  jsonb_build_object('full_name','Julian Diaz','phone','+34611111111','notes','Alumno temporal creado por bono-gift-card (TEST-CR-0001)'));
+reset role;
+
+select pg_temp.check((select count(*) = 1 from created), 'create returns one gift card');
+select pg_temp.check((select code = 'TEST-CR-0001' and validity_months = 12 and status = 'pending' and payment_status = 'pending'
+  and sessions_used = 0 and expiry_date = (activated_at + interval '12 months')::date and buyer_phone = '+34600000000'
+  and dedication = 'Feliz cumpleaños' and external_metadata->>'source' = 'bono-gift-card' from created), 'card fields, 12 months and server expiry');
+select pg_temp.check((select s.student_category = 'temporal' and s.sede_id = c.sede_id and s.full_name = 'Julian Diaz'
+  and s.phone = '+34611111111' and s.notes like '%TEST-CR-0001%' and s.archived_at is null and s.classes_remaining = 0
+  and s.bonos_asignados = 0 and s.current_membership_period_id is null
+  from created c join public.students s on s.id = c.recipient_student_id), 'new temporal student linked by id, active, no legacy balance');
+
+-- Duplicate code: 23505 and no orphan student.
+create temp table before_dup as select count(*) n from public.students;
+set role service_role;
+select pg_temp.rejects($q$select public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1',
+  '{"code":"TEST-CR-0001","buyer":"X","recipient":"Otra Persona","validity_months":12,"num_classes":1}'::jsonb,
+  '{"full_name":"Otra Persona"}'::jsonb)$q$, '23505', 'duplicate code rejected with 23505');
+-- Invalid validity: rejected and rolled back.
+select pg_temp.rejects($q$select public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1',
+  '{"code":"TEST-CR-0002","buyer":"X","recipient":"Otra Persona","validity_months":4,"num_classes":1}'::jsonb,
+  '{"full_name":"Otra Persona"}'::jsonb)$q$, 'validity', 'validity 4 rejected');
+-- Inactive sede and missing recipient.
+select pg_temp.rejects($q$select public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a2',
+  '{"code":"TEST-CR-0003","buyer":"X","recipient":"Otra","validity_months":12,"num_classes":1}'::jsonb, '{}'::jsonb)$q$,
+  'sede no disponible', 'inactive sede rejected');
+select pg_temp.rejects($q$select public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1',
+  '{"code":"TEST-CR-0004","buyer":"X","validity_months":12,"num_classes":1}'::jsonb, '{}'::jsonb)$q$,
+  'recipient is required', 'missing recipient rejected');
+reset role;
+select pg_temp.check((select count(*) from public.students) = (select n from before_dup), 'failed creates leave no orphan student');
+select pg_temp.check(not exists (select 1 from public.gift_cards where code in ('TEST-CR-0002','TEST-CR-0003','TEST-CR-0004')), 'failed creates leave no card');
+
+-- 6 and 12 still OK; 3/6/8 unaffected; direct insert without person still rejected.
+set role service_role;
+select pg_temp.check((select validity_months = 6 from public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1',
+  '{"buyer":"X","recipient":"Sin Codigo","validity_months":6,"num_classes":2,"type":"torno"}'::jsonb, '{}'::jsonb)), 'validity 6 + generated code');
+reset role;
+select pg_temp.check((select code ~ '^CR-[0-9A-F]{10}$' from public.gift_cards where recipient = 'Sin Codigo'), 'generated code keeps CR- format');
+select pg_temp.rejects($q$insert into public.gift_cards(sede_id,buyer,recipient,num_classes,type,validity_months)
+  values ('30000000-0000-0000-0000-0000000000a1','X','Julian Diaz',1,'modelado',12)$q$,
+  'names are not identities', 'names are not identities (direct insert without student id)');
+
+-- Only service_role may execute.
+set role authenticated;
+select pg_temp.rejects($q$select public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1','{}'::jsonb,'{}'::jsonb)$q$,
+  'permission denied', 'authenticated cannot execute');
+reset role;
+set role anon;
+select pg_temp.rejects($q$select public.external_create_gift_card_with_temporal_student('30000000-0000-0000-0000-0000000000a1','{}'::jsonb,'{}'::jsonb)$q$,
+  'permission denied', 'anon cannot execute');
+reset role;
+
+-- Cancel (bonos cannot be deleted) keeps the student and card visible as cancelled.
+set role service_role;
+select pg_temp.check((select status = 'cancelled' from public.external_cancel_gift_card('30000000-0000-0000-0000-0000000000a1',
+  (select id from created))), 'external cancel sets cancelled');
+reset role;
+select pg_temp.rejects($q$delete from public.gift_cards where code = 'TEST-CR-0001'$q$, 'cancelled, not deleted', 'gift card delete blocked');
+select pg_temp.rejects($q$delete from public.students where id = (select recipient_student_id from created)$q$, 'foreign key|violates', 'student delete blocked while card exists');
+update public.students set archived_at = (now() at time zone 'Europe/Madrid')::date where id = (select recipient_student_id from created);
+select pg_temp.check((select archived_at is not null from public.students where id = (select recipient_student_id from created)), 'temporal student can be archived after cancel');
+select 'ALL EXTERNAL BONOS TESTS PASSED' as result;

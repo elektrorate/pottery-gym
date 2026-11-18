@@ -337,7 +337,7 @@ export interface GiftCard {
   recipientStudentId?: string;
   numClasses: number;
   type: 'modelado' | 'torno';
-  validityMonths?: 3 | 6 | 8;
+  validityMonths?: 3 | 6 | 8 | 12;
   activatedAt?: string;
   issuedDate?: string;
   expiryDate?: string;
