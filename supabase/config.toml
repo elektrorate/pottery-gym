@@ -5,3 +5,9 @@ verify_jwt = false
 
 [functions.bonos-write]
 verify_jwt = false
+
+[functions.asistonto-read]
+verify_jwt = false
+
+[functions.asistonto-write]
+verify_jwt = false
