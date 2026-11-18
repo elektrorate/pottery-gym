@@ -197,7 +197,7 @@ export const mapGiftCardRowToModel = (row: any): GiftCard => {
         recipientStudentId: row.recipient_student_id || undefined,
         numClasses,
         type: row.type === 'torno' ? 'torno' : 'modelado',
-        validityMonths: [3, 6, 8].includes(Number(row.validity_months)) ? Number(row.validity_months) as 3 | 6 | 8 : undefined,
+        validityMonths: [3, 6, 8, 12].includes(Number(row.validity_months)) ? Number(row.validity_months) as 3 | 6 | 8 | 12 : undefined,
         activatedAt: row.activated_at || undefined,
         issuedDate: row.scheduled_date || undefined,
         expiryDate,

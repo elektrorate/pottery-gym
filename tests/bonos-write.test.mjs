@@ -62,6 +62,10 @@ beforeEach(() => {
     async rpc(name, args) {
       harness.rpcCalls.push({ name, args });
       if (harness.rpcError) return { data: null, error: harness.rpcError };
+      if (name === 'external_create_gift_card_with_temporal_student') {
+        harness.card = { ...harness.card, ...args.p_card, recipient_student_id: '20000000-0000-0000-0000-0000000000aa' };
+        return { data: harness.card, error: null };
+      }
       if (args.p_sede_id !== harness.card.sede_id || args.p_gift_card_id !== cardId) return { data: null, error: { message: 'No autorizado para este bono' } };
       return { data: harness.card, error: null };
     }
@@ -94,8 +98,8 @@ test('method/preflight do not execute writes and allow explicit key header', asy
   assert.equal((await handler(new Request('http://offline.invalid'))).status, 405);
   assert.equal(harness.clients, 0);
 });
-test('create requires explicit authorized identity without matching/creating any person', async () => {
-  assert.equal((await send('create', create({ recipientStudentId: undefined }))).status, 400);
+test('create with an explicit identity validates the API sede and never matches by name', async () => {
+  assert.equal((await send('create', create({ recipientStudentId: 'not-a-uuid' }))).status, 400);
   assert.equal((await send('create', create({ recipientStudentId: otherStudent }))).status, 403);
   assert.equal(harness.writes.length, 0);
   assert.equal((await send('create', create())).status, 201);
@@ -237,4 +241,45 @@ test('legacy public fields stay compatible pending privacy matrix; duplicate con
   harness.writeError = { code: '23505', message: 'duplicate code' };
   assert.equal((await send('create', create({ code: 'existing' }))).status, 409);
   assert.equal(harness.writes.length, 2);
+});
+test('create without identity creates a NEW temporal student atomically via RPC (no name lookup)', async () => {
+  for (const missing of [undefined, null, '']) {
+    harness.rpcCalls = []; harness.calls = []; harness.writes = [];
+    const response = await send('create', create({ recipientStudentId: missing, code: 'cr-181126-test', validityMonths: 12,
+      recipientPhone: '+34611111111', buyerPhone: '+34600000000', dedication: 'Feliz cumpleaños',
+      metadata: { source: 'bono-gift-card', classDurationHours: 2.5 } }));
+    assert.equal(response.status, 201);
+    const body = await response.json();
+    assert.equal(body.temporalStudentCreated, true);
+    assert.equal(body.data.recipientStudentId, '20000000-0000-0000-0000-0000000000aa');
+    assert.equal(harness.rpcCalls.length, 1);
+    const { name, args } = harness.rpcCalls[0];
+    assert.equal(name, 'external_create_gift_card_with_temporal_student');
+    assert.equal(args.p_sede_id, sede);
+    assert.equal(args.p_card.code, 'CR-181126-TEST');
+    assert.equal(args.p_card.validity_months, 12);
+    assert.equal(args.p_card.buyer_phone, '+34600000000');
+    assert.ok(!('recipient_student_id' in args.p_card));
+    for (const field of ['sessions_used', 'status', 'expiry_date']) assert.ok(!(field in args.p_card));
+    assert.deepEqual(args.p_student, { full_name: 'Alex Perez', phone: '+34611111111',
+      notes: 'Alumno temporal creado automáticamente desde bono-gift-card (bono CR-181126-TEST).' });
+    assert.equal(harness.writes.length, 0);
+    assert.ok(harness.calls.every(call => call.table === 'sedes'), 'no students lookup by name');
+  }
+});
+test('temporal create: duplicate code is 409, validity 12 accepted, other validities rejected before RPC', async () => {
+  harness.rpcError = { code: '23505', message: 'duplicate key value violates unique constraint "gift_cards_code_unique_idx"' };
+  assert.equal((await send('create', create({ recipientStudentId: undefined, code: 'dup' }))).status, 409);
+  harness.rpcError = { code: 'P0001', message: 'No autorizado: sede no disponible' };
+  assert.equal((await send('create', create({ recipientStudentId: undefined }))).status, 403);
+  harness.rpcError = undefined;
+  const before = harness.rpcCalls.length;
+  for (const validityMonths of [4, 9, 11, 13, 24]) {
+    assert.equal((await send('create', create({ recipientStudentId: undefined, validityMonths }))).status, 400);
+  }
+  assert.equal((await send('create', create({ recipientStudentId: undefined, recipientPhone: 123 }))).status, 400);
+  assert.equal(harness.rpcCalls.length, before);
+  assert.equal((await send('create', create({ validityMonths: 12 }))).status, 201);
+  assert.equal(harness.writes.at(-1).insert.validity_months, 12);
+  assert.equal((await send('update', { id: cardId, recipientPhone: '+34' })).status, 400);
 });

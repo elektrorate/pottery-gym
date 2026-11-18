@@ -57,6 +57,8 @@ const getId = (payload: Record<string, unknown>) => {
   return asId(payload.id ?? payload.giftCardId, 'id');
 };
 
+const VALIDITY_MONTHS = [3, 6, 8, 12];
+
 const fieldMap: Record<string, string> = {
   buyer: 'buyer', recipient: 'recipient', recipientStudentId: 'recipient_student_id', buyerPhone: 'buyer_phone', buyerEmail: 'buyer_email',
   recipientEmail: 'recipient_email', dedication: 'dedication', code: 'code', validityMonths: 'validity_months',
@@ -83,7 +85,7 @@ Deno.serve(async (req) => {
     const payload = body.data ?? body.payload ?? {};
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('data must be an object');
     const input = payload as Record<string, unknown>;
-    const allowed = action === 'create' ? Object.keys(fieldMap).concat('paymentStatus')
+    const allowed = action === 'create' ? Object.keys(fieldMap).concat('paymentStatus', 'recipientPhone')
       : action === 'update' ? Object.keys(fieldMap).concat('id', 'giftCardId')
       : ['id', 'giftCardId', ...(action === 'consume' ? ['consumedAt'] : [])];
     for (const field of Object.keys(input)) {
@@ -101,10 +103,11 @@ Deno.serve(async (req) => {
           if (!input[field] || typeof input[field] !== 'object' || Array.isArray(input[field])) throw new Error('metadata must be an object');
           writePayload[column] = input[field];
         } else if (field === 'recipientStudentId') {
+          if (action === 'create' && (input[field] === null || input[field] === '')) continue;
           writePayload[column] = asId(input[field], field);
         } else if (field === 'validityMonths') {
-          const months = asInteger(input[field], field, 3, 8);
-          if (![3, 6, 8].includes(months)) throw new Error('validityMonths must be 3, 6 or 8');
+          const months = asInteger(input[field], field, 3, 12);
+          if (!VALIDITY_MONTHS.includes(months)) throw new Error('validityMonths must be 3, 6, 8 or 12');
           writePayload[column] = months;
         } else if (field === 'numClasses') {
           writePayload[column] = asInteger(input[field], field, 1, 100);
@@ -126,7 +129,11 @@ Deno.serve(async (req) => {
         writePayload.sede_id = auth.sedeId;
         writePayload.buyer = asText(input.buyer, 'buyer');
         writePayload.recipient = asText(input.recipient, 'recipient');
-        recipientId = writePayload.recipient_student_id = asId(input.recipientStudentId, 'recipientStudentId');
+        // Without an explicit person, a NEW temporal student is created atomically
+        // with the card (never matched by name). With an id, the sede check below applies.
+        const hasRecipientId = !(input.recipientStudentId === undefined || input.recipientStudentId === null || input.recipientStudentId === '');
+        if (hasRecipientId) recipientId = writePayload.recipient_student_id = asId(input.recipientStudentId, 'recipientStudentId');
+        else { delete writePayload.recipient_student_id; recipientId = undefined; }
         writePayload.num_classes = asInteger(input.numClasses, 'numClasses', 1, 100);
         writePayload.type = asChoice(input.type ?? 'modelado', 'type', ['modelado', 'torno']);
         writePayload.payment_status = asChoice(input.paymentStatus ?? 'pending', 'paymentStatus', ['pending', 'paid']);
@@ -141,6 +148,23 @@ Deno.serve(async (req) => {
         if ('recipient' in input) recipientId ??= card.recipient_student_id;
         if ('recipient' in input && !recipientId) throw new Error('Explicit recipientStudentId required before editing a legacy recipient');
         // Display edits never clear or infer the existing recipient identity.
+      }
+      if (action === 'create' && !recipientId) {
+        const code = typeof writePayload.code === 'string' ? writePayload.code : undefined;
+        const { data, error } = await auth.client.rpc('external_create_gift_card_with_temporal_student', {
+          p_sede_id: auth.sedeId,
+          p_card: writePayload,
+          p_student: {
+            full_name: writePayload.recipient,
+            phone: asText(input.recipientPhone, 'recipientPhone', false) || null,
+            notes: `Alumno temporal creado automáticamente desde bono-gift-card${code ? ` (bono ${code})` : ''}.`
+          }
+        });
+        if (error) {
+          const status = error.code === '23505' ? 409 : /no autorizado/i.test(error.message) ? 403 : 400;
+          return json({ error: error.message }, status);
+        }
+        return json({ data: publicGiftCard(data), temporalStudentCreated: true }, 201);
       }
       if (recipientId) {
         const { data: student, error } = await auth.client.from('students').select('id')
