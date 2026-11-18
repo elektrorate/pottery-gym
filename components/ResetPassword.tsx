@@ -43,8 +43,8 @@ const ResetPassword: React.FC = () => {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (password.length < 8) {
-      setErrorMessage('La contraseña debe tener al menos 8 caracteres.');
+    if (password.length < 12) {
+      setErrorMessage('La contraseña debe tener al menos 12 caracteres.');
       return;
     }
     if (password !== confirmation) {

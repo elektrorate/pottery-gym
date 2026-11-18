@@ -87,8 +87,8 @@ const TeamView: React.FC = () => {
             showFeedback('error', 'Todos los campos son obligatorios.');
             return;
         }
-        if (createForm.password.length < 6) {
-            showFeedback('error', 'La contraseña debe tener al menos 6 caracteres.');
+        if (createForm.password.length < 12) {
+            showFeedback('error', 'La contraseña debe tener al menos 12 caracteres.');
             return;
         }
 
@@ -308,7 +308,7 @@ const TeamView: React.FC = () => {
                                         type="password"
                                         value={createForm.password}
                                         onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                                        placeholder="Mínimo 6 caracteres"
+                                        placeholder="Mínimo 12 caracteres"
                                         className="w-full min-h-[44px] px-4 py-2.5 rounded-[10px] bg-white border border-neutral-border focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper transition-all"
                                     />
                                 </div>

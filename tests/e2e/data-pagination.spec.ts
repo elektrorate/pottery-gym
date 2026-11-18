@@ -22,6 +22,7 @@ const postgrest = (tables: Tables, options: {
 } = {}) => {
   const calls: Call[] = [];
   const client = createClient('https://pagination.supabase.invalid', 'public-test-key', {
+    db: { retry: false }, // Match the app: retries retain explicit operation intent.
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { fetch: async (input, init) => {
       const url = new URL(String(input));

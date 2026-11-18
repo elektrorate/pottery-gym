@@ -1,3 +1,4 @@
+import { designerStorageKey, type DesignerScope } from './cacheScope';
 import type { GiftCardData } from '../types';
 
 export type LocalGiftCardStatus = 'created' | 'sent' | 'redeemed' | 'cancelled';
@@ -27,8 +28,9 @@ const isRecord = (value: unknown): value is LocalGiftCardRecord => {
     && typeof row.data === 'object';
 };
 
-export const loadLocalHistory = (): LocalGiftCardRecord[] => {
-  if (typeof window === 'undefined') return [];
+export const loadLocalHistory = (scope: DesignerScope): LocalGiftCardRecord[] => {
+  const STORAGE_KEY = designerStorageKey('history', scope);
+  if (typeof window === 'undefined' || !STORAGE_KEY) return [];
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -42,8 +44,9 @@ export const loadLocalHistory = (): LocalGiftCardRecord[] => {
   }
 };
 
-export const saveLocalHistory = (records: LocalGiftCardRecord[]): void => {
-  if (typeof window === 'undefined') return;
+export const saveLocalHistory = (records: LocalGiftCardRecord[], scope: DesignerScope): void => {
+  const STORAGE_KEY = designerStorageKey('history', scope);
+  if (typeof window === 'undefined' || !STORAGE_KEY) return;
 
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, MAX_RECORDS)));

@@ -792,8 +792,8 @@ const SettingsView: React.FC = () => {
                   setPasswordFeedback({ type: 'error', msg: 'Las contraseñas no coinciden.' });
                   return;
                 }
-                if (passwordForm.newPassword.length < 6) {
-                  setPasswordFeedback({ type: 'error', msg: 'La contraseña debe tener al menos 6 caracteres.' });
+                if (passwordForm.newPassword.length < 12) {
+                  setPasswordFeedback({ type: 'error', msg: 'La contraseña debe tener al menos 12 caracteres.' });
                   return;
                 }
                 try {
@@ -818,7 +818,7 @@ const SettingsView: React.FC = () => {
                 <CompactField label="Nueva contraseña">
                   <input required type="password" value={passwordForm.newPassword}
                     onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                    placeholder="Mínimo 6 caracteres" className={inputClass} />
+                    placeholder="Mínimo 12 caracteres" className={inputClass} />
                 </CompactField>
                 <CompactField label="Confirmar contraseña">
                   <input required type="password" value={passwordForm.confirmPassword}

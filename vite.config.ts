@@ -1,30 +1,24 @@
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from 'tailwindcss';
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
+export default defineConfig(() => {
   return {
     server: {
       port: 3000,
-      host: '0.0.0.0',
+      host: '127.0.0.1',
     },
     plugins: [react()],
-    define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
     },
-    // Compiled Tailwind only for the Casa Rosier bonos designer page
-    // (bonos-designer/designer.css); the main app keeps the Tailwind CDN.
+    // Each CSS entry selects its own Tailwind config.
     css: {
       postcss: {
-        plugins: [tailwindcss({ config: path.resolve(__dirname, 'bonos-designer/tailwind.config.cjs') })]
+        plugins: [tailwindcss()]
       }
     },
     build: {

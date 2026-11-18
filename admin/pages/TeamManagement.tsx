@@ -217,8 +217,8 @@ export const TeamManagement: React.FC = () => {
             showToast('Las contraseñas no coinciden', 'error');
             return;
         }
-        if (pwForm.newPassword.length < 6) {
-            showToast('La contraseña debe tener al menos 6 caracteres', 'error');
+        if (pwForm.newPassword.length < 12) {
+            showToast('La contraseña debe tener al menos 12 caracteres', 'error');
             return;
         }
         setPwSaving(true);
@@ -261,8 +261,8 @@ export const TeamManagement: React.FC = () => {
 
             // 2. Update password if provided
             if (editForm.newPassword.trim()) {
-                if (editForm.newPassword.trim().length < 6) {
-                    showToast('Perfil guardado, pero la contraseña necesita mínimo 6 caracteres', 'error');
+                if (editForm.newPassword.trim().length < 12) {
+                    showToast('Perfil guardado, pero la contraseña necesita mínimo 12 caracteres', 'error');
                     setEditMember(null);
                     await loadTeam();
                     setEditSaving(false);
@@ -386,7 +386,7 @@ export const TeamManagement: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input label="Nueva contraseña" type="password" value={pwForm.newPassword}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPwForm({ ...pwForm, newPassword: e.target.value })}
-                        placeholder="Mínimo 6 caracteres" />
+                        placeholder="Mínimo 12 caracteres" />
                     <Input label="Confirmar contraseña" type="password" value={pwForm.confirmPassword}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPwForm({ ...pwForm, confirmPassword: e.target.value })}
                         placeholder="Repite la contraseña" />
@@ -503,7 +503,7 @@ export const TeamManagement: React.FC = () => {
                         <p className="eyebrow mb-3">RESTABLECER CONTRASEÑA</p>
                         <Input label="Nueva contraseña (dejar vacío para no cambiar)" type="password" value={editForm.newPassword}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditForm({ ...editForm, newPassword: e.target.value })}
-                            placeholder="Mínimo 6 caracteres" />
+                            placeholder="Mínimo 12 caracteres" />
                     </div>
                 </div>
             </Modal>

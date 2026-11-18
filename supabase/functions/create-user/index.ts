@@ -29,6 +29,8 @@ const randomSuffix = () => Math.random().toString(36).slice(2, 7);
 serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
     try {
         const authHeader = req.headers.get("Authorization");
         if (!authHeader) return json({ error: "Missing Authorization header" }, 401);
@@ -52,10 +54,13 @@ serve(async (req) => {
             .eq("id", user.id)
             .single();
 
-        if (!callerProfile) return json({ error: "Perfil no encontrado." });
+        if (!callerProfile) return json({ error: "Perfil no encontrado." }, 403);
         if (callerProfile.role !== "super_admin") {
-            return json({ error: "No tienes permisos para crear usuarios." });
+            return json({ error: "No tienes permisos para crear usuarios." }, 403);
         }
+
+        const { data: mfaVerified, error: mfaError } = await supabaseClient.rpc('security_has_aal2');
+        if (mfaError || mfaVerified !== true) return json({ error: 'Verifica tu segundo factor para continuar.', code: 'MFA_REQUIRED' }, 403);
 
         const body = await req.json();
         const { email, password, nombre, role, telefono } = body;
@@ -63,11 +68,10 @@ serve(async (req) => {
         if (!email || !password || !nombre) {
             return json({ error: "Faltan campos obligatorios: email, password, nombre" });
         }
-        if (password.length < 6) {
-            return json({ error: "La contrasena debe tener al menos 6 caracteres" });
+        if (password.length < 12) {
+            return json({ error: "La contrasena debe tener al menos 12 caracteres" });
         }
 
-        console.log(`--- CREATE-USER [${email}] by ${callerProfile.full_name} (super_admin) ---`);
 
         // El caller ya es super_admin, asi que aceptar 'super_admin' en el body no es
         // escalada de privilegios; cualquier otro valor cae a tallerista (comportamiento vivo).
@@ -93,7 +97,7 @@ serve(async (req) => {
         }
 
         // Garantiza el perfil exista aunque el trigger on_auth_user_created no exista.
-        await supabaseAdmin.from("profiles").upsert(
+        const {error: profileWriteError} = await supabaseAdmin.from("profiles").upsert(
             {
                 id: newUser.user.id,
                 email,
@@ -103,6 +107,8 @@ serve(async (req) => {
             },
             { onConflict: "id" }
         );
+
+        if (profileWriteError) { await supabaseAdmin.auth.admin.deleteUser(newUser.user.id); return json({error:'No se pudo crear el perfil.'},500); }
 
         // Auto-creación de la sede: el paso 2 del formulario (WorkshopForm) la rellena después.
         if (dbRole !== "tallerista") {

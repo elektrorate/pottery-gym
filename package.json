@@ -25,10 +25,11 @@
     "staging:dev": "node scripts/local-staging-frontend.mjs",
     "staging:launch": "node scripts/local-staging-launch.mjs",
     "staging:test": "node scripts/local-staging-test.mjs",
-    "staging:stop": "node scripts/local-staging-stop.mjs"
+    "staging:stop": "node scripts/local-staging-stop.mjs",
+    "test:security": "node --test tests/security-permissions.test.mjs tests/security-cache.test.mjs tests/security-edge.test.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.1",
+    "@supabase/supabase-js": "2.119.1",
     "@types/qrcode": "^1.5.6",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
@@ -36,8 +37,8 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "react-router-dom": "^7.13.1",
-    "xlsx": "^0.18.5"
+    "react-router-dom": "7.18.6",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.16",
@@ -46,6 +47,9 @@
     "@vitejs/plugin-react": "^5.0.0",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "6.4.6"
+  },
+  "overrides": {
+    "dompurify": "3.4.18"
   }
 }

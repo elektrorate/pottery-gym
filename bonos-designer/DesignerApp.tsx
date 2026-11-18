@@ -1,5 +1,6 @@
+import { designerStorageKey, clearDesignerCaches, removeUnscopedDesignerCaches, type DesignerScope } from './lib/cacheScope';
 ﻿
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { GiftCardData } from './types';
 import { GiftCardSide } from './components/GiftCardSide';
@@ -54,7 +55,7 @@ import { flushSync } from 'react-dom';
 
 const isSupabaseConfigured = true;
 
-const DRAFT_STORAGE_KEY = 'casa-rosier-gift-card-draft-v3';
+
 
 const todayEs = () => new Date().toLocaleDateString('es-ES');
 
@@ -98,7 +99,9 @@ const initialGiftCardData: GiftCardData = {
   internalContactPhone: ''
 };
 
-const loadDraft = (): GiftCardData => {
+const loadDraft = (scope: DesignerScope): GiftCardData => {
+  const DRAFT_STORAGE_KEY = designerStorageKey('draft', scope);
+  if (!DRAFT_STORAGE_KEY) return { ...initialGiftCardData, creationDate: todayEs() };
   if (typeof window === 'undefined') return { ...initialGiftCardData, creationDate: todayEs() };
 
   try {
@@ -175,9 +178,11 @@ interface GiftCardTemplate {
   updatedAt: string;
 }
 
-const TEMPLATE_STORAGE_KEY = 'casa-rosier-gift-card-templates';
 
-const loadTemplates = (): GiftCardTemplate[] => {
+
+const loadTemplates = (scope: DesignerScope): GiftCardTemplate[] => {
+  const TEMPLATE_STORAGE_KEY = designerStorageKey('templates', scope);
+  if (!TEMPLATE_STORAGE_KEY) return [];
   if (typeof window === 'undefined') return [];
 
   try {
@@ -230,7 +235,7 @@ const EditorSection: React.FC<EditorSectionProps> = ({ title, description, open,
 );
 
 const AdminApp: React.FC = () => {
-  const [data, setData] = useState<GiftCardData>(loadDraft);
+  const [data, setData] = useState<GiftCardData>(() => ({ ...initialGiftCardData, creationDate: todayEs() }));
   const [history, setHistory] = useState<GiftCardRecord[]>([]);
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyStatus, setHistoryStatus] = useState<'all' | GiftCardStatus>('all');
@@ -239,6 +244,8 @@ const AdminApp: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const actorIdRef = useRef<string | null>(null);
+  const [sedeLoading, setSedeLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authBusy, setAuthBusy] = useState(false);
   const [authEmail, setAuthEmail] = useState('');
@@ -249,9 +256,27 @@ const AdminApp: React.FC = () => {
   const [generatedPdf, setGeneratedPdf] = useState<{ fileName: string; blob: Blob } | null>(null);
   const [activeRecordId, setActiveRecordId] = useState<string | null>(null);
   const [activeFormToken, setActiveFormToken] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<GiftCardTemplate[]>(loadTemplates);
+  const [templates, setTemplates] = useState<GiftCardTemplate[]>([]);
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
   const [sedeId, setSedeId] = useState<string | null>(null);
+  const cacheScope: DesignerScope = session?.user.id && sedeId ? { userId: session.user.id, sedeId } : null;
+  const scopeKey = designerStorageKey('identity', cacheScope);
+  const currentScope = useRef(scopeKey);
+  currentScope.current = scopeKey;
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
+  const resetSensitiveState = () => {
+    setData({ ...initialGiftCardData, creationDate: todayEs() }); setTemplates([]); setHistory([]);
+    setGeneratedPdf(null); setActiveRecordId(null); setActiveFormToken(null); setStudents([]);
+    setRecipientStudentId(''); setNotice(null); setShowHistory(false); setExpandedRecordId(null);
+    setAuthPassword(''); setHistoryQuery(''); setDraftSavedAt(null); setHistoryError(null);
+  };
+  useEffect(() => {
+    removeUnscopedDesignerCaches();
+    resetSensitiveState();
+    if (cacheScope) { setData(loadDraft(cacheScope)); setTemplates(loadTemplates(cacheScope)); }
+    setLoadedScope(scopeKey);
+  }, [scopeKey]);
+
   const [students, setStudents] = useState<PotteryStudentOption[]>([]);
   const [recipientStudentId, setRecipientStudentId] = useState('');
   const [paymentStatus, setPaymentStatus] = useState<PotteryPaymentStatus>('pending');
@@ -285,11 +310,16 @@ const AdminApp: React.FC = () => {
     void supabase.auth.getSession().then(({ data: authData, error }) => {
       if (!mounted) return;
       if (error) setAuthError('No se pudo comprobar la sesión.');
+      actorIdRef.current = authData.session?.user.id ?? null;
       setSession(authData.session);
       setAuthLoading(false);
     });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'SIGNED_OUT') { clearDesignerCaches(); resetSensitiveState(); setSedeId(null); setLoadedScope(null); }
+      const nextActor = nextSession?.user.id ?? null;
+      if (nextActor !== actorIdRef.current) { clearDesignerCaches(); resetSensitiveState(); setSedeId(null); setLoadedScope(null); setSedeLoading(Boolean(nextActor)); }
+      actorIdRef.current = nextActor;
       setSession(nextSession);
       setAuthLoading(false);
     });
@@ -302,21 +332,25 @@ const AdminApp: React.FC = () => {
 
   useEffect(() => {
     try {
+      const DRAFT_STORAGE_KEY = designerStorageKey('draft', cacheScope);
+      if (!DRAFT_STORAGE_KEY || loadedScope !== scopeKey) return;
       window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(data));
       setDraftSavedAt(new Date());
       setGeneratedPdf(null);
     } catch (error) {
       console.warn('No se pudo guardar el borrador local:', error);
     }
-  }, [data]);
+  }, [data, scopeKey, loadedScope]);
 
   useEffect(() => {
     try {
+      const TEMPLATE_STORAGE_KEY = designerStorageKey('templates', cacheScope);
+      if (!TEMPLATE_STORAGE_KEY || loadedScope !== scopeKey) return;
       window.localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
     } catch (error) {
       console.warn('No se pudieron guardar las plantillas locales:', error);
     }
-  }, [templates]);
+  }, [templates, scopeKey, loadedScope]);
 
   useEffect(() => {
     if (!showHistory) return;
@@ -334,7 +368,7 @@ const AdminApp: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || !scopeKey || loadedScope !== scopeKey) return;
     if (isSupabaseConfigured && !session) return;
 
     try {
@@ -366,7 +400,7 @@ const AdminApp: React.FC = () => {
     } catch (error) {
       console.warn('No se pudo aplicar prefill del bot:', error);
     }
-  }, [authLoading, session]);
+  }, [authLoading, scopeKey, loadedScope]);
 
   const handleSignIn = async () => {
     if (!supabase) return;
@@ -389,15 +423,18 @@ const AdminApp: React.FC = () => {
 
   const handleSignOut = async () => {
     if (!supabase) return;
+    clearDesignerCaches(); resetSensitiveState();
     await supabase.auth.signOut();
     setShowHistory(false);
   };
 
   const loadAllHistory = async (): Promise<void> => {
+    const requestScope = scopeKey;
+    if (!requestScope || loadedScope !== requestScope) { setHistory([]); return; }
     setHistoryLoading(true);
     setHistoryError(null);
 
-    const localRecords = loadLocalHistory().map((record) => ({ ...record, origin: 'local' as const }));
+    const localRecords = loadLocalHistory(cacheScope).map((record) => ({ ...record, origin: 'local' as const }));
     setHistory(localRecords);
 
     let server: GiftCardRecord[] = [];
@@ -409,6 +446,7 @@ const AdminApp: React.FC = () => {
         setHistoryError('No se pudo leer el historial de pottery-gym; se muestra el historial de este navegador.');
       }
     }
+    if (currentScope.current !== requestScope) return;
     setHistory(mergeHistory<GiftCardRecord>(server, localRecords));
     setHistoryLoading(false);
   };
@@ -416,7 +454,7 @@ const AdminApp: React.FC = () => {
   useEffect(() => {
     void loadAllHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.user?.id, sedeId]);
+  }, [session?.user?.id, sedeId, loadedScope]);
 
   // Sede of the logged-in user (same lookup as pottery-gym); ?sede= from /giftcards wins if accessible.
   useEffect(() => {
@@ -430,7 +468,7 @@ const AdminApp: React.FC = () => {
       if (requested) {
         const { data: row } = await supabase.from('sedes').select('id').eq('id', requested).eq('is_active', true).maybeSingle();
         if (active && row?.id) {
-          setSedeId(row.id);
+          setSedeId(row.id); setSedeLoading(false);
           return;
         }
       }
@@ -441,10 +479,10 @@ const AdminApp: React.FC = () => {
       ]);
       if (!active) return;
       const resolved = owned?.[0]?.id || memberships?.[0]?.sede_id || null;
-      setSedeId(resolved);
+      setSedeId(resolved); setSedeLoading(false);
       if (!resolved) setNotice({ type: 'error', message: 'Tu usuario no tiene una sede de pottery-gym asignada. Los bonos no se podrán guardar.' });
     };
-    void resolveSede();
+    void resolveSede().catch(() => { if (active) { setSedeId(null); setSedeLoading(false); setNotice({type:'error',message:'No se pudo verificar tu taller. Vuelve a iniciar sesión.'}); } });
     return () => {
       active = false;
     };
@@ -537,8 +575,8 @@ const AdminApp: React.FC = () => {
     };
 
     // Local copy first (fallback if pottery-gym is unavailable).
-    const nextLocal = upsertLocalHistoryRecord(loadLocalHistory(), localRecord);
-    saveLocalHistory(nextLocal);
+    const nextLocal = upsertLocalHistoryRecord(loadLocalHistory(cacheScope), localRecord);
+    saveLocalHistory(nextLocal, cacheScope);
     setActiveRecordId(localRecord.id);
     setHistory((prev) => upsertLocalHistoryRecord(prev, localRecord).slice(0, 200) as GiftCardRecord[]);
 
@@ -555,7 +593,7 @@ const AdminApp: React.FC = () => {
         recipientStudentId ? { mode: 'student', studentId: recipientStudentId } : { mode: 'temporal' }
       );
       // Saved in pottery-gym: the local fallback copy is no longer needed.
-      saveLocalHistory(loadLocalHistory().filter((item) => item.id !== localRecord.id));
+      saveLocalHistory(loadLocalHistory(cacheScope).filter((item) => item.id !== localRecord.id), cacheScope);
       setActiveRecordId(saved.id);
       setHistory((prev) => upsertLocalHistoryRecord(
         prev.filter((item) => item.id !== localRecord.id),
@@ -593,8 +631,8 @@ const AdminApp: React.FC = () => {
         return;
       }
 
-      const nextLocal = loadLocalHistory().filter((item) => item.id !== id);
-      saveLocalHistory(nextLocal);
+      const nextLocal = loadLocalHistory(cacheScope).filter((item) => item.id !== id);
+      saveLocalHistory(nextLocal, cacheScope);
       setHistory((prev) => prev.filter((item) => item.id !== id));
       if (expandedRecordId === id) setExpandedRecordId(null);
 
@@ -640,10 +678,10 @@ const AdminApp: React.FC = () => {
       return;
     }
 
-    const nextLocal = loadLocalHistory().map((record) => (
+    const nextLocal = loadLocalHistory(cacheScope).map((record) => (
       record.id === id ? { ...record, status } : record
     ));
-    saveLocalHistory(nextLocal);
+    saveLocalHistory(nextLocal, cacheScope);
     setHistory((prev) => prev.map((record) => (record.id === id ? { ...record, status } : record)));
   };
 
@@ -994,7 +1032,7 @@ const AdminApp: React.FC = () => {
     setData(prev => ({ ...prev, [field]: value }));
   };
 
-  if (isSupabaseConfigured && authLoading) {
+  if (isSupabaseConfigured && (authLoading || (session && (sedeLoading || (scopeKey && loadedScope !== scopeKey))))) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-[#faf9f6] text-stone-700">
         <div className="flex items-center gap-3 text-sm">
@@ -1004,6 +1042,8 @@ const AdminApp: React.FC = () => {
       </main>
     );
   }
+
+  if (session && !sedeId && !sedeLoading) return <main className="min-h-screen flex items-center justify-center p-6"><div role="alert"><p>No se pudo verificar un taller autorizado para tu cuenta.</p><button type="button" onClick={handleSignOut}>Cerrar sesión</button></div></main>;
 
   if (isSupabaseConfigured && !session) {
     return (
@@ -1611,7 +1651,21 @@ const AdminApp: React.FC = () => {
   );
 };
 
-export default AdminApp;
+// Remount all sensitive state on account changes. Late promises from the old
+// instance cannot repopulate the new account's editor, history or PDF.
+const DesignerIdentityBoundary: React.FC = () => {
+  const [actor, setActor] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let active = true, revision = 0;
+    const start = revision;
+    void supabase.auth.getSession().then(({data}) => {if(active && revision === start) setActor(data.session?.user.id ?? null);}).catch(() => {if(active && revision === start) setActor(null);});
+    const {data:{subscription}} = supabase.auth.onAuthStateChange((_event, next) => {revision++; if(active) setActor(next?.user.id ?? null);});
+    return () => {active=false; subscription.unsubscribe();};
+  }, []);
+  if (actor === undefined) return <main role="status" className="min-h-screen flex items-center justify-center">Comprobando sesión…</main>;
+  return <AdminApp key={actor || 'anonymous'} />;
+};
+export default DesignerIdentityBoundary;
 
 
 

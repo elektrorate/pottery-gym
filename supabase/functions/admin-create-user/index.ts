@@ -1,9 +1,10 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.119.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
 
 serve(async (req) => {
@@ -64,21 +65,10 @@ serve(async (req) => {
     });
   }
 
+  const { data: mfaVerified, error: mfaError } = await authClient.rpc('security_has_aal2');
+  if (mfaError || mfaVerified !== true) return new Response(JSON.stringify({ error: 'Verifica tu segundo factor para continuar.', code: 'MFA_REQUIRED' }), {status:403, headers:{...corsHeaders,'Content-Type':'application/json'}});
   const userId = user.id;
   const body = await req.json();
-
-  const logActivity = async (actionName: string, tenantId?: string, details?: string) => {
-    try {
-      await adminClient.from('activity_log').insert({
-        tenant_id: tenantId ?? null,
-        actor_user_id: userId,
-        action: actionName,
-        details: details || null
-      });
-    } catch {
-      // ignore if table doesn't exist
-    }
-  };
 
   const { email, password, name, phone } = body || {};
   if (!email || !password) {
@@ -88,45 +78,10 @@ serve(async (req) => {
     });
   }
 
-  let targetUserId: string | null = null;
-  const { data: existingUser, error: existingUserError } = await adminClient.auth.admin.getUserByEmail(email);
-  if (existingUserError) {
-    return new Response(JSON.stringify({ error: 'User lookup failed' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
-  }
-
-  if (existingUser.user) {
-    targetUserId = existingUser.user.id;
-    if (name || phone) {
-      await adminClient.auth.admin.updateUserById(targetUserId, {
-        user_metadata: {
-          ...(name ? { name } : {}),
-          ...(phone ? { phone } : {})
-        }
-      });
-    }
-  } else {
-    const { data: created, error: createError } = await adminClient.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        ...(name ? { name } : {}),
-        ...(phone ? { phone } : {})
-      }
-    });
-    if (createError || !created.user) {
-      return new Response(JSON.stringify({ error: 'User creation failed' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-    targetUserId = created.user.id;
-  }
-
-  await logActivity('admin_created', undefined, `Admin: ${email}`);
+  if (typeof password !== 'string' || password.length < 12) return new Response(JSON.stringify({error:'La contraseña debe tener al menos 12 caracteres.'}),{status:400,headers:{...corsHeaders,'Content-Type':'application/json'}});
+  const {data: created, error: createError} = await adminClient.auth.admin.createUser({ email, password, email_confirm:true, user_metadata:{full_name:name || '', phone:phone || ''} });
+  if (createError || !created.user) return new Response(JSON.stringify({error:'No se pudo crear el usuario. Comprueba los datos o si ya existe.'}),{status:400,headers:{...corsHeaders,'Content-Type':'application/json'}});
+  const targetUserId = created.user.id;
 
   return new Response(JSON.stringify({ ok: true, userId: targetUserId }), {
     status: 200,

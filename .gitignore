@@ -42,3 +42,5 @@ Captura desde 2026-02-27 00-11-44.png
 .env*
 # Local Pi runtime state
 .atl/
+
+!docs/security-deployment.md

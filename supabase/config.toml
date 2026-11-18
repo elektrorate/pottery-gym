@@ -6,6 +6,21 @@ verify_jwt = false
 [functions.bonos-write]
 verify_jwt = false
 
+[functions.create-user]
+verify_jwt = false
+
+[functions.manage-staff]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = false
+
+[functions.admin-create-user]
+verify_jwt = false
+
 [functions.asistonto-read]
 verify_jwt = false
 
