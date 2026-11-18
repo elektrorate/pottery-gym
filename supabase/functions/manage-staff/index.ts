@@ -16,6 +16,8 @@ const json = (data: unknown, status = 200) =>
 serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
     try {
         const authHeader = req.headers.get("Authorization");
         if (!authHeader) return json({ error: "Missing Authorization header" }, 401);
@@ -40,19 +42,21 @@ serve(async (req) => {
             .single();
 
         if (!callerProfile) {
-            return json({ error: "Perfil no encontrado." });
+            return json({ error: "Perfil no encontrado." }, 403);
         }
 
         const isSuperAdmin = callerProfile.role === 'super_admin';
         const isTallerista = callerProfile.role === 'tallerista';
 
         if (!isSuperAdmin && !isTallerista) {
-            return json({ error: "No tienes permisos para gestionar el equipo." });
+            return json({ error: "No tienes permisos para gestionar el equipo." }, 403);
         }
+
+        const { data: mfaVerified, error: mfaError } = await supabaseClient.rpc('security_has_aal2');
+        if (mfaError || mfaVerified !== true) return json({ error: 'Verifica tu segundo factor para continuar.', code: 'MFA_REQUIRED' }, 403);
 
         const body = await req.json();
         const { action } = body;
-        console.log(`--- MANAGE-STAFF [${action}] by ${callerProfile.full_name} (${callerProfile.role}) ---`);
 
         let callerSede: any = null;
         if (isTallerista) {
@@ -78,8 +82,8 @@ serve(async (req) => {
             if (!email || !password || !nombre) {
                 return json({ error: "Faltan campos obligatorios: email, password, nombre" });
             }
-            if (password.length < 6) {
-                return json({ error: "La contrasena debe tener al menos 6 caracteres" });
+            if (password.length < 12) {
+                return json({ error: "La contrasena debe tener al menos 12 caracteres" });
             }
 
             const { count } = await supabaseAdmin
@@ -111,11 +115,12 @@ serve(async (req) => {
             }
 
             // Garantiza el perfil exista aunque el trigger on_auth_user_created no exista.
-            await supabaseAdmin.from("profiles").upsert(
+            const {error: profileWriteError} = await supabaseAdmin.from("profiles").upsert(
                 { id: newUser.user.id, email, role: "staff", full_name: nombre },
                 { onConflict: "id" }
             );
 
+            if (profileWriteError) { await supabaseAdmin.auth.admin.deleteUser(newUser.user.id); return json({error:'No se pudo crear el perfil.'},500); }
             const { error: memberError } = await supabaseAdmin
                 .from("sede_members")
                 .insert({ sede_id: callerSede.id, user_id: newUser.user.id, role: "staff" });
@@ -169,6 +174,8 @@ serve(async (req) => {
                 return json({ error: "Usuario no encontrado." });
             }
 
+            if (isTallerista && targetProfile.role !== 'staff') return json({error:'Solo puedes gestionar cuentas de staff.'},403);
+
             // SUPER ADMIN puede eliminar talleristas y staff
             if (isSuperAdmin) {
                 if (!['tallerista', 'staff'].includes(targetProfile.role)) {
@@ -180,26 +187,19 @@ serve(async (req) => {
                 if (authDelError) {
                     return json({ error: `Error al eliminar: ${authDelError.message}` });
                 }
-                console.log(`[SuperAdmin] User deleted: ${staffUserId} by ${callerProfile.full_name}`);
-                return json({ success: true, message: "Usuario eliminado correctamente." });
+                                return json({ success: true, message: "Usuario eliminado correctamente." });
             }
 
-            // TALLERISTA solo puede eliminar staff de su sede
+            // Remove only this workshop membership, preserving other workshops and Auth.
             if (isTallerista) {
-                const { data: membership } = await supabaseAdmin.from("sede_members").select("id").eq("sede_id", callerSede.id).eq("user_id", staffUserId).single();
-                if (!membership) return json({ error: "Este usuario no es administrador de tu estudio." });
-
-                await supabaseAdmin.from("sede_members").delete().eq("sede_id", callerSede.id).eq("user_id", staffUserId);
-                await supabaseAdmin.from("profiles").delete().eq("id", staffUserId);
-                const { error: authDelError } = await supabaseAdmin.auth.admin.deleteUser(staffUserId);
-                if (authDelError) {
-                    return json({ error: `Error al eliminar: ${authDelError.message}` });
-                }
-                console.log(`[Tallerista] Staff deleted: ${staffUserId} from sede ${callerSede.name}`);
-                return json({ success: true, message: "Administrador eliminado correctamente." });
+                const { data: membership, error: memberError } = await supabaseAdmin.from('sede_members').select('id').eq('sede_id',callerSede.id).eq('user_id',staffUserId).eq('role','staff').single();
+                if (memberError || !membership) return json({error:'Este usuario no es staff de tu taller.'},403);
+                const {error: unlinkError} = await supabaseAdmin.from('sede_members').delete().eq('id',membership.id).eq('sede_id',callerSede.id);
+                if (unlinkError) return json({error:'No se pudo retirar el acceso.'},500);
+                return json({success:true,message:'Acceso al taller retirado correctamente.'});
             }
 
-            return json({ error: "No tienes permisos para eliminar usuarios." });
+            return json({ error: "No tienes permisos para eliminar usuarios." }, 403);
         }
 
         // ACTION: UPDATE_PROFILE
@@ -214,8 +214,12 @@ serve(async (req) => {
                         return json({ error: "Solo puedes editar talleristas y staff." });
                     }
                 } else if (isTallerista) {
+                    const {data: target, error: targetError} = await supabaseAdmin.from('profiles').select('role').eq('id',updateId).single();
+                    if (targetError || target?.role !== 'staff') return json({error:'Solo puedes gestionar cuentas de staff.'},403);
+                    const {data: otherLinks, error: linksError} = await supabaseAdmin.from('sede_members').select('sede_id').eq('user_id',updateId);
+                    if (linksError || otherLinks?.some((link:any)=>link.sede_id !== callerSede.id)) return json({error:'La cuenta tiene acceso a otro taller. Requiere un superadministrador.'},403);
                     const { data: membership } = await supabaseAdmin.from("sede_members").select("id").eq("sede_id", callerSede.id).eq("user_id", updateId).single();
-                    if (!membership) return json({ error: "No tienes permisos para editar este usuario." });
+                    if (!membership) return json({ error: "No tienes permisos para editar este usuario." }, 403);
                 }
             }
 
@@ -238,14 +242,17 @@ serve(async (req) => {
             const { staffUserId, password } = body;
 
             if (!staffUserId || !password) return json({ error: "Faltan campos requeridos." });
-            if (password.length < 6) return json({ error: "La contrasena debe tener al menos 6 caracteres." });
+            if (password.length < 12) return json({ error: "La contrasena debe tener al menos 12 caracteres." });
 
             const { data: tp } = await supabaseAdmin.from("profiles").select("role").eq("id", staffUserId).single();
             if (!tp) return json({ error: "Usuario no encontrado." });
 
             if (isTallerista) {
+                if (tp.role !== 'staff') return json({error:'Solo puedes gestionar cuentas de staff.'},403);
+                const {data: otherLinks, error: linksError} = await supabaseAdmin.from('sede_members').select('sede_id').eq('user_id',staffUserId);
+                if (linksError || otherLinks?.some((link:any)=>link.sede_id !== callerSede.id)) return json({error:'La cuenta tiene acceso a otro taller. Requiere un superadministrador.'},403);
                 const { data: membership } = await supabaseAdmin.from("sede_members").select("id").eq("sede_id", callerSede.id).eq("user_id", staffUserId).single();
-                if (!membership) return json({ error: "No tienes permisos para cambiar la contrasena de este usuario." });
+                if (!membership) return json({ error: "No tienes permisos para cambiar la contrasena de este usuario." }, 403);
             } else if (isSuperAdmin) {
                 if (!['tallerista', 'staff'].includes(tp.role)) {
                     return json({ error: "Solo puedes cambiar contrasenas de talleristas y staff." });

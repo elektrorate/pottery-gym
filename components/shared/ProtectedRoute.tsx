@@ -1,3 +1,4 @@
+import MfaGate from './MfaGate';
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth, UserRole } from '../../context/AuthContext';
@@ -66,6 +67,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles 
         return <Navigate to="/dashboard" replace />;
     }
 
+    if (profile.role === 'super_admin' || profile.role === 'tallerista') return <MfaGate key={session.user.id} userId={session.user.id} onLogout={logout}>{children}</MfaGate>;
     return <>{children}</>;
 };
 

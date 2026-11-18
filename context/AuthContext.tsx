@@ -1,3 +1,4 @@
+import { clearDesignerCaches } from '../bonos-designer/lib/cacheScope';
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -327,6 +328,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             if (!active || !mountedRef.current) return;
 
             if (event === 'SIGNED_OUT') {
+                clearDesignerCaches();
                 if (actorRef.current || passwordRequestRef.current || !endedActorRef.current) {
                     endedActorRef.current = { id: actorRef.current,
                         email: sessionRef.current?.user.email?.toLowerCase() ?? passwordRequestRef.current?.email };
@@ -455,6 +457,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     const logout = async () => {
+        clearDesignerCaches();
         if (!mountedRef.current) return;
         const expectedActor = actorRef.current;
         const passwordRequest = passwordRequestRef.current;

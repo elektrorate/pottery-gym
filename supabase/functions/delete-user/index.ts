@@ -16,6 +16,8 @@ const json = (data: unknown, status = 200) =>
 serve(async (req) => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+    if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
     try {
         const authHeader = req.headers.get("Authorization");
         if (!authHeader) return json({ error: "Missing Authorization header" }, 401);
@@ -39,10 +41,13 @@ serve(async (req) => {
             .eq("id", user.id)
             .single();
 
-        if (!callerProfile) return json({ error: "Perfil no encontrado." });
+        if (!callerProfile) return json({ error: "Perfil no encontrado." }, 403);
         if (callerProfile.role !== "super_admin") {
-            return json({ error: "No tienes permisos para eliminar usuarios." });
+            return json({ error: "No tienes permisos para eliminar usuarios." }, 403);
         }
+
+        const { data: mfaVerified, error: mfaError } = await supabaseClient.rpc('security_has_aal2');
+        if (mfaError || mfaVerified !== true) return json({ error: 'Verifica tu segundo factor para continuar.', code: 'MFA_REQUIRED' }, 403);
 
         const body = await req.json();
         const { userId } = body;
@@ -61,7 +66,6 @@ serve(async (req) => {
             return json({ error: "Solo puedes eliminar talleristas y staff." });
         }
 
-        console.log(`--- DELETE-USER [${userId}] by ${callerProfile.full_name} (super_admin) ---`);
 
         const errors: string[] = [];
         const tryDelete = async (label: string, query: PromiseLike<{ error: any }>) => {

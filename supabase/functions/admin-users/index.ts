@@ -1,9 +1,10 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.119.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
 };
 
 serve(async (req) => {
@@ -64,6 +65,8 @@ serve(async (req) => {
     });
   }
 
+  const { data: mfaVerified, error: mfaError } = await authClient.rpc('security_has_aal2');
+  if (mfaError || mfaVerified !== true) return new Response(JSON.stringify({ error: 'Verifica tu segundo factor para continuar.', code: 'MFA_REQUIRED' }), {status:403, headers:{...corsHeaders,'Content-Type':'application/json'}});
   const userId = user.id;
 
   const { action, payload } = await req.json();
@@ -112,7 +115,7 @@ serve(async (req) => {
 
   if (action === 'set_password') {
     const { userId, password } = payload || {};
-    if (!userId || !password) {
+    if (!userId || typeof password !== 'string' || password.length < 12) {
       return new Response(JSON.stringify({ error: 'Missing fields' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }

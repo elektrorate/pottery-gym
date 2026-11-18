@@ -1,0 +1,2 @@
+import React from 'react';import{createRoot}from'react-dom/client';import MfaGate from '../../components/shared/MfaGate';import DesignerApp from '../../bonos-designer/DesignerApp';import '../../tests/fixtures/security-client';
+const mode=new URLSearchParams(location.search).get('mode');createRoot(document.getElementById('root')!).render(mode==='designer'?<DesignerApp/>:<MfaGate userId="a" onLogout={async()=>{}}><p>ADMIN CONTENT</p></MfaGate>);

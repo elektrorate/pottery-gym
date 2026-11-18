@@ -6,53 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#E8E8E8">
   <title>Barro &amp; Co. | Gestión de talleres</title>
-  <script>
-    try {
-      const savedTheme = localStorage.getItem('barro-co-theme');
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      document.documentElement.dataset.theme = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : systemTheme;
-    } catch (_) { /* ThemeProvider will apply the fallback after mount. */ }
-  </script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/app.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              DEFAULT: 'var(--brand)',
-              hover: 'var(--brand-hover)',
-              pressed: 'var(--brand-pressed)',
-              light: 'var(--brand-light)',
-              soft: 'var(--brand-soft)'
-            },
-            marron: 'var(--brown)',
-            taupe: 'var(--taupe)',
-            arena: 'var(--sand)',
-            caramelo: 'var(--caramel)',
-            neutral: {
-              base: 'var(--bg)',
-              alt: 'var(--surface-soft)',
-              surface: 'var(--surface)',
-              sec: 'var(--surface-muted)',
-              border: 'var(--line)',
-              textMain: 'var(--text-primary)',
-              textSec: 'var(--text-secondary)',
-              textHelper: 'var(--text-muted)',
-              customGray: 'var(--text-muted)'
-            }
-          },
-          fontFamily: {
-            sans: ['Manrope', 'Inter', 'system-ui', 'sans-serif'],
-            display: ['Manrope', 'Inter', 'system-ui', 'sans-serif']
-          }
-        }
-      }
-    }
-  </script>
   <style>
     :root {
       --bg: #E8E8E8;

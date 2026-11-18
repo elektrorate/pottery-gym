@@ -1,0 +1,1 @@
+try {const saved=localStorage.getItem('barro-co-theme');const system=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=saved==='dark'||saved==='light'?saved:system;} catch {}
