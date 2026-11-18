@@ -1,0 +1,108 @@
+﻿
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Casa Rosier - Diseñador de bonos | Barro &amp; Co.</title>
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="theme-color" content="#fc6262">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Montserrat:wght@200;300;400;500&display=swap" rel="stylesheet">
+    <style>
+        @media print {
+            @page {
+                size: 120.25mm 190mm;
+                margin: 0;
+            }
+            html, body, #root {
+                height: auto !important;
+                overflow: visible !important;
+            }
+            body {
+                background: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            main {
+                display: block !important;
+                width: 100% !important;
+                max-width: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                height: auto !important;
+                overflow: visible !important;
+            }
+            .app-shell {
+                display: block !important;
+                min-height: auto !important;
+                height: auto !important;
+                overflow: visible !important;
+            }
+            .print-root {
+                width: 100% !important;
+                max-width: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                height: auto !important;
+                overflow: visible !important;
+            }
+            .print-page {
+                width: 100% !important;
+                height: 190mm !important;
+                min-height: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: visible !important;
+                break-after: page;
+                page-break-after: always;
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+            .print-page + .print-page {
+                break-before: page !important;
+                page-break-before: always !important;
+            }
+            .print-page:last-child {
+                break-after: auto;
+                page-break-after: auto;
+            }
+            .print-container {
+                display: block !important;
+                width: 480px !important;
+                max-width: none !important;
+                zoom: 0.9469;
+                margin: 0 !important;
+                padding: 0 !important;
+                border: none !important;
+                box-shadow: none !important;
+                overflow: visible !important;
+                transform: none !important;
+            }
+            .scaled-card {
+                height: auto !important;
+            }
+            .print-root *, .print-page * {
+                transform: none !important;
+            }
+        }
+        body {
+            font-family: 'Montserrat', sans-serif;
+        }
+        .serif {
+            font-family: 'Cormorant Garamond', serif;
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-900">
+    <div id="root"></div>
+    <script type="module" src="/bonos-designer/main.tsx"></script>
+</body>
+</html>
+

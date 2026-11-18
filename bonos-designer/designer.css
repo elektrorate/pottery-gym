@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.input-field {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background-color: #f9f8f6;
+  border: 1px solid #e7e5e4;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 300;
+  transition: all 0.2s;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #a8a29e;
+  background-color: white;
+  box-shadow: 0 0 0 1px #a8a29e;
+}
+
+body {
+  font-family: 'Montserrat', sans-serif;
+}
+
+.serif {
+  font-family: 'Cormorant Garamond', serif;
+}
+
+/* Administrative controls use a denser, higher-contrast reading scale than the preview. */
+.admin-panel {
+  color: #1f2937;
+  background: #f8fafc;
+}
+
+.admin-panel .text-stone-400 {
+  color: #475569;
+}
+
+.admin-panel .text-stone-500 {
+  color: #334155;
+}
+
+.admin-panel .text-stone-600 {
+  color: #1f2937;
+}
+
+.admin-panel .text-\[9px\] {
+  font-size: 0.75rem;
+  line-height: 1.1rem;
+}
+
+.admin-panel .text-\[10px\] {
+  font-size: 0.75rem;
+  line-height: 1.1rem;
+}
+
+.admin-panel .text-xs {
+  font-size: 0.8125rem;
+  line-height: 1.2rem;
+}
+
+.admin-panel .input-field {
+  min-height: 48px;
+  padding: 0.75rem 0.875rem;
+  background: #ffffff;
+  border-color: #cbd5e1;
+  border-radius: 0.625rem;
+  color: #0f172a;
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.admin-panel .input-field::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.admin-panel .input-field:focus {
+  border-color: #475569;
+  box-shadow: 0 0 0 3px rgb(71 85 105 / 18%);
+}
+
+.admin-panel section {
+  border-color: #cbd5e1;
+  border-radius: 0.875rem;
+}
+
+.admin-panel section > button {
+  min-height: 68px;
+}
+
+.admin-panel button:focus-visible,
+.admin-panel a:focus-visible,
+.admin-panel select:focus-visible,
+.admin-panel input:focus-visible,
+.admin-panel textarea:focus-visible {
+  outline: 3px solid rgb(59 130 246 / 35%);
+  outline-offset: 2px;
+}
