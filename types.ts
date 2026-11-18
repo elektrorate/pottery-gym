@@ -248,6 +248,8 @@ export interface ClassSession {
   teacherId?: string;
   teacherSubstituteId?: string;
   completedAt?: string;
+  importedCompleted?: boolean;
+  importSource?: string;
   workshopName?: string;
   privateReason?: string;
   sessionAudience?: 'membresia' | 'temporal' | 'ambos'; // Audiencia: membresía (permanentes), temporal, o ambos

@@ -39,6 +39,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.16",
     "@playwright/test": "^1.64.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",

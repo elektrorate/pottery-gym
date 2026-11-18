@@ -1,3 +1,4 @@
+import SectionLoadBoundary from '../../components/shared/SectionLoadBoundary';
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
@@ -35,7 +36,7 @@ window.__integrity = {
   configure: value => configure(value), capture: key => captured.set(key, latest),
   run: (name, args, key) => call(key ? captured.get(key)! : latest, name, args),
   snapshot: () => ({ students: latest.students, sessions: latest.sessions, giftCards: latest.giftCards,
-    inventory: latest.inventoryItems, pieces: latest.pieces, schedule: latest.workshopSchedule,
+    sectionLoads: latest.sectionLoads, inventory: latest.inventoryItems, pieces: latest.pieces, schedule: latest.workshopSchedule,
     loading: latest.isLoadingData, ready: latest.businessDataReady, error: latest.loadError,
     owner: latest.isCurrentSedeOwner, creditOwner: latest.students.map(student => latest.canManageStudentCredits(student)),
     pendingCredit: latest.getPendingStudentCreditOperation('student-a'),
@@ -47,6 +48,7 @@ function Probe() {
   return <>
     <section data-testid="calendar"><CalendarPage /></section>
     <section data-testid="students"><StudentsPage /></section>
+    <section data-testid="inventory-section"><SectionLoadBoundary sections={['inventory_items']}><p data-testid="inventory-content">{latest.inventoryItems.map(item => item.name).join(', ') || 'Inventario vacío verificado'}</p></SectionLoadBoundary></section>
   </>;
 }
 function Harness() {

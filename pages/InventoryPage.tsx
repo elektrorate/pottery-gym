@@ -1,3 +1,4 @@
+import SectionLoadBoundary from '../components/shared/SectionLoadBoundary';
 import React from 'react';
 import { useData } from '../context/DataContext';
 import InventoryView from '../components/InventoryView';
@@ -14,6 +15,7 @@ const InventoryPage: React.FC = () => {
     }
 
     return (
+        <SectionLoadBoundary sections={["inventory_items","inventory_movements"]}>
         <InventoryView
             items={inventoryItems}
             movements={inventoryMovements}
@@ -23,6 +25,7 @@ const InventoryPage: React.FC = () => {
             onDeleteItem={deleteInventoryItem}
             onAddMovement={addInventoryMovement}
         />
+        </SectionLoadBoundary>
     );
 };
 

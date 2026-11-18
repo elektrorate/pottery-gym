@@ -110,7 +110,7 @@ export const mapStudentRowToModel = (row: any): Student => ({
   classType: row.class_type || undefined,
   expiryDate: row.expiry_date ? String(row.expiry_date).slice(0, 10) : undefined,
   studentCategory: row.student_category ?? 'membresia',
-  membershipTier: isManagedMembership({ studentCategory: row.student_category }) ? (row.membership_tier || inferMembershipTier(undefined, row.price)) : undefined,
+  membershipTier: isManagedMembership({ studentCategory: row.student_category }) ? (row.current_membership_period_id ? row.membership_tier : undefined) : undefined,
   membershipActivatedAt: row.membership_activated_at || undefined, archivedAt: row.archived_at || undefined,
   groupName: row.group_name || undefined, bonosAsignados: row.bonos_asignados ?? undefined,
   repetirMensualmente: isManagedMembership({ studentCategory: row.student_category }) && (row.repetir_mensualmente ?? false),

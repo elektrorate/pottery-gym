@@ -1,3 +1,4 @@
+import SessionDetailsDialog from './SessionDetailsDialog';
 import { sessionBusinessErrorMessage } from '../utils/recordPresentation';
 import { showError } from '../context/toast';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -68,6 +69,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const [selectedDate, setSelectedDate] = useState(new Date());
 
   // Modales separados
+  const [detailsDialog, setDetailsDialog] = useState<{ session: ClassSession; mode: 'teacher' | 'schedule' } | null>(null);
+  const [rosterOnly, setRosterOnly] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
 
@@ -291,7 +294,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   );
 
   // Abrir modal de Edición/Creación de Sesión
-  const handleOpenSessionModal = (session?: ClassSession) => {
+  const handleOpenSessionModal = (session?: ClassSession, onlyRoster = false) => {
+    setRosterOnly(onlyRoster);
     if (formLocked) return;
     if (restorePendingOperation(session)) return;
     if (session && !hasPersistedRoster(session)) {
@@ -337,7 +341,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     if (requestedDate) setSelectedDate(new Date(`${requestedDate}T12:00:00`));
     if (requestedSessionId) {
       const requestedSession = sessions.find(session => session.id === requestedSessionId);
-      if (!requestedSession) return;
+      if (!requestedSession) { deepLinkHandledRef.current = deepLinkKey; showError('No se encontró esta sesión entre los datos disponibles. Revisa la fecha o recarga el calendario.'); return; }
       if (openAttendance) handleOpenAttendanceModal(requestedSession);
       else handleOpenSessionModal(requestedSession);
     }
@@ -529,7 +533,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       showError("Selecciona un día en el calendario antes de guardar.");
       return;
     }
-    if (requiresTeacher(sessionForm.classType) && !sessionForm.teacherId) {
+    if (!rosterOnly && requiresTeacher(sessionForm.classType) && !sessionForm.teacherId) {
       showError("Debes asignar un profesor.");
       return;
     }
@@ -797,7 +801,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                            <span className={`px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] text-white ${getSessionBadgeClasses(session.classType)}`}>{getSessionLabel(session).toUpperCase()}</span>
                           {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{getActiveRosterCount(session)}/{occupancy.capacity} cupos</span>}
                          </div>
+                      <div className="mb-3 flex flex-wrap gap-2 text-[11px] text-brand" onClick={event => event.stopPropagation()}>
+                        {session.classType !== 'mixto' && <button type="button" disabled={formLocked || !!session.completedAt} onClick={() => { if (!restorePendingOperation(session)) setDetailsDialog({session, mode:'teacher'}); }} className="min-h-9 rounded border border-neutral-border px-2">Asignar profesor</button>}
+                        <button type="button" disabled={formLocked || !!session.completedAt} onClick={() => { if (!restorePendingOperation(session)) setDetailsDialog({session, mode:'schedule'}); }} className="min-h-9 rounded border border-neutral-border px-2">Cambiar horario</button>
+                        <button type="button" disabled={formLocked} onClick={() => handleOpenSessionModal(session,true)} className="min-h-9 rounded border border-neutral-border px-2">Gestionar alumnos y plazas</button>
+                      </div>
                       <div className="text-[13.75px] font-medium text-neutral-textHelper uppercase tracking-widest mb-4">
+                        {session.importedCompleted !== undefined && <p className="mb-2 text-[11px] normal-case text-neutral-textHelper">{session.importedCompleted ? 'Completada según Excel' : 'Sin completar según Excel'} · asistencia sin acreditar</p>}
                         <span>Profesor/a: </span>
                         <span className="text-[#B07D4E] font-semibold">{getTeacherName(session.teacherId)}</span>
                         {getTeacherSpecialty(session.teacherId) && (
@@ -986,6 +996,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
             {recoveryAlert}
             {refreshConflict?.kind === 'business' && <p role="status" className="mx-5 mt-3 text-[12px] text-[#8B6B5E] sm:mx-8">Esperando la revisión actualizada del servidor. No cierres ni repitas otra operación.</p>}
             <div className="custom-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-5">
+              {rosterOnly && <p className="mb-3 text-sm text-neutral-textHelper">Gestionar alumnos y plazas. El horario y profesor existentes se conservan.</p>}
               <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
               <div className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -1231,7 +1242,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
               <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
               <div className="grid gap-6 md:grid-cols-[0.9fr_1.1fr] md:gap-8">
                 <div className="space-y-5">
-                  <fieldset disabled={mixedHistoryLocked}>
+                  <fieldset disabled={mixedHistoryLocked || rosterOnly}>
                     <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7B3F22]">Horario</legend>
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
@@ -1253,7 +1264,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     <div className="relative">
                       <select
                         id="session-type"
-                        disabled={mixedHistoryLocked}
+                        disabled={mixedHistoryLocked || rosterOnly}
                         value={sessionForm.classType}
                         onChange={(e) => {
                           const classType = e.target.value as ClassSession['classType'];
@@ -1314,6 +1325,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       </label>
                   <select
                     id="session-teacher"
+                    disabled={rosterOnly}
                     value={sessionForm.teacherId}
                     onChange={(e) => setSessionForm({ ...sessionForm, teacherId: e.target.value })}
                     className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
@@ -1327,6 +1339,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   )}
                   {sessionForm.classType === 'workshop' && (
                   <input
+                    disabled={rosterOnly}
                     aria-label="Nombre del workshop"
                     value={sessionForm.workshopName}
                     onChange={(e) => setSessionForm({ ...sessionForm, workshopName: e.target.value })}
@@ -1336,6 +1349,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   )}
                   {sessionForm.classType === 'privada' && (
                   <input
+                    disabled={rosterOnly}
                     aria-label="Motivo de la sesión privada"
                     value={sessionForm.privateReason}
                     onChange={(e) => setSessionForm({ ...sessionForm, privateReason: e.target.value })}
@@ -1556,6 +1570,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
           </section>
         </div>
       )}
+    {detailsDialog && <SessionDetailsDialog session={detailsDialog.session} mode={detailsDialog.mode} teachers={teachers} schedule={workshopSchedule} exceptions={workshopScheduleExceptions} readOnly={readOnly} onSave={onUpdateSession} onClose={() => setDetailsDialog(null)}/>}
     </div>
   );
 };
