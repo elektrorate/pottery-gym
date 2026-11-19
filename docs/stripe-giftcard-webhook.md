@@ -47,12 +47,12 @@ Los secretos se guardan en Supabase (Secrets de Edge Functions), no en Vercel de
 
 1. Verifica `Stripe-Signature` con `STRIPE_WEBHOOK_SECRET` (cuerpo crudo, 5 min). Firma mala → **400**. Sin secreto → **503**.
 2. Solo `checkout.session.completed` y `checkout.session.async_payment_succeeded`. El resto → 200 `ignored`.
-3. Es gift card si: metadata `source=casa_rosier_web`, `gift_format` virtual\|physical, `classes` 1–4, y el Payment Link está en la lista de 8 (o `STRIPE_GIFT_CARD_PAYMENT_LINKS`). Si no → 200 `ignored` (el curso de 50 € y el bono de 100 € no se tocan).
+3. Es gift card si: metadata `source=casa_rosier_web`, `gift_format` virtual\|physical, y `num_classes` o `classes` 1–4. Si la sesión viene de un Payment Link, ese link tiene que estar en la lista de 8 (o `STRIPE_GIFT_CARD_PAYMENT_LINKS`). Las Checkout Sessions creadas por la web oficial no traen `payment_link` y se aceptan con esa metadata. Si no cumple → 200 `ignored` (el curso de 50 € y el bono de 100 € no se tocan).
 4. Si hay `STRIPE_SECRET_KEY`, relee la sesión en Stripe. Solo continúa si `payment_status = paid`.
 5. Crea el bono en la sede configurada (`ASISTONTO_SEDE_ID` o `BONOS_API_SEDE_ID`):
    - código determinista `CR-<ddmmaa>-<iniciales>-<iniciales>-<4 del hash de la sesión>` (el mismo que ahora);
    - tipo `modelado` o `torno` (`metadata.type` o `class_type`; si falta, `modelado` y `typeDefaulted: true`);
-   - importe (`price`), comprador, destinatario, teléfono/email internos, dedicatoria, formato digital/físico, 12 meses, 2 h.
+   - importe (`price`), comprador (`customer_details.name` o `individual_name`, email y teléfono), destinatario (`custom_fields.destinatario`), teléfono del destinatario (`telefono_destinatario`, va al alumno temporal), dedicatoria, formato digital/físico, 12 meses, 2 h.
 6. Idempotencia: busca primero por `stripeSessionId`; el alta choca con el índice único de `code` (y, cuando se aplique la migración, también con el de sesión). Un reintento o el webhook antiguo → 200 `duplicate`, sin segundo bono.
 7. Aviso opcional a asistonto (HMAC, igual que ahora). Si falla, el bono no se toca y queda en la cola.
 8. Cola `GET/POST /functions/v1/stripe-giftcard-pending`, con la misma clave de asistonto (`x-api-key` / Bearer, huella `ASISTONTO_KEY_SHA256`). Misma forma de respuesta que `/api/gift-cards/pending`. `GET ?code=` genera el PDF oficial en `pdfBase64` (misma lib, fuentes y diseño que bono-gift-card). Cualquier bono (diseñador, formulario, W1 o Stripe) también puede pedirse con `GET /functions/v1/asistonto-read?op=bono_pdf&code=`.

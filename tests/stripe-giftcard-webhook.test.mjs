@@ -173,6 +173,44 @@ test('metadata.type or class_type torno is stored as torno without typeDefaulted
   assert.equal(built.card.external_metadata.typeDefaulted, undefined);
 });
 
+test('classifyGiftCardSession accepts a Checkout Session without payment_link and reads num_classes', () => {
+  const session = giftSession({
+    payment_link: null,
+    metadata: { source: 'casa_rosier_web', gift_format: 'physical', num_classes: '3', type: 'torno' }
+  });
+  assert.deepEqual(api.classifyGiftCardSession(session), { giftCard: true, classes: 3, giftFormat: 'physical' });
+  assert.equal(
+    api.classifyGiftCardSession(giftSession({ payment_link: null, metadata: { source: 'casa_rosier_web', gift_format: 'virtual' } })).giftCard,
+    false
+  );
+});
+
+test('buildBonoFromSession reads Checkout name, phones and recipient custom fields', async () => {
+  const built = await api.buildBonoFromSession(
+    giftSession({
+      payment_link: null,
+      metadata: { source: 'casa_rosier_web', gift_format: 'virtual', num_classes: '2', class_type: 'torno' },
+      customer_details: { individual_name: 'Ferran Buyer', name: null, email: 'ferry.gon.gom@example.com', phone: '652114732' },
+      custom_fields: [
+        { key: 'destinatario', type: 'text', text: { value: 'Lola y Jose Luis' } },
+        { key: 'dedicatoria', type: 'text', text: { value: 'Que disfrutéis de vuestro 69 aniversario' } },
+        { key: 'telefono_destinatario', type: 'text', text: { value: '+34600111222' } }
+      ]
+    }),
+    { classes: 2, giftFormat: 'virtual' }, 'evt_2', NOW
+  );
+  assert.deepEqual(built.errors, []);
+  assert.equal(built.card.buyer, 'Ferran Buyer');
+  assert.equal(built.card.buyer_phone, '652114732');
+  assert.equal(built.card.buyer_email, 'ferry.gon.gom@example.com');
+  assert.equal(built.card.recipient, 'Lola y Jose Luis');
+  assert.equal(built.card.type, 'torno');
+  assert.equal(built.student.phone, '+34600111222');
+  assert.equal(built.record.recipientPhone, '+34600111222');
+  assert.equal(built.card.external_metadata.recipientPhone, '+34600111222');
+  assert.equal(built.card.external_metadata.typeDefaulted, undefined);
+});
+
 test('handleStripeWebhook: 400 bad signature, 503 without secret, 200 created', async () => {
   const store = makeStore();
   const raw = JSON.stringify(eventFor(giftSession()));
