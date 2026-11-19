@@ -122,6 +122,7 @@ export interface StripeCheckoutSession {
     key?: string;
     type?: string;
     text?: { value?: string | null } | null;
+    numeric?: { value?: string | null } | null;
   }> | null;
 }
 
@@ -148,11 +149,14 @@ export const classifyGiftCardSession = (
   if (giftFormat !== 'virtual' && giftFormat !== 'physical') {
     return { giftCard: false, reason: 'metadata.gift_format' };
   }
-  const classes = Number.parseInt(String(metadata.classes ?? ''), 10);
+  const classes = Number.parseInt(String(metadata.num_classes ?? metadata.classes ?? ''), 10);
   if (!Number.isInteger(classes) || classes < 1 || classes > 4) {
     return { giftCard: false, reason: 'metadata.classes' };
   }
-  if (!session.payment_link || !allowlist.includes(session.payment_link)) {
+  // Payment Links siguen pasando por la lista permitida. Las Checkout Sessions
+  // creadas por la web oficial no traen payment_link; se aceptan si la metadata
+  // requerida (source, gift_format, classes/num_classes) es válida.
+  if (session.payment_link && !allowlist.includes(session.payment_link)) {
     return { giftCard: false, reason: 'payment_link' };
   }
   return { giftCard: true, classes, giftFormat };
@@ -218,8 +222,18 @@ export const stripeVoucherCode = async (
 };
 
 const clip = (value: string, max: number) => (value.length > max ? value.slice(0, max).trim() : value);
-const customField = (session: StripeCheckoutSession, key: string): string =>
-  String(session.custom_fields?.find((field) => field.key === key)?.text?.value ?? '').trim();
+const customField = (session: StripeCheckoutSession, key: string): string => {
+  const field = session.custom_fields?.find((entry) => entry.key === key);
+  return String(field?.text?.value ?? field?.numeric?.value ?? '').trim();
+};
+
+const firstCustomField = (session: StripeCheckoutSession, keys: readonly string[]): string => {
+  for (const key of keys) {
+    const value = customField(session, key);
+    if (value) return value;
+  }
+  return '';
+};
 
 export const getSafeFileName = (donorName: string): string => {
   const safe = donorName
@@ -243,6 +257,7 @@ export interface BuiltStripeBono {
     buyerEmail?: string;
     buyerPhone?: string;
     recipientName: string;
+    recipientPhone?: string;
     dedication?: string;
     numberOfClasses: number;
     sessionDuration: string;
@@ -263,8 +278,12 @@ export const buildBonoFromSession = async (
 ): Promise<BuiltStripeBono> => {
   const details = session.customer_details || {};
   const buyerName = clip(String(details.individual_name || details.name || '').trim(), 80);
-  const recipientName = clip(customField(session, 'destinatario'), 80);
-  const dedication = clip(customField(session, 'dedicatoria'), 500);
+  const recipientName = clip(firstCustomField(session, ['destinatario', 'nombre_destinatario']), 80);
+  const dedication = clip(firstCustomField(session, ['dedicatoria']), 500);
+  const recipientPhone = clip(
+    firstCustomField(session, ['telefono_destinatario', 'whatsapp_destinatario']),
+    40
+  ) || undefined;
   const buyerEmail = String(details.email || '').trim() || undefined;
   const buyerPhone = String(details.phone || '').trim() || undefined;
   const creationDate = madridDate(session.created, now);
@@ -312,6 +331,7 @@ export const buildBonoFromSession = async (
       ...(eventId ? { stripeEventId: eventId } : {}),
       ...(session.payment_link ? { stripePaymentLink: session.payment_link } : {}),
       giftFormat: classification.giftFormat,
+      ...(recipientPhone ? { recipientPhone } : {}),
       ...(classType.defaulted ? { typeDefaulted: true } : {})
     }
   };
@@ -327,6 +347,7 @@ export const buildBonoFromSession = async (
       ...(buyerEmail ? { buyerEmail } : {}),
       ...(buyerPhone ? { buyerPhone } : {}),
       recipientName,
+      ...(recipientPhone ? { recipientPhone } : {}),
       ...(dedication ? { dedication } : {}),
       numberOfClasses: classification.classes,
       sessionDuration: String(STRIPE_GIFT_CARD_SESSION_HOURS),
@@ -338,7 +359,7 @@ export const buildBonoFromSession = async (
     card,
     student: {
       full_name: recipientName || 'Sin destinatario',
-      phone: null,
+      phone: recipientPhone || null,
       notes: `Alumno temporal creado automáticamente desde Stripe (bono ${voucherCode}).`
     }
   };
