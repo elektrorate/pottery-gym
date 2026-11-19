@@ -11,7 +11,7 @@ const authorizedStudents: Student[] = [
 ];
 const base: GiftCard = { id: '', code: '', buyer: 'Comprador local', buyerPhone: '555', buyerEmail: 'buyer@example.test',
   recipient: 'Etiqueta conservada', recipientStudentId: temporaryId, numClasses: 2, type: 'modelado', validityMonths: 6,
-  activatedAt: '2026-01-31', expiryDate: '2027-04-30', paymentStatus: 'paid', status: 'active', sessionsUsed: 0,
+  activatedAt: '2026-01-31', expiryDate: '2027-04-30', price: 100, paymentStatus: 'paid', status: 'active', sessionsUsed: 0,
   createdAt: '2026-01-31T10:00:00Z' };
 const cycle: GiftCard = { ...base, id: 'cycle', code: 'CR-CYCLE', recipient: 'Bono con ciclo', sessionsUsed: 1, sessionsRemaining: 1,
   movements: [

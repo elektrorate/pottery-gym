@@ -142,3 +142,21 @@ test('period payment fields are protected and expired member can be reactivated 
   await page.getByRole('button', { name: 'Reactivar alumno manualmente' }).click();
   await expect(page.getByTestId('saved')).toContainText('"archivedAt":""');
 });
+
+test('linked gift cards show contracted classes, buyer details and type in the student ficha', async ({ page }) => {
+  await page.getByRole('button', { name: 'Cargar bono vinculado' }).click();
+  await page.getByRole('button', { name: /^Bonos temporales\s+2$/i }).click();
+  const row = page.getByRole('button').filter({ hasText: 'PAULA BONO' });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('2 clases');
+  await expect(row).toContainText('Modelado');
+  await row.click();
+  await expect(page.getByRole('heading', { name: 'PAULA BONO' })).toBeVisible();
+  await expect(page.getByLabel('Bonos contratados')).toHaveValue('2');
+  await expect(page.getByLabel('Bonos restantes')).toHaveValue('2');
+  await expect(page.getByText('CR-796024D9E0 · Modelado')).toBeVisible();
+  await expect(page.getByText('100 € · Pagado')).toBeVisible();
+  await expect(page.getByText('Comprador: Aina · 606 130 865')).toBeVisible();
+  await expect(page.getByText('«T´estimo molt !»')).toBeVisible();
+  await expect(page.getByLabel('Tipo de clase')).toHaveValue('Modelado');
+});

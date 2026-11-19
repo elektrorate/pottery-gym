@@ -9,6 +9,7 @@ const StudentsPage: React.FC = () => {
 
     const {
         students,
+        giftCards,
         addStudent,
         updateStudent,
         deleteStudent,
@@ -47,6 +48,7 @@ const StudentsPage: React.FC = () => {
     return (
         <StudentList
             students={students}
+            giftCards={giftCards}
             reviewOnly={searchParams.get('review') === '1'}
             detailsLoading={!businessDataReady}
             onAddStudent={addStudent}

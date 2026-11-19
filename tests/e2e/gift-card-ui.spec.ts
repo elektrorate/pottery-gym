@@ -194,7 +194,7 @@ test('consume keeps confirmation and uses server date; cancel retains history in
   expect((await calls(page))[1]).toEqual({ action: 'cancel_gift_card', id: 'pending' });
 });
 test('buyer/duration/archive filters retain existing selection behavior', async ({ page }) => {
-  const search = page.getByLabel('Buscar tarjeta por nombre del comprador');
+  const search = page.getByLabel('Buscar tarjeta por comprador, destinatario o código');
   await search.fill('archivado');
   await expect(page.getByRole('button').filter({ hasText: 'Bono archivado' })).toHaveCount(0);
   await page.getByRole('tab', { name: /Archivados/ }).click();
@@ -302,4 +302,20 @@ test('mobile identity flow remains accessible without selecting or creating by n
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole('button', { name: 'Crear bono', exact: true }).click();
   expect((await calls(page))[0].data.recipientStudentId).toBe(temporaryId);
+});
+
+test('search matches recipient and code, and the list shows amount and payment', async ({ page }) => {
+  const linked = page.getByRole('button').filter({ hasText: 'Etiqueta conservada' });
+  await expect(linked).toBeVisible();
+  await expect(linked).toContainText('100 €');
+  await expect(linked).toContainText('Pagado');
+  const search = page.getByLabel('Buscar tarjeta por comprador, destinatario o código');
+  await search.fill('Etiqueta conservada');
+  await expect(linked).toBeVisible();
+  await expect(page.getByRole('button').filter({ hasText: 'Bono con ciclo' })).toHaveCount(0);
+  await search.fill('CR-CYCLE');
+  await expect(page.getByRole('button').filter({ hasText: 'Bono con ciclo' })).toBeVisible();
+  await expect(linked).toHaveCount(0);
+  await search.fill('Comprador local');
+  await expect(linked).toBeVisible();
 });
