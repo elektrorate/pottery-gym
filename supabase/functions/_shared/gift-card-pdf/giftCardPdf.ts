@@ -2,8 +2,9 @@
  * Server PDF of the designer faces. Ported unchanged from bono-gift-card
  * `lib/giftCardPdf.ts` (PR #7/#8). Only the asset/fontkit loader was made
  * portable so the same file can run in Node tests, the Vite UI and Deno Edge
- * Functions. The paint code, typography, colours, geometry and assets are
- * the same, so the pages must match pixel for pixel.
+ * Functions. Font and logo bytes are embedded (see embeddedAssets.ts) so the
+ * Edge bundler cannot drop them. The paint code, typography, colours,
+ * geometry and assets are the same, so the pages must match pixel for pixel.
  *
  * Coordinates follow the portrait `GiftCardSide` (fixed 480 × 758.4 CSS px):
  * the same box model, type scale and colors the web app paints before
@@ -14,6 +15,7 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { GiftCardData } from './types.ts';
 import { classesCountLabel } from './giftCardDefaults.ts';
 import { CARD_PX_HEIGHT, CARD_PX_WIDTH, portraitCardPageMm } from './pdfLayout.ts';
+import { getEmbeddedAsset } from './embeddedAssets.ts';
 
 type RawFont = {
   ascent: number;
@@ -72,39 +74,23 @@ type Faces = {
 
 const byteCache = new Map<string, Uint8Array>();
 
-export const pdfBundleAssets: Record<string, URL> = {
-  'assets/fonts/Montserrat-Regular.ttf': new URL('./assets/fonts/Montserrat-Regular.ttf', import.meta.url),
-  'assets/fonts/Montserrat-Medium.ttf': new URL('./assets/fonts/Montserrat-Medium.ttf', import.meta.url),
-  'assets/fonts/Montserrat-SemiBold.ttf': new URL('./assets/fonts/Montserrat-SemiBold.ttf', import.meta.url),
-  'assets/fonts/Montserrat-Italic.ttf': new URL('./assets/fonts/Montserrat-Italic.ttf', import.meta.url),
-  'assets/fonts/CormorantGaramond-Regular.ttf': new URL('./assets/fonts/CormorantGaramond-Regular.ttf', import.meta.url),
-  'assets/logos/logo-casa-rosier.png': new URL('./assets/logos/logo-casa-rosier.png', import.meta.url)
-};
-
 const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined';
 const isNode = typeof process !== 'undefined' && !!process.versions?.node && !isDeno;
 
+/**
+ * Load a font or logo. Bytes are embedded in `embeddedAssets.ts` so the
+ * Supabase Edge bundler always includes them (it does not upload sibling
+ * `.ttf`/`.png` files referenced only via `new URL(..., import.meta.url)`).
+ * The client and Node tests use the same embedded bytes, so the pages stay
+ * identical to the official generator.
+ */
 const readAsset = async (relative: string): Promise<Uint8Array> => {
   const cached = byteCache.get(relative);
   if (cached) return cached;
-  if (!pdfBundleAssets[relative]) {
-    throw new Error(`No se encontró el recurso ${relative}`);
-  }
-  const url = pdfBundleAssets[relative];
-  let bytes: Uint8Array;
-  if (isDeno) {
-    bytes = await (globalThis as { Deno: { readFile: (path: URL) => Promise<Uint8Array> } }).Deno.readFile(url);
-  } else if (isNode) {
-    const fs = await import('node:fs/promises');
-    const { fileURLToPath } = await import('node:url');
-    bytes = await fs.readFile(fileURLToPath(url));
-  } else {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`No se encontró el recurso ${relative}`);
-    bytes = new Uint8Array(await response.arrayBuffer());
-  }
-  byteCache.set(relative, bytes);
-  return bytes;
+  const embedded = getEmbeddedAsset(relative);
+  if (!embedded) throw new Error(`No se encontró el recurso ${relative}`);
+  byteCache.set(relative, embedded);
+  return embedded;
 };
 
 const loadFontkit = async (): Promise<FontkitLike> => {
