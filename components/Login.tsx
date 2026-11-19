@@ -97,7 +97,7 @@ const Login: React.FC = () => {
         <div className="mb-8 flex w-full flex-col items-center text-center">
           <h1 className="text-[11px] font-semibold uppercase leading-relaxed tracking-[0.16em] text-neutral-textSec">Sistema de gestión de taller cerámico</h1>
           <div className="mt-5 w-full max-w-[290px] rounded-xl bg-[#FAFAFA] px-2 py-1">
-            <img src="/pottery-gym-logo.svg" alt="Pottery Gym" width="508" height="264" className="h-auto w-full" />
+            <img src="/pottery-gym-logo.svg" alt="Pottery Gym" width="508" height="264" className="mx-auto h-auto w-[85%]" />
           </div>
           {mode === 'forgot-password' && <>
             <h2 className="mt-5 text-lg font-semibold text-neutral-textMain">Recupera tu acceso</h2>
