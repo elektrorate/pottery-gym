@@ -3,13 +3,27 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import ThemeToggle from './shared/ThemeToggle';
-import DiagonalPattern from './shared/DiagonalPattern';
+import './Login.css';
 
 type LoginMode = 'login' | 'forgot-password';
+
+const CoverIcon: React.FC<{name: 'mail' | 'lock' | 'eye' | 'arrow' | 'calendar' | 'people' | 'box'; className?: string}> = ({name, className}) => (
+  <svg className={className} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {name === 'mail' && <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></>}
+    {name === 'lock' && <><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>}
+    {name === 'eye' && <><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></>}
+    {name === 'arrow' && <path d="M4 12h16m-6-6 6 6-6 6"/>}
+    {name === 'calendar' && <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18m-13 4h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></>}
+    {name === 'people' && <><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2M20 4a4 4 0 0 1 0 7m3 10v-2a7 7 0 0 0-3-5M4 4a4 4 0 0 0 0 7m-3 10v-2a7 7 0 0 1 3-5"/></>}
+    {name === 'box' && <><path d="m12 2 10 5.5v9L12 22 2 16.5v-9L12 2Zm0 11L2 7.5m10 5.5 10-5.5M12 13v9M7 4.75l10 5.5"/></>}
+  </svg>
+);
+
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [mode, setMode] = useState<LoginMode>('login');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -69,75 +83,56 @@ const Login: React.FC = () => {
   const changeMode = (nextMode: LoginMode) => {
     clearFeedback();
     setPassword('');
+    setShowPassword(false);
     setMode(nextMode);
   };
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-neutral-base p-4 font-sans md:p-8">
-      <DiagonalPattern className="opacity-40" />
-      <div className="absolute right-4 top-4 z-20 md:right-8 md:top-8"><ThemeToggle /></div>
-      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-2rem)] w-full max-w-5xl items-center gap-6 lg:grid-cols-[1fr_440px] lg:gap-16">
-        <div className="hidden rounded-[30px] border border-brand/20 bg-brand-soft p-10 lg:block">
-          <div className="relative min-h-[480px] overflow-hidden rounded-[22px] bg-brand p-9 text-white">
-            <DiagonalPattern dark />
-            <div className="relative z-10 flex h-full min-h-[420px] flex-col justify-between">
-              <div>
-                <div className="mb-7 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-bold text-brand">R</div>
-                <p className="eyebrow text-white/60">Casa Rosier</p>
-                <h2 className="mt-4 max-w-sm text-[42px] font-bold leading-[0.98] tracking-tight">Tu taller, con más intención.</h2>
-                <p className="mt-5 max-w-sm text-[15px] leading-relaxed text-white/75">Organiza clases, alumnos y piezas desde un solo lugar, con la calma de un estudio bien ordenado.</p>
+    <main className="login-cover-page">
+      <div className="login-cover-theme"><ThemeToggle /></div>
+      <div className="login-cover-grid">
+        <section className="login-cover-story" aria-labelledby="login-story-title">
+          <div className="login-cover-story-content">
+            <p className="login-cover-wordmark">Casa Rosier</p>
+            <div className="login-cover-accent" />
+            <h2 id="login-story-title">Gestiona tu<br />taller de cerámica</h2>
+            <p className="login-cover-description">Clases, reservas, alumnos y piezas<br className="login-cover-desktop-break" /> en un solo lugar.</p>
+            <ul className="login-cover-features" aria-label="Funciones del taller">
+              <li><CoverIcon name="calendar" /><span>Clases y<br />reservas</span></li>
+              <li><CoverIcon name="people" /><span>Alumnos</span></li>
+              <li><CoverIcon name="box" /><span>Piezas y<br />cocciones</span></li>
+            </ul>
+          </div>
+        </section>
+        <section className="login-cover-panel" aria-labelledby="login-cover-title">
+          <div className="login-cover-form-wrap">
+            <header className="login-cover-header">
+              <h1 id="login-cover-title">Sistema de gestión de taller cerámico</h1>
+              <img src="/pottery-gym-logo.svg" alt="Pottery Gym" width="508" height="264" className="login-cover-logo" />
+              {mode === 'forgot-password' && <div className="login-cover-recovery"><h2>Recupera tu acceso</h2><p>Escribe el correo asociado a tu cuenta y te enviaremos un enlace seguro.</p></div>}
+            </header>
+            <form onSubmit={mode === 'login' ? handleLogin : handlePasswordRecovery} className="login-cover-form" aria-busy={isLoading}>
+              {errorMessage && <div role="alert" className="login-cover-feedback login-cover-feedback-error">{errorMessage}</div>}
+              {successMessage && <div role="status" className="login-cover-feedback login-cover-feedback-success">{successMessage}</div>}
+              <div className="login-cover-field">
+                <label htmlFor="login-email">Correo electrónico</label>
+                <div className="login-cover-input-wrap"><CoverIcon name="mail" /><input id="login-email" required disabled={isLoading} autoComplete="email" inputMode="email" type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="tu@correo.com" /></div>
               </div>
-              <div className="flex items-center gap-3 text-[12px] font-semibold text-white/70"><span className="h-2 w-2 rounded-full bg-white" /> Centro de operaciones</div>
-            </div>
+              {mode === 'login' && <div className="login-cover-field">
+                <label htmlFor="login-password">Contraseña</label>
+                <div className="login-cover-input-wrap"><CoverIcon name="lock" /><input id="login-password" required disabled={isLoading} autoComplete="current-password" type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} placeholder="••••••••" /><button className="login-cover-password-toggle" type="button" aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} aria-pressed={showPassword} aria-controls="login-password" onClick={() => setShowPassword(value => !value)}><CoverIcon name="eye" /></button></div>
+                <div className="login-cover-forgot"><button type="button" disabled={isLoading} onClick={() => changeMode('forgot-password')}>¿Olvidaste tu contraseña?</button></div>
+              </div>}
+              <button className="login-cover-submit" type="submit" disabled={isLoading}>
+                {isLoading ? <><span className="login-cover-spinner" aria-hidden="true" />Procesando…</> : <>{mode === 'login' ? 'Iniciar sesión' : 'Enviar enlace'}<CoverIcon name="arrow" /></>}
+              </button>
+              {mode === 'forgot-password' && <button type="button" className="login-cover-back" disabled={isLoading} onClick={() => changeMode('login')}>Volver al inicio de sesión</button>}
+            </form>
+            <p className="login-cover-access">Acceso exclusivo para usuarios autorizados</p>
           </div>
-        </div>
-
-      <div className="mx-auto w-full max-w-[440px] rounded-[24px] border border-neutral-border bg-white p-6 soft-shadow animate-fade-in md:p-10">
-        <div className="flex flex-col items-center">
-        <div className="mb-8 flex w-full flex-col items-center text-center">
-          <h1 className="text-[11px] font-semibold uppercase leading-relaxed tracking-[0.16em] text-neutral-textSec">Sistema de gestión de taller cerámico</h1>
-          <div className="mt-5 w-full max-w-[290px] rounded-xl bg-[#FAFAFA] px-2 py-1">
-            <img src="/pottery-gym-logo.svg" alt="Pottery Gym" width="508" height="264" className="mx-auto h-auto w-[85%]" />
-          </div>
-          {mode === 'forgot-password' && <>
-            <h2 className="mt-5 text-lg font-semibold text-neutral-textMain">Recupera tu acceso</h2>
-            <p className="mt-4 text-[14px] leading-relaxed text-neutral-textHelper">Escribe el correo asociado a tu cuenta y te enviaremos un enlace seguro.</p>
-          </>}
-        </div>
-
-        <form onSubmit={mode === 'login' ? handleLogin : handlePasswordRecovery} className="w-full space-y-5 relative">
-          {errorMessage && <div role="alert" className="rounded-[10px] bg-[#F8E1DA] border border-[#EFC9BE] px-4 py-3 text-[14px] text-[#9E3B2B]">{errorMessage}</div>}
-          {successMessage && <div role="status" className="rounded-[10px] bg-[#DFF0E4] border border-[#BFDECB] px-4 py-3 text-[14px] text-[#20663B]">{successMessage}</div>}
-
-          <div className="space-y-1.5">
-            <label htmlFor="login-email" className="block text-[12px] font-semibold text-neutral-textSec">Correo electrónico</label>
-            <input id="login-email" required autoComplete="email" inputMode="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="w-full min-h-[48px] px-4 py-3 bg-white border border-neutral-border focus:border-brand focus:ring-2 focus:ring-brand/15 rounded-[10px] text-[16px] outline-none transition-all placeholder:text-neutral-textHelper" placeholder="tu@correo.com" />
-          </div>
-
-          {mode === 'login' && (
-            <div className="space-y-1.5">
-              <label htmlFor="login-password" className="block text-[12px] font-semibold text-neutral-textSec">Contraseña</label>
-              <input id="login-password" required autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full min-h-[48px] px-4 py-3 bg-white border border-neutral-border focus:border-brand focus:ring-2 focus:ring-brand/15 rounded-[10px] text-[16px] outline-none transition-all placeholder:text-neutral-textHelper" placeholder="••••••••" />
-              <div className="flex justify-end pt-1">
-                <button type="button" onClick={() => changeMode('forgot-password')} className="text-[13px] font-medium text-neutral-textHelper hover:text-brand transition-colors">¿Olvidaste tu contraseña?</button>
-              </div>
-            </div>
-          )}
-
-          <button type="submit" disabled={isLoading} className="w-full min-h-[48px] py-3 bg-brand text-white rounded-[10px] font-semibold text-[15px] hover:bg-brand-hover active:scale-[0.99] transition-all flex items-center justify-center gap-3 mt-2 disabled:opacity-60 disabled:cursor-not-allowed">
-            {isLoading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : mode === 'login' ? 'Iniciar sesión' : 'Enviar enlace'}
-          </button>
-
-          {mode === 'forgot-password' && (
-            <button type="button" onClick={() => changeMode('login')} className="w-full min-h-[44px] py-2 text-[14px] font-medium text-neutral-textHelper hover:text-brand transition-colors">Volver al inicio de sesión</button>
-          )}
-        </form>
-
-        <p className="mt-10 text-center text-[12px] text-neutral-textHelper">Acceso exclusivo para usuarios autorizados</p>
-        </div>
+        </section>
       </div>
-      </div>
-    </div>
+    </main>
   );
 };
 
