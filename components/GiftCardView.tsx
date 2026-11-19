@@ -316,7 +316,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
     const qr = await QRCode.toDataURL(code, { width: 260, margin: 1, color: { dark: '#FF5300', light: '#FFFFFF' } });
     const pdf = new jsPDF({ unit: 'mm', format: 'a5' });
     pdf.setFillColor(247, 244, 240); pdf.rect(0, 0, 148, 210, 'F');
-    pdf.setTextColor(255, 83, 0); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(24); pdf.text('BARRO & CO.', 16, 25);
+    pdf.setTextColor(255, 83, 0); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(24); pdf.text('CASA ROSIER', 16, 25);
     pdf.setFontSize(10); pdf.setTextColor(92, 102, 119); pdf.text('BONO DE CLASE TEMPORAL', 16, 33);
     pdf.setTextColor(23, 35, 56); pdf.setFontSize(18); pdf.text(`Experiencia de ${typeLabel(card.type)}`, 16, 52);
     pdf.setFontSize(12); pdf.text(`${card.numClasses} ${card.numClasses === 1 ? 'sesión' : 'sesiones'} de cerámica`, 16, 62);

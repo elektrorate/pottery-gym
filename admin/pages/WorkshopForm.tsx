@@ -240,7 +240,7 @@ export const WorkshopForm: React.FC = () => {
               <Input
                 label="Correo Electrónico *"
                 type="email"
-                placeholder="d.casals@barro.com"
+                placeholder="nombre@ejemplo.com"
                 value={adminData.email}
                 onChange={e => setAdminData({ ...adminData, email: e.target.value })}
                 disabled={adminConfirmed && currentStep === 2}

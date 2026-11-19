@@ -133,7 +133,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                                 {displayName.charAt(0).toUpperCase()}
                             </div>
                             <div className="overflow-hidden">
-                            <h1 className="font-display text-[17px] font-bold text-neutral-textMain leading-tight truncate">Barro &amp; Co.</h1>
+                            <h1 className="font-display text-[17px] font-bold text-neutral-textMain leading-tight truncate">Casa Rosier</h1>
                                 <p className="text-[12px] text-neutral-textHelper uppercase font-semibold tracking-[0.14em] truncate">{displayName} · Estudio</p>
                             </div>
                         </div>

@@ -110,7 +110,7 @@ export const Dashboard: React.FC = () => {
       {/* Footer Branding */}
       <div className="mt-16 md:mt-20 pb-8 flex flex-col items-center opacity-10">
         <div className="w-10 h-10 bg-neutral-textMain rounded-xl mb-4"></div>
-        <p className="eyebrow">BARRO & CO. ESTUDIO CENTRAL</p>
+        <p className="eyebrow">CASA ROSIER ESTUDIO CENTRAL</p>
       </div>
     </div>
   );

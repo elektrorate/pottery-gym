@@ -63,9 +63,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <div className="flex flex-col items-start mb-10 px-2">
           <div className="relative w-12 h-12 overflow-hidden bg-brand rounded-[15px] flex items-center justify-center font-bold text-xl text-white mb-4 cursor-pointer shadow-sm" onClick={() => navigate('/admin')}>
             <DiagonalPattern dark className="opacity-45" />
-            <span className="relative z-10">B</span>
+            <span className="relative z-10">R</span>
           </div>
-          <span className="font-display text-[22px] font-bold tracking-tight text-neutral-textMain">Barro &amp; Co.</span>
+          <span className="font-display text-[22px] font-bold tracking-tight text-neutral-textMain">Casa Rosier</span>
           <span className="eyebrow mt-1">Red de talleres</span>
           <div className="accent-line mt-3"></div>
         </div>
@@ -169,7 +169,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <div className="fixed top-0 left-0 h-full w-[min(320px,88vw)] bg-white z-[110] shadow-2xl flex flex-col overflow-hidden rounded-r-3xl lg:hidden animate-fade-in">
             <div className="px-5 py-5 border-b border-neutral-border flex justify-between items-start gap-4">
               <div>
-                <span className="font-display text-[20px] font-bold text-neutral-textMain">Barro &amp; Co.</span>
+                <span className="font-display text-[20px] font-bold text-neutral-textMain">Casa Rosier</span>
                 <p className="text-[12px] text-neutral-textHelper uppercase tracking-[0.14em] font-medium mt-0.5">Panel de administración</p>
               </div>
               <ThemeToggle compact />

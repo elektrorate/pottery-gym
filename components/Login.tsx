@@ -82,8 +82,8 @@ const Login: React.FC = () => {
             <DiagonalPattern dark />
             <div className="relative z-10 flex h-full min-h-[420px] flex-col justify-between">
               <div>
-                <div className="mb-7 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-bold text-brand">B</div>
-                <p className="eyebrow text-white/60">Barro &amp; Co.</p>
+                <div className="mb-7 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-bold text-brand">R</div>
+                <p className="eyebrow text-white/60">Casa Rosier</p>
                 <h2 className="mt-4 max-w-sm text-[42px] font-bold leading-[0.98] tracking-tight">Tu taller, con más intención.</h2>
                 <p className="mt-5 max-w-sm text-[15px] leading-relaxed text-white/75">Organiza clases, alumnos y piezas desde un solo lugar, con la calma de un estudio bien ordenado.</p>
               </div>
@@ -96,7 +96,7 @@ const Login: React.FC = () => {
         <div className="flex flex-col items-center">
         <div className="relative mb-7 flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-brand text-2xl font-bold text-white shadow-sm">
           <DiagonalPattern dark className="opacity-45" />
-          <span className="relative z-10">B</span>
+          <span className="relative z-10">R</span>
         </div>
 
         <div className="text-center mb-8 w-full">
