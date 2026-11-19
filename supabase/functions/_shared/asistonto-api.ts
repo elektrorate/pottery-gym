@@ -182,6 +182,27 @@ const WRITE_OPS: Record<string, { actors: Actor[]; fields: string[] }> = {
   list: { actors: ['asistonto', 'rio'], fields: ['status'] }
 };
 
+
+/** The write RPC returns `{ data: draftJson, replayed }`. The bono lives at data.result.bono. */
+const commitBonoCode = (payload: unknown): string => {
+  if (!payload || typeof payload !== 'object') return '';
+  const body = payload as { data?: { result?: { bono?: { code?: unknown } } }; result?: { bono?: { code?: unknown } } };
+  return String(body.data?.result?.bono?.code || body.result?.bono?.code || '').trim();
+};
+
+const withPdfFields = (
+  payload: unknown,
+  pdf: { fileName: string | null; pdfBase64: string | null; pdfError?: string }
+) => {
+  const fields = { fileName: pdf.fileName, pdfBase64: pdf.pdfBase64, ...(pdf.pdfError ? { pdfError: pdf.pdfError } : {}) };
+  const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const next: Record<string, unknown> = { ...root, ...fields };
+  if (root.data && typeof root.data === 'object' && !Array.isArray(root.data)) {
+    next.data = { ...(root.data as Record<string, unknown>), ...fields };
+  }
+  return next;
+};
+
 export const handleWrite = async (req: Request, env: Env, makeClient: ClientFactory): Promise<Response> => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const actor = await identify(req, env);
@@ -216,14 +237,12 @@ export const handleWrite = async (req: Request, env: Env, makeClient: ClientFact
     return response;
   }
   let payload = data;
-  const code = op === 'commit' && payload && typeof payload === 'object'
-    ? String((payload as { result?: { bono?: { code?: string } } }).result?.bono?.code || '').trim()
-    : '';
-  if (code) {
-    const { data: row } = await readGiftCardRow(config.client, config.sedeId, code);
-    if (row) {
+  if (op === 'commit') {
+    const code = commitBonoCode(payload);
+    if (code) {
+      const { data: row } = await readGiftCardRow(config.client, config.sedeId, code);
       const pdf = await attachBonoPdf(row);
-      payload = { ...(payload as object), fileName: pdf.fileName, pdfBase64: pdf.pdfBase64, ...(pdf.pdfError ? { pdfError: pdf.pdfError } : {}) };
+      payload = withPdfFields(payload, pdf);
     }
   }
   const response = json(payload, op === 'draft' ? 201 : 200);

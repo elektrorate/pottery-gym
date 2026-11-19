@@ -2,15 +2,25 @@ import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { build } from 'esbuild';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 
-// Bundles the shipped shared handler; the Supabase transport is a fake. No env file,
-// database or network is used. Keys are random per run and never printed.
-const bundle = await build({
-  absWorkingDir: fileURLToPath(new URL('../', import.meta.url)),
-  entryPoints: ['supabase/functions/_shared/asistonto-api.ts'], bundle: true, write: false, platform: 'node', format: 'esm'
+// Bundles the shipped shared handler to a real file so the official PDF loader
+// can resolve fontkit. The Supabase transport is a fake. No env file, database
+// or network is used. Keys are random per run and never printed.
+const root = fileURLToPath(new URL('../', import.meta.url));
+const bundled = join(root, 'tests/.tmp-asistonto-api.mjs');
+await build({
+  absWorkingDir: root,
+  entryPoints: ['supabase/functions/_shared/asistonto-api.ts'],
+  bundle: true,
+  write: true,
+  outfile: bundled,
+  platform: 'node',
+  format: 'esm',
+  packages: 'external'
 });
-const api = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const api = await import(pathToFileURL(bundled).href);
 
 const sede = '30000000-0000-0000-0000-000000000001';
 const asistontoKey = randomBytes(32).toString('hex');
@@ -128,4 +138,59 @@ test('bono_pdf requires a code; unknown code is 404; it does not call the read R
   const body = await missing.json();
   assert.equal(body.code, 'AS404');
   assert.equal(calls.length, 0);
+});
+
+test('commit attaches fileName and pdfBase64 from data.result.bono.code, including a replay', async () => {
+  const envelope = {
+    data: {
+      draftId: 'e49f1383-fbc8-4313-8674-df0088fa9f38',
+      kind: 'bono.create',
+      status: 'committed',
+      result: { bono: { id: 'c9d4c60c-e288-4dca-a10e-fb1ea89efbc8', code: 'CR-4C5525A7BE', recipient: 'PRUEBA RIO – no usar', type: 'torno', numClasses: 1 } }
+    },
+    replayed: true
+  };
+  const row = {
+    id: 'c9d4c60c-e288-4dca-a10e-fb1ea89efbc8',
+    code: 'CR-4C5525A7BE',
+    buyer: null,
+    recipient: 'PRUEBA RIO – no usar',
+    buyer_phone: null,
+    num_classes: 1,
+    type: 'torno',
+    dedication: null,
+    validity_months: 12,
+    activated_at: '2026-11-19',
+    extra_commentary: null,
+    external_metadata: { source: 'asistonto' },
+    created_at: '2026-11-19T10:40:18.614472+00'
+  };
+  const client = () => ({
+    rpc: async (fn, args) => { calls.push({ fn, args }); return { data: envelope, error: null }; },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: row, error: null })
+          })
+        })
+      })
+    })
+  });
+  const response = await api.handleWrite(new Request('https://edge.invalid/asistonto-write', {
+    method: 'POST',
+    headers: { 'x-api-key': rioKey, 'content-type': 'application/json' },
+    body: JSON.stringify({ op: 'commit', draftId: envelope.data.draftId })
+  }), getEnv, client);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.replayed, true);
+  assert.equal(body.data.result.bono.code, 'CR-4C5525A7BE');
+  assert.equal(body.fileName, 'Bono-Casa-Rosier-PRUEBA-RIO-no-usar.pdf');
+  assert.equal(body.data.fileName, body.fileName);
+  assert.equal(typeof body.pdfBase64, 'string');
+  assert.ok(body.pdfBase64.length > 1000);
+  assert.equal(body.data.pdfBase64, body.pdfBase64);
+  assert.equal(Buffer.from(body.pdfBase64, 'base64').subarray(0, 5).toString('utf8'), '%PDF-');
+  assert.equal(body.pdfError, undefined);
 });
