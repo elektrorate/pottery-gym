@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",
-    "test:unit": "node --test tests/gift-card-ops.test.mjs tests/bonos-write.test.mjs tests/bonos-designer.test.mjs tests/local-staging-runtime.test.mjs tests/local-staging-restore-rehearsal.test.mjs tests/functional-review.test.mjs tests/asistonto-api.test.mjs tests/stripe-giftcard-webhook.test.mjs tests/gift-card-pdf.test.mjs tests/gift-card-pdf-compare.test.mjs",
+    "test:unit": "node --test tests/gift-card-ops.test.mjs tests/bonos-write.test.mjs tests/bonos-designer.test.mjs tests/local-staging-runtime.test.mjs tests/local-staging-restore-rehearsal.test.mjs tests/functional-review.test.mjs tests/asistonto-api.test.mjs tests/stripe-giftcard-webhook.test.mjs tests/gift-card-pdf.test.mjs tests/gift-card-pdf-compare.test.mjs tests/gift-card-pdf-embedded.test.mjs",
     "test:local": "node tests/run-local-regression.mjs",
     "test:sql:gift-cards": "node supabase/tests/run-gift-card-integrity.mjs",
     "test:sql:sessions": "node supabase/tests/run-atomic-session-operations.mjs",
@@ -26,7 +26,8 @@
     "staging:launch": "node scripts/local-staging-launch.mjs",
     "staging:test": "node scripts/local-staging-test.mjs",
     "staging:stop": "node scripts/local-staging-stop.mjs",
-    "test:security": "node --test tests/security-permissions.test.mjs tests/security-cache.test.mjs tests/security-edge.test.mjs"
+    "test:security": "node --test tests/security-permissions.test.mjs tests/security-cache.test.mjs tests/security-edge.test.mjs",
+    "embed:gift-card-pdf-assets": "node scripts/embed-gift-card-pdf-assets.mjs"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
