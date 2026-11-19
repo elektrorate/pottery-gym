@@ -67,7 +67,7 @@ const MfaGate: React.FC<{children: React.ReactNode; userId: string; onLogout: ()
     </>}
     {error && <p role="alert" className="mt-4 text-sm text-red-600">{error}</p>}
     {!loading && error && !factorId && <button type="button" className="mt-3 underline" onClick={()=>window.location.reload()}>Reintentar comprobación</button>}
-    <button type="button" disabled={busy} onClick={()=>void onLogout()} className="mt-5 text-sm underline">Cerrar sesión</button>
+    <button type="button" disabled={busy} onClick={()=>void onLogout()} className="mt-5 block text-sm underline">Cerrar sesión</button>
   </section></main>;
 }
 
