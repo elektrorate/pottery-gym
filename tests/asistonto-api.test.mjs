@@ -120,3 +120,12 @@ test('write: GET is 405 and an unknown key is 401 even when writes are enabled',
   assert.equal(response.status, 405);
   assert.equal((await write({ op: 'list' }, otherKey)).status, 401);
 });
+
+test('bono_pdf requires a code; unknown code is 404; it does not call the read RPC', async () => {
+  assert.equal((await read('op=bono_pdf')).status, 400);
+  const missing = await read('op=bono_pdf&code=CR-NOPE');
+  assert.equal(missing.status, 404);
+  const body = await missing.json();
+  assert.equal(body.code, 'AS404');
+  assert.equal(calls.length, 0);
+});

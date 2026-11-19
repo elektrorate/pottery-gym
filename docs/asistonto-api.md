@@ -39,6 +39,7 @@ Parámetros no listados: **400**. Ningún campo de contacto, notas, comprador, m
 | `clases` | — | activityTypes, weeklySchedule, exceptions (próximos 90 días), capacityDefaults |
 | `alumnos` | `q` (3–80 caracteres) | hasta 20: id, name, category, status, archived, membershipTier, paymentStatus, classesRemaining |
 | `alumno` | `id` | lo anterior + upcomingSessions (10) + bonos activos/pendientes (code, status, sessionsRemaining, expiryDate) |
+| `bono_pdf` | `code` (obligatorio) | `ok`, `code`, `fileName`, `pdfBase64` (PDF oficial de dos páginas, mismas fuentes y diseño que bono-gift-card). 400 sin código, 404 si no existe en la sede. No devuelve metadatos ni contactos, solo el PDF |
 
 ## Escrituras — `POST /functions/v1/asistonto-write`
 
@@ -54,7 +55,7 @@ Desactivadas salvo `ASISTONTO_WRITES_ENABLED=true` (si no: **403** sin tocar la 
 
 | kind | payload | Ejecución en commit |
 | --- | --- | --- |
-| `bono.create` (W1) | recipient*, numClasses* (1–20), type (modelado/torno), validityMonths (3/6/8/12, def. 12), paymentStatus (pending/paid), deliveryFormat, price, code, buyer, buyerEmail, recipientEmail, dedication, activatedAt | `external_create_gift_card_with_temporal_student` (misma ruta que bonos-write), `external_reference = asistonto:<draftId>`, `approval_ref` en metadatos |
+| `bono.create` (W1) | recipient*, numClasses* (1–20), type (modelado/torno), validityMonths (3/6/8/12, def. 12), paymentStatus (pending/paid), deliveryFormat, price, code, buyer, buyerEmail, recipientEmail, dedication, activatedAt | `external_create_gift_card_with_temporal_student` (misma ruta que bonos-write), `external_reference = asistonto:<draftId>`, `approval_ref` en metadatos. Tras el commit, la Edge Function añade `fileName` y `pdfBase64` (mismo PDF oficial) |
 | `student.create` (W2) | name*, surname, email, phone | alumno **temporal** en la sede (las membresías se siguen dando de alta en la app) |
 | `session.book` (W3) | sessionId*, studentId*, giftCardCode | `private.save_session_reservation` existente (aforo, financiación y reglas de negocio sin duplicar). Sesiones `mixto`: 409, se editan en la app |
 | `session.cancel` (W3) | sessionId*, studentId*, reason | `private.session_business_action('cancel_session_reservation')` existente; el motivo incluye el `approvalRef` |

@@ -23,12 +23,15 @@ verify_jwt = false
 
 [functions.asistonto-read]
 verify_jwt = false
+import_map = "./functions/import_map.json"
 
 [functions.asistonto-write]
 verify_jwt = false
+import_map = "./functions/import_map.json"
 
 [functions.stripe-giftcard-webhook]
 verify_jwt = false
 
 [functions.stripe-giftcard-pending]
 verify_jwt = false
+import_map = "./functions/import_map.json"

@@ -45,3 +45,9 @@ Captura desde 2026-02-27 00-11-44.png
 .atl/
 
 !docs/security-deployment.md
+!docs/asistonto-api.md
+!docs/retiro-bono-gift-card.md
+!supabase/functions/_shared/gift-card-pdf/assets/**/*.png
+
+.tmp-giftCardPdf.mjs
+.tmp-cardDataFromRow.mjs

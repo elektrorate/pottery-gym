@@ -55,7 +55,7 @@ Los secretos se guardan en Supabase (Secrets de Edge Functions), no en Vercel de
    - importe (`price`), comprador, destinatario, teléfono/email internos, dedicatoria, formato digital/físico, 12 meses, 2 h.
 6. Idempotencia: busca primero por `stripeSessionId`; el alta choca con el índice único de `code` (y, cuando se aplique la migración, también con el de sesión). Un reintento o el webhook antiguo → 200 `duplicate`, sin segundo bono.
 7. Aviso opcional a asistonto (HMAC, igual que ahora). Si falla, el bono no se toca y queda en la cola.
-8. Cola `GET/POST /functions/v1/stripe-giftcard-pending`, con la misma clave de asistonto (`x-api-key` / Bearer, huella `ASISTONTO_KEY_SHA256`). Misma forma de respuesta que `/api/gift-cards/pending`. El PDF en este borrador va `pdfBase64: null`: hasta el corte final se sigue generando bajo demanda en `GET https://bono-gift-card.vercel.app/api/gift-cards/pending?code=...`, que ya lee pottery-gym.
+8. Cola `GET/POST /functions/v1/stripe-giftcard-pending`, con la misma clave de asistonto (`x-api-key` / Bearer, huella `ASISTONTO_KEY_SHA256`). Misma forma de respuesta que `/api/gift-cards/pending`. `GET ?code=` genera el PDF oficial en `pdfBase64` (misma lib, fuentes y diseño que bono-gift-card). Cualquier bono (diseñador, formulario, W1 o Stripe) también puede pedirse con `GET /functions/v1/asistonto-read?op=bono_pdf&code=`.
 
 ## Plan de corte (sin dobles ni pagos perdidos)
 

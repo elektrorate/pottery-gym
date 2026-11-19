@@ -3,7 +3,7 @@
  * Preparación: no desplegar ni apuntar Stripe aquí sin el OK de Erick.
  *
  * Stripe firma el cuerpo crudo (HMAC-SHA256, tolerancia 5 min). La función
- * crea el bono con el mismo código determinista que bono-gift-card, de modo
+ * crea el bono con el mismo código determinista que usaba bono-gift-card, de modo
  * que un evento repetido (o el webhook antiguo) recibe 409 y no duplica.
  * La cola de asistonto vive en gift_cards.external_metadata
  * (source=stripe-webhook, sin acknowledgedAt).
@@ -670,16 +670,33 @@ export const listPendingStripeGiftCards = async (store: StripeGiftCardStore) => 
     .reverse();
 };
 
-export const getPendingStripeGiftCard = async (store: StripeGiftCardStore, code: string) => {
+export const getPendingStripeGiftCard = async (
+  store: StripeGiftCardStore,
+  code: string,
+  buildPdf?: (data: import('./gift-card-pdf/types.ts').GiftCardData) => Promise<Uint8Array>
+) => {
   const { data, error } = await store.readByCode(code);
   if (error) throw new Error(error.message || 'read_failed');
   if (!isStripeBono(data)) return null;
-  const metadata = data.external_metadata || {};
+  const { cardDataFromGiftCardRow, pdfFileNameFromRow, bytesToBase64 } = await import('./gift-card-pdf/cardDataFromRow.ts');
+  const fileName = pdfFileNameFromRow(data);
+  let pdfBase64: string | null = null;
+  let pdfError: string | undefined;
+  try {
+    const cardData = cardDataFromGiftCardRow(data);
+    const bytes = await (buildPdf
+      ? buildPdf(cardData)
+      : (await import('./gift-card-pdf/giftCardPdf.ts')).buildGiftCardPdfBytes(cardData));
+    pdfBase64 = bytesToBase64(bytes);
+  } catch (err) {
+    pdfError = err instanceof Error ? err.message : 'No se pudo generar el PDF';
+    console.error('[stripe-giftcard-pending] PDF', pdfError);
+  }
   return {
     giftCard: toPendingEntry(data),
-    fileName: text(metadata.fileName) || `Bono-Casa-Rosier-${data.recipient || 'Regalo'}.pdf`,
-    // El PDF sigue generándose bajo demanda en bono-gift-card hasta el corte final.
-    pdfBase64: null as string | null
+    fileName,
+    pdfBase64,
+    ...(pdfError ? { pdfError } : {})
   };
 };
 
