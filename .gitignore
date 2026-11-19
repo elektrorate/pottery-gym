@@ -33,6 +33,7 @@ Captura desde 2026-02-27 00-11-44.png
 !.docs/student-data-audit.md
 !odd/tasks/agent-readiness.md
 !docs/development-delivery.md
+!docs/stripe-giftcard-webhook.md
 
 # Entorno / secretos
 .env
