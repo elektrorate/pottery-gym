@@ -248,9 +248,11 @@ test('pending: lists oldest first, returns type, acknowledges, 401 without key, 
   assert.equal(listed[0].recipientName, 'Juan Pérez');
   assert.equal(listed[1].recipientName, 'Luis Gomez');
 
-  const one = await api.getPendingStripeGiftCard(store, first.body.voucherCode);
+  const stubPdf = async () => new Uint8Array([37, 80, 68, 70]); // %PDF
+  const one = await api.getPendingStripeGiftCard(store, first.body.voucherCode, stubPdf);
   assert.equal(one.giftCard.voucherCode, first.body.voucherCode);
-  assert.equal(one.pdfBase64, null);
+  assert.equal(one.pdfBase64, Buffer.from([37, 80, 68, 70]).toString('base64'));
+  assert.equal(one.pdfError, undefined);
   assert.equal(await api.getPendingStripeGiftCard(store, 'CR-NOPE'), null);
 
   const ack = await api.acknowledgeStripeGiftCards(store, [first.body.voucherCode, 'CR-MISSING'], 'asistonto', NOW);

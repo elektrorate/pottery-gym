@@ -4,8 +4,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { GiftCardData } from './types';
 import { GiftCardSide } from './components/GiftCardSide';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import {
   ChevronDown,
   ChevronRight,
@@ -26,7 +24,7 @@ import {
   Users
 } from 'lucide-react';
 import logoAdjunto from './assets/logos/logo-casa-rosier.png';
-import { CARD_PX_HEIGHT, CARD_PX_WIDTH, portraitCardPageMm } from './lib/pdfLayout';
+import { buildGiftCardPdfBytes } from '../supabase/functions/_shared/gift-card-pdf/giftCardPdf.ts';
 import { ScaledCard } from './components/ScaledCard';
 import { DEFAULT_VALIDITY_TEXT, LEGACY_DEFAULT_VALIDITY_TEXT, VALIDITY_OPTIONS } from './lib/giftCardDefaults';
 import { supabase } from '../supabaseClient';
@@ -698,114 +696,6 @@ const AdminApp: React.FC = () => {
    * fixed portrait size (480 × 758.4 px), outside the scaled preview, so the
    * PDF does not depend on the screen width.
    */
-  const preparePdfTargets = () => {
-    const liveTargets = Array.from(document.querySelectorAll('.print-container')) as HTMLElement[];
-
-    const captureRoot = document.createElement('div');
-    captureRoot.id = 'pdf-capture-root';
-    captureRoot.style.position = 'fixed';
-    captureRoot.style.left = '-10000px';
-    captureRoot.style.top = '0';
-    captureRoot.style.width = '0';
-    captureRoot.style.height = '0';
-    captureRoot.style.overflow = 'visible';
-    captureRoot.style.pointerEvents = 'none';
-    captureRoot.style.zIndex = '-1';
-
-    const targets = liveTargets.map((element) => {
-      const pageWrap = document.createElement('div');
-      pageWrap.style.width = `${CARD_PX_WIDTH}px`;
-      pageWrap.style.height = `${CARD_PX_HEIGHT}px`;
-      pageWrap.style.overflow = 'hidden';
-      pageWrap.style.background = '#fdfcfa';
-      pageWrap.style.marginBottom = '20px';
-
-      const clone = element.cloneNode(true) as HTMLElement;
-      clone.style.width = `${CARD_PX_WIDTH}px`;
-      clone.style.height = `${CARD_PX_HEIGHT}px`;
-      clone.style.margin = '0';
-      clone.style.padding = '0';
-      clone.style.transform = 'none';
-      clone.style.boxShadow = 'none';
-      clone.classList.remove('shadow-2xl', 'shadow-stone-200/50');
-
-      pageWrap.appendChild(clone);
-      captureRoot.appendChild(pageWrap);
-      return pageWrap;
-    });
-
-    document.body.appendChild(captureRoot);
-
-    return {
-      targets,
-      // 480 px × 2.5 = 1200 px de ancho para 120,25 mm (≈ 250 ppp).
-      captureScale: 2.5,
-      captureWindowWidth: 1440,
-      captureWindowHeight: 1024,
-      cleanup: () => {
-        captureRoot.remove();
-      }
-    };
-  };
-
-  const buildWhatsAppMessage = (card: GiftCardData, fileName?: string) => (
-    `Hola ${card.buyerName || ''}, te comparto tu tarjeta regalo de Casa Rosier.\n\nDestinatario: ${card.recipientName}\nDe parte de: ${card.donorName}\nClases: ${card.numberOfClasses}\nDuración: ${card.sessionDuration} h\nFecha de emisión: ${card.creationDate}${card.voucherCode ? `\nCódigo: ${card.voucherCode}` : ''}\n\nTe adjunto el PDF del bono${fileName ? ` (${fileName})` : ''}.`
-  );
-
-  const downloadPdfBlob = (pdf: { fileName: string; blob: Blob }) => {
-    const downloadUrl = URL.createObjectURL(pdf.blob);
-    const downloadLink = document.createElement('a');
-    downloadLink.href = downloadUrl;
-    downloadLink.download = pdf.fileName;
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
-    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-  };
-
-  /**
-   * Always opens WhatsApp to the buyer's phone (internalContactPhone).
-   * Downloads the PDF so it can be attached in that chat (wa.me cannot attach files by URL).
-   * On supporting mobile browsers, also offers the system share sheet with the PDF attached.
-   */
-  const sharePdfViaWhatsApp = async (
-    pdf: { fileName: string; blob: Blob },
-    card: GiftCardData,
-    buyerPhone: string
-  ): Promise<'shared-to-buyer' | 'opened-buyer-chat' | 'aborted'> => {
-    const message = buildWhatsAppMessage(card, pdf.fileName);
-    const buyerChatUrl = `https://wa.me/${buyerPhone}?text=${encodeURIComponent(message)}`;
-    const pdfFile = new File([pdf.blob], pdf.fileName, { type: 'application/pdf' });
-    const canShareFile = typeof navigator.share === 'function'
-      && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [pdfFile] }));
-
-    // Always download so the PDF is available to attach in the buyer's chat.
-    downloadPdfBlob(pdf);
-
-    // Mobile: share sheet with PDF attached. Text includes buyer so the right chat is chosen.
-    if (canShareFile) {
-      try {
-        await navigator.share({
-          title: `Bono Casa Rosier → ${card.buyerName || 'comprador'}`,
-          text: `${message}\n\nDestino: comprador ${card.buyerName || ''} (WhatsApp +${buyerPhone})`,
-          files: [pdfFile]
-        });
-        return 'shared-to-buyer';
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          // User dismissed share; still open the buyer's chat.
-          openWhatsAppExternally(buyerChatUrl);
-          return 'aborted';
-        }
-        console.warn('No se pudo compartir el PDF con archivos:', error);
-      }
-    }
-
-    // Desktop / fallback: open the buyer's WhatsApp chat directly.
-    openWhatsAppExternally(buyerChatUrl);
-    return 'opened-buyer-chat';
-  };
-
   const generateGiftCardPdf = async (): Promise<{
     fileName: string;
     blob: Blob;
@@ -818,80 +708,11 @@ const AdminApp: React.FC = () => {
     flushSync(() => {
       setData(cardSnapshot);
     });
-
-    const preparedTargets = preparePdfTargets();
-    const {
-      targets: cardElements,
-      captureScale,
-      captureWindowWidth,
-      captureWindowHeight
-    } = preparedTargets;
-
-    try {
-      if (!cardElements.length) {
-        throw new Error('No se encontraron las caras de la tarjeta.');
-      }
-
-      if (document.fonts && typeof document.fonts.ready !== 'undefined') {
-        await document.fonts.ready;
-      }
-
-      // Tarjeta vertical: cada página es una cara entera, derecha y sin márgenes.
-      // Igual en móvil, en ordenador y en el PDF del bot (lib/pdfLayout.ts).
-      const layout = portraitCardPageMm();
-
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: [layout.pageWidth, layout.pageHeight]
-      });
-
-      for (let i = 0; i < cardElements.length; i++) {
-        const element = cardElements[i];
-        const canvas = await html2canvas(element, {
-          scale: captureScale,
-          windowWidth: captureWindowWidth,
-          windowHeight: captureWindowHeight,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#fdfcfa',
-          onclone: (clonedDoc) => {
-            const style = clonedDoc.createElement('style');
-            style.textContent = `
-              .classes-hours-row {
-                display: inline-block !important;
-                white-space: nowrap !important;
-                line-height: 1.12 !important;
-              }
-              .classes-hours-row .classes-main {
-                font-size: 44px !important;
-              }
-              .classes-hours-row .classes-hours {
-                font-size: 30px !important;
-                margin-left: 8px !important;
-                position: relative !important;
-                top: -2px !important;
-              }
-            `;
-            clonedDoc.head.appendChild(style);
-          }
-        });
-
-        const imgData = canvas.toDataURL('image/jpeg', 1.0);
-
-        if (i > 0) {
-          pdf.addPage([layout.pageWidth, layout.pageHeight], 'portrait');
-        }
-
-        pdf.addImage(imgData, 'JPEG', 0, 0, layout.pageWidth, layout.pageHeight);
-      }
-
-      const fileName = getSafeFileName(cardSnapshot.donorName);
-      const blob = pdf.output('blob');
-      return { fileName, blob, voucherCode, cardSnapshot };
-    } finally {
-      preparedTargets.cleanup();
-    }
+    // Official vector PDF (same lib, fonts and layout as bono-gift-card / the bot API).
+    const bytes = await buildGiftCardPdfBytes(cardSnapshot);
+    const fileName = getSafeFileName(cardSnapshot.donorName);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    return { fileName, blob, voucherCode, cardSnapshot };
   };
 
   const handleDownloadPDF = async () => {

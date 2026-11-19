@@ -1,7 +1,9 @@
 import { getGiftCardLifecycle, type GiftCardLifecycle } from '../utils/recordPresentation';
 import React, { useEffect, useMemo, useState } from 'react';
-import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
+import { buildGiftCardPdfBytes } from '../supabase/functions/_shared/gift-card-pdf/giftCardPdf.ts';
+import { cardDataFromGiftCardRow, pdfFileNameFromRow } from '../supabase/functions/_shared/gift-card-pdf/cardDataFromRow.ts';
+import { getSafeFileName, todayEs } from '../bonos-designer/lib/giftCardDefaults';
 import { showError } from '../context/toast';
 import { GiftCard, Student } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
@@ -312,19 +314,31 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
 
   const downloadPdf = async () => {
     const card = getPreviewCard();
-    const code = card.code || card.id;
-    const qr = await QRCode.toDataURL(code, { width: 260, margin: 1, color: { dark: '#FF5300', light: '#FFFFFF' } });
-    const pdf = new jsPDF({ unit: 'mm', format: 'a5' });
-    pdf.setFillColor(247, 244, 240); pdf.rect(0, 0, 148, 210, 'F');
-    pdf.setTextColor(255, 83, 0); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(24); pdf.text('CASA ROSIER', 16, 25);
-    pdf.setFontSize(10); pdf.setTextColor(92, 102, 119); pdf.text('BONO DE CLASE TEMPORAL', 16, 33);
-    pdf.setTextColor(23, 35, 56); pdf.setFontSize(18); pdf.text(`Experiencia de ${typeLabel(card.type)}`, 16, 52);
-    pdf.setFontSize(12); pdf.text(`${card.numClasses} ${card.numClasses === 1 ? 'sesión' : 'sesiones'} de cerámica`, 16, 62);
-    pdf.setFontSize(11); pdf.setTextColor(92, 102, 119); pdf.text(`Para: ${card.recipient}`, 16, 76); pdf.text(`Válido hasta: ${formatDateOnly(card.expiryDate)}`, 16, 84);
-    if (card.dedication) { pdf.setFont('helvetica', 'italic'); pdf.text(`“${card.dedication.slice(0, 70)}”`, 16, 98, { maxWidth: 95 }); }
-    pdf.addImage(qr, 'PNG', 101, 112, 31, 31); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(13); pdf.setTextColor(255, 83, 0); pdf.text(code, 16, 128);
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(92, 102, 119); pdf.text('Reserva posteriormente según disponibilidad.', 16, 164); pdf.text('Presenta este código al validar cada sesión.', 16, 171);
-    pdf.save(`${code}.pdf`);
+    const data = cardDataFromGiftCardRow({
+      code: card.code,
+      buyer: card.buyer,
+      recipient: card.recipient,
+      buyer_phone: card.buyerPhone,
+      num_classes: card.numClasses,
+      type: card.type,
+      dedication: card.dedication,
+      validity_months: card.validityMonths,
+      activated_at: card.activatedAt,
+      extra_commentary: card.extraCommentary,
+      external_metadata: { donorName: card.buyer, creationDate: todayEs() },
+      created_at: card.createdAt
+    }, todayEs());
+    const bytes = await buildGiftCardPdfBytes(data);
+    const fileName = pdfFileNameFromRow({ code: card.code, recipient: card.recipient, buyer: card.buyer }) || getSafeFileName(card.buyer || card.recipient || 'Regalo');
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   const sendByEmail = () => {

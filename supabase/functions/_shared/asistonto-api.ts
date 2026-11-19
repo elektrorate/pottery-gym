@@ -11,6 +11,15 @@ export type Actor = 'asistonto' | 'rio';
 export type Env = (name: string) => string | undefined;
 export type RpcClient = {
   rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }>;
+  from?: (table: string) => {
+    select: (columns: string) => {
+      eq: (column: string, value: unknown) => {
+        eq: (column: string, value: unknown) => {
+          maybeSingle: () => PromiseLike<{ data: Record<string, unknown> | null; error: { message?: string } | null }>;
+        };
+      };
+    };
+  };
 };
 export type ClientFactory = (url: string, serviceRoleKey: string) => RpcClient;
 
@@ -88,7 +97,30 @@ const log = (fn: string, actor: Actor | null, op: string | null, status: number)
   console.info(JSON.stringify({ fn, actor, op, status })); // never bodies, keys or personal data
 
 const READ_PARAMS: Record<string, string[]> = {
-  bonos: ['code', 'status', 'limit'], calendario: ['from', 'to'], clases: [], alumnos: ['q'], alumno: ['id']
+  bonos: ['code', 'status', 'limit'], calendario: ['from', 'to'], clases: [], alumnos: ['q'], alumno: ['id'], bono_pdf: ['code']
+};
+
+
+const GIFT_CARD_PDF_COLUMNS = 'id,code,buyer,recipient,buyer_phone,num_classes,type,dedication,validity_months,activated_at,extra_commentary,external_metadata,created_at';
+
+const readGiftCardRow = async (client: RpcClient, sedeId: string, code: string) => {
+  if (typeof client.from !== 'function') return { data: null, error: { message: 'client_has_no_from' } };
+  return client.from('gift_cards').select(GIFT_CARD_PDF_COLUMNS).eq('sede_id', sedeId).eq('code', code.toUpperCase()).maybeSingle();
+};
+
+export const attachBonoPdf = async (row: Record<string, unknown> | null) => {
+  if (!row) return { pdfBase64: null as string | null, fileName: null as string | null, pdfError: 'Bono no encontrado' };
+  const { cardDataFromGiftCardRow, pdfFileNameFromRow, bytesToBase64 } = await import('./gift-card-pdf/cardDataFromRow.ts');
+  const fileName = pdfFileNameFromRow(row);
+  try {
+    const { buildGiftCardPdfBytes } = await import('./gift-card-pdf/giftCardPdf.ts');
+    const bytes = await buildGiftCardPdfBytes(cardDataFromGiftCardRow(row));
+    return { pdfBase64: bytesToBase64(bytes), fileName, pdfError: undefined as string | undefined };
+  } catch (error) {
+    const pdfError = error instanceof Error ? error.message : 'No se pudo generar el PDF';
+    console.error('[asistonto] PDF', pdfError);
+    return { pdfBase64: null as string | null, fileName, pdfError };
+  }
 };
 
 export const handleRead = async (req: Request, env: Env, makeClient: ClientFactory): Promise<Response> => {
@@ -106,6 +138,35 @@ export const handleRead = async (req: Request, env: Env, makeClient: ClientFacto
     if (name === 'op') continue;
     if (!allowed.includes(name) || name in params || value.length > 200) return json({ error: `Unsupported parameter ${name}` }, 400);
     params[name] = value;
+  }
+  if (op === 'bono_pdf') {
+    const code = (params.code || '').trim();
+    if (!code) {
+      const response = json({ error: 'Indica ?code=CR-... para obtener el PDF.' }, 400);
+      log('asistonto-read', actor, op, response.status);
+      return response;
+    }
+    const { data, error } = await readGiftCardRow(config.client, config.sedeId, code);
+    if (error && error.message !== 'client_has_no_from') {
+      const response = dbError(error);
+      log('asistonto-read', actor, op, response.status);
+      return response;
+    }
+    if (!data) {
+      const response = json({ error: 'Bono no encontrado', code: 'AS404' }, 404);
+      log('asistonto-read', actor, op, response.status);
+      return response;
+    }
+    const pdf = await attachBonoPdf(data);
+    const response = json({
+      ok: !pdf.pdfError,
+      code: String(data.code || code).toUpperCase(),
+      fileName: pdf.fileName,
+      pdfBase64: pdf.pdfBase64,
+      ...(pdf.pdfError ? { pdfError: pdf.pdfError } : {})
+    }, pdf.pdfBase64 ? 200 : 500);
+    log('asistonto-read', actor, op, response.status);
+    return response;
   }
   const { data, error } = await config.client.rpc('asistonto_read', { p_sede_id: config.sedeId, p_op: op, p_params: params });
   const response = error ? dbError(error) : json(data, 200);
@@ -149,7 +210,23 @@ export const handleWrite = async (req: Request, env: Env, makeClient: ClientFact
   const { data, error } = await config.client.rpc('asistonto_write', {
     p_sede_id: config.sedeId, p_actor: actor, p_op: op, p_params: params
   });
-  const response = error ? dbError(error) : json(data, op === 'draft' ? 201 : 200);
+  if (error) {
+    const response = dbError(error);
+    log('asistonto-write', actor, op, response.status);
+    return response;
+  }
+  let payload = data;
+  const code = op === 'commit' && payload && typeof payload === 'object'
+    ? String((payload as { result?: { bono?: { code?: string } } }).result?.bono?.code || '').trim()
+    : '';
+  if (code) {
+    const { data: row } = await readGiftCardRow(config.client, config.sedeId, code);
+    if (row) {
+      const pdf = await attachBonoPdf(row);
+      payload = { ...(payload as object), fileName: pdf.fileName, pdfBase64: pdf.pdfBase64, ...(pdf.pdfError ? { pdfError: pdf.pdfError } : {}) };
+    }
+  }
+  const response = json(payload, op === 'draft' ? 201 : 200);
   log('asistonto-write', actor, op, response.status);
   return response;
 };
