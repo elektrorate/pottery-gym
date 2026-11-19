@@ -78,7 +78,7 @@ if (check) {
     }
     throw error;
   }
-  if (existing !== current) {
+  if (existing.replace(/\r\n/g, '\n') !== current.replace(/\r\n/g, '\n')) {
     console.error(`${outFile} is stale; run node scripts/embed-gift-card-pdf-assets.mjs`);
     process.exit(1);
   }

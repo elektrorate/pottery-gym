@@ -691,11 +691,65 @@ const AdminApp: React.FC = () => {
     setNotice({ type: 'success', message: `Se cargó el bono ${record.voucherCode || record.fileName} en el editor.` });
   };
 
+  // Shared vector PDF keeps the official card design on every screen size.
+  const buildWhatsAppMessage = (card: GiftCardData, fileName?: string) => (
+    `Hola ${card.buyerName || ''}, te comparto tu tarjeta regalo de Casa Rosier.\n\nDestinatario: ${card.recipientName}\nDe parte de: ${card.donorName}\nClases: ${card.numberOfClasses}\nDuración: ${card.sessionDuration} h\nFecha de emisión: ${card.creationDate}${card.voucherCode ? `\nCódigo: ${card.voucherCode}` : ''}\n\nTe adjunto el PDF del bono${fileName ? ` (${fileName})` : ''}.`
+  );
+
+  const downloadPdfBlob = (pdf: { fileName: string; blob: Blob }) => {
+    const downloadUrl = URL.createObjectURL(pdf.blob);
+    const downloadLink = document.createElement('a');
+    downloadLink.href = downloadUrl;
+    downloadLink.download = pdf.fileName;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+  };
+
   /**
-   * Same capture on desktop and mobile: each face is cloned off-screen at its
-   * fixed portrait size (480 × 758.4 px), outside the scaled preview, so the
-   * PDF does not depend on the screen width.
+   * Always opens WhatsApp to the buyer's phone (internalContactPhone).
+   * Downloads the PDF so it can be attached in that chat (wa.me cannot attach files by URL).
+   * On supporting mobile browsers, also offers the system share sheet with the PDF attached.
    */
+  const sharePdfViaWhatsApp = async (
+    pdf: { fileName: string; blob: Blob },
+    card: GiftCardData,
+    buyerPhone: string
+  ): Promise<'shared-to-buyer' | 'opened-buyer-chat' | 'aborted'> => {
+    const message = buildWhatsAppMessage(card, pdf.fileName);
+    const buyerChatUrl = `https://wa.me/${buyerPhone}?text=${encodeURIComponent(message)}`;
+    const pdfFile = new File([pdf.blob], pdf.fileName, { type: 'application/pdf' });
+    const canShareFile = typeof navigator.share === 'function'
+      && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [pdfFile] }));
+
+    // Always download so the PDF is available to attach in the buyer's chat.
+    downloadPdfBlob(pdf);
+
+    // Mobile: share sheet with PDF attached. Text includes buyer so the right chat is chosen.
+    if (canShareFile) {
+      try {
+        await navigator.share({
+          title: `Bono Casa Rosier → ${card.buyerName || 'comprador'}`,
+          text: `${message}\n\nDestino: comprador ${card.buyerName || ''} (WhatsApp +${buyerPhone})`,
+          files: [pdfFile]
+        });
+        return 'shared-to-buyer';
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          // User dismissed share; still open the buyer's chat.
+          openWhatsAppExternally(buyerChatUrl);
+          return 'aborted';
+        }
+        console.warn('No se pudo compartir el PDF con archivos:', error);
+      }
+    }
+
+    // Desktop / fallback: open the buyer's WhatsApp chat directly.
+    openWhatsAppExternally(buyerChatUrl);
+    return 'opened-buyer-chat';
+  };
+
   const generateGiftCardPdf = async (): Promise<{
     fileName: string;
     blob: Blob;
