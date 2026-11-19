@@ -94,18 +94,15 @@ const Login: React.FC = () => {
 
       <div className="mx-auto w-full max-w-[440px] rounded-[24px] border border-neutral-border bg-white p-6 soft-shadow animate-fade-in md:p-10">
         <div className="flex flex-col items-center">
-        <div className="relative mb-7 flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-brand text-2xl font-bold text-white shadow-sm">
-          <DiagonalPattern dark className="opacity-45" />
-          <span className="relative z-10">R</span>
-        </div>
-
-        <div className="text-center mb-8 w-full">
-          <p className="eyebrow mb-2">Sistema de gestión</p>
-           <h1 className="ui-page-title text-neutral-textMain">
-            {mode === 'login' ? <>Bienvenido al <span className="text-brand italic">estudio</span></> : <>Recupera tu <span className="text-brand italic">acceso</span></>}
-          </h1>
-          <div className="h-[3px] w-10 bg-caramelo mx-auto mt-5 rounded-full" />
-          {mode === 'forgot-password' && <p className="mt-4 text-[14px] text-neutral-textHelper leading-relaxed">Escribe el correo asociado a tu cuenta y te enviaremos un enlace seguro.</p>}
+        <div className="mb-8 flex w-full flex-col items-center text-center">
+          <h1 className="text-[11px] font-semibold uppercase leading-relaxed tracking-[0.16em] text-neutral-textSec">Sistema de gestión de taller cerámico</h1>
+          <div className="mt-5 w-full max-w-[290px] rounded-xl bg-[#FAFAFA] px-2 py-1">
+            <img src="/pottery-gym-logo.svg" alt="Pottery Gym" width="508" height="264" className="h-auto w-full" />
+          </div>
+          {mode === 'forgot-password' && <>
+            <h2 className="mt-5 text-lg font-semibold text-neutral-textMain">Recupera tu acceso</h2>
+            <p className="mt-4 text-[14px] leading-relaxed text-neutral-textHelper">Escribe el correo asociado a tu cuenta y te enviaremos un enlace seguro.</p>
+          </>}
         </div>
 
         <form onSubmit={mode === 'login' ? handleLogin : handlePasswordRecovery} className="w-full space-y-5 relative">
