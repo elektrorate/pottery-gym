@@ -64,6 +64,8 @@ const formatDateOnly = (value?: string) => {
 };
 
 const typeLabel = (type: GiftCard['type']) => type === 'torno' ? 'Torno' : 'Modelado';
+const paymentLabel = (status?: GiftCard['paymentStatus']) => status === 'paid' ? 'Pagado' : status === 'refunded' ? 'Reembolsado' : status === 'pending' ? 'Pendiente' : 'Sin pago';
+const amountLabel = (price?: number) => price == null || Number.isNaN(Number(price)) ? 'Sin importe' : `${price} €`;
 const movementLabel = (type: NonNullable<GiftCard['movements']>[number]['type']) => ({ redeem: 'Asistencia validada', reverse: 'Asistencia corregida', manual: 'Ajuste manual', cancel: 'Anulación' }[type]);
 
 const statusMeta: Record<NonNullable<GiftCard['status']>, { label: string; className: string }> = {
@@ -130,7 +132,7 @@ const GiftCardItem: React.FC<{ card: GiftCard; lifecycleStatus: GiftCardLifecycl
   const expiryDate = getEffectiveExpiryDate(card);
   const consumptionDate = getFirstConsumptionDate(card);
   return (
-    <button type="button" onClick={() => onEdit(card)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#EDE2D8] bg-white px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[#FCF8F4] md:grid-cols-[minmax(220px,1.6fr)_minmax(100px,.7fr)_minmax(120px,.8fr)_minmax(160px,.9fr)_auto] md:gap-4 md:px-5">
+    <button type="button" onClick={() => onEdit(card)} className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#EDE2D8] bg-white px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-[#FCF8F4] md:grid-cols-[minmax(200px,1.5fr)_minmax(90px,.6fr)_minmax(100px,.6fr)_minmax(90px,.5fr)_minmax(90px,.5fr)_minmax(150px,.8fr)_auto] md:gap-4 md:px-5">
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F3E7DC] text-[12px] font-bold text-[#7B3F22]">{(card.recipient || card.buyer || '?').charAt(0).toUpperCase()}</div>
         <div className="min-w-0">
@@ -140,9 +142,11 @@ const GiftCardItem: React.FC<{ card: GiftCard; lifecycleStatus: GiftCardLifecycl
       </div>
       <span className="hidden rounded-md bg-[#F8EEE5] px-2 py-1 text-[12px] font-semibold text-[#7B3F22] md:inline-flex">{typeLabel(card.type)}</span>
       <div className="text-right md:text-left"><strong className="text-[17px] tabular-nums text-[#3F2E27]">{remaining}</strong><span className="ui-meta ml-1">/{card.numClasses} sesiones</span></div>
+      <span className="hidden text-[13px] font-semibold tabular-nums text-[#3F2E27] md:inline">{amountLabel(card.price)}</span>
+      <span className="hidden text-[12px] font-semibold text-[#7B3F22] md:inline">{paymentLabel(card.paymentStatus)}</span>
         <div className="hidden min-w-0 md:block"><span className={`inline-flex rounded-full px-2 py-1 text-[12px] font-semibold ${status.className}`}>{status.label}</span><p className="ui-meta mt-1">{lifecycleStatus === 'consumed' ? `Consumida ${formatDateOnly(consumptionDate)}` : lifecycleStatus === 'cancelled' ? 'Archivada como anulada' : expiryDate ? `Caduca ${formatDateOnly(expiryDate)}` : 'Caducidad sin verificar'}</p></div>
       <span className="text-[#9B8175] md:px-2">›</span>
-        <div className="col-span-2 flex items-center gap-2 border-t border-[#F0E5DB] pt-2 md:hidden"><span className="rounded-md bg-[#F8EEE5] px-2 py-1 text-[12px] font-semibold text-[#7B3F22]">{typeLabel(card.type)}</span><span className={`rounded-full px-2 py-1 text-[12px] font-semibold ${status.className}`}>{status.label}</span><span className="ui-meta ml-auto">{lifecycleStatus === 'consumed' ? `Consumida ${formatDateOnly(consumptionDate)}` : lifecycleStatus === 'cancelled' ? 'Anulada' : expiryDate ? formatDateOnly(expiryDate) : 'Sin fecha'}</span></div>
+        <div className="col-span-2 flex flex-wrap items-center gap-2 border-t border-[#F0E5DB] pt-2 md:hidden"><span className="rounded-md bg-[#F8EEE5] px-2 py-1 text-[12px] font-semibold text-[#7B3F22]">{typeLabel(card.type)}</span><span className={`rounded-full px-2 py-1 text-[12px] font-semibold ${status.className}`}>{status.label}</span><span className="ui-meta">{amountLabel(card.price)} · {paymentLabel(card.paymentStatus)}</span><span className="ui-meta ml-auto">{lifecycleStatus === 'consumed' ? `Consumida ${formatDateOnly(consumptionDate)}` : lifecycleStatus === 'cancelled' ? 'Anulada' : expiryDate ? formatDateOnly(expiryDate) : 'Sin fecha'}</span></div>
     </button>
   );
 };
@@ -210,7 +214,8 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
       const lifecycle = lifecycleByCard[card.id];
       const cardTab = lifecycle === 'pending' || lifecycle === 'active' ? lifecycle : 'archived';
       if (activeTab !== cardTab) return false;
-      if (query && !normalizeSearchValue(card.buyer || '').includes(query)) return false;
+      const haystack = [card.buyer, card.recipient, card.code].map(value => normalizeSearchValue(value || '')).join(' ');
+      if (query && !haystack.includes(query)) return false;
       if (durationFilter === 'missing' && card.validityMonths !== undefined) return false;
       if (typeof durationFilter === 'number' && card.validityMonths !== durationFilter) return false;
       return true;
@@ -395,9 +400,9 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
          <section className="mb-4 space-y-3" aria-label="Filtros de tarjetas de regalo">
            <div className="flex flex-col gap-2.5 md:flex-row md:items-center">
              <label className="relative min-w-0 flex-1">
-               <span className="sr-only">Buscar por comprador</span>
+               <span className="sr-only">Buscar por comprador, destinatario o código</span>
                <svg className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0" /></svg>
-               <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Buscar por nombre del comprador" aria-label="Buscar tarjeta por nombre del comprador" className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white pl-10 pr-4 text-[13px] text-[#3F2E27] outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15" />
+               <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Buscar por comprador, destinatario o código" aria-label="Buscar tarjeta por comprador, destinatario o código" className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white pl-10 pr-4 text-[13px] text-[#3F2E27] outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15" />
              </label>
              <label className="relative w-full md:w-[210px]">
                <span className="sr-only">Filtrar por duración</span>
@@ -413,7 +418,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
               {(['pending', 'active', 'archived'] as GiftCardTab[]).map(tab => <button key={tab} type="button" onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab} className={`min-h-9 shrink-0 border-b-2 px-3 text-[11px] font-bold uppercase tracking-[0.12em] transition-colors ${activeTab === tab ? 'border-brand text-brand' : 'border-transparent text-neutral-textHelper hover:text-brand'}`}>{tab === 'pending' ? 'Pendientes' : tab === 'active' ? 'Activos' : 'Archivados'} <span className="ml-1 opacity-70">{tabCounts[tab]}</span></button>)}
            </div>
          </section>
-         <section className="overflow-hidden rounded-[16px] border border-[#E8D9CC] bg-white"><div className="hidden grid-cols-[minmax(220px,1.6fr)_minmax(100px,.7fr)_minmax(120px,.8fr)_minmax(160px,.9fr)_auto] gap-4 border-b border-[#EDE2D8] bg-[#F8EEE5] px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-[#8B6B5E] md:grid"><span>Comprador / destinatario</span><span>Experiencia</span><span>Saldo</span><span>Estado</span><span></span></div>{filteredGiftCards.length === 0 ? <div className="py-14 text-center"><p className="text-[14px] font-semibold text-[#3F2E27]">No hay tarjetas que coincidan</p><p className="ui-secondary mt-1">Prueba a cambiar la búsqueda, duración o pestaña activa.</p></div> : filteredGiftCards.map(card => <GiftCardItem key={card.id} card={card} lifecycleStatus={lifecycleByCard[card.id]} onEdit={handleEditClick} />)}</section>
+         <section className="overflow-hidden rounded-[16px] border border-[#E8D9CC] bg-white"><div className="hidden grid-cols-[minmax(200px,1.5fr)_minmax(90px,.6fr)_minmax(100px,.6fr)_minmax(90px,.5fr)_minmax(90px,.5fr)_minmax(150px,.8fr)_auto] gap-4 border-b border-[#EDE2D8] bg-[#F8EEE5] px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-[#8B6B5E] md:grid"><span>Comprador / destinatario</span><span>Experiencia</span><span>Saldo</span><span>Importe</span><span>Pago</span><span>Estado</span><span></span></div>{filteredGiftCards.length === 0 ? <div className="py-14 text-center"><p className="text-[14px] font-semibold text-[#3F2E27]">No hay tarjetas que coincidan</p><p className="ui-secondary mt-1">Prueba a cambiar la búsqueda, duración o pestaña activa.</p></div> : filteredGiftCards.map(card => <GiftCardItem key={card.id} card={card} lifecycleStatus={lifecycleByCard[card.id]} onEdit={handleEditClick} />)}</section>
       </div>
 
        {showModal && <div className="fixed inset-0 z-[100] flex items-end bg-[#2F1E17]/45 p-0 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-5"><form onSubmit={handleSubmit} className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[#FFFCF8] text-[#2F211B] shadow-[0_24px_70px_rgba(59,35,24,0.2)] sm:h-auto sm:max-h-[94dvh] sm:max-w-3xl sm:rounded-[24px] sm:border sm:border-[#E8D9CC]"><header className="flex shrink-0 items-start justify-between border-b border-[#E8D9CC] px-5 py-4 sm:px-8"><div><p className="ui-label uppercase tracking-[0.16em] text-[#B07D4E]">Gestión de gift card</p><h2 className="ui-section-title mt-1 font-['Playfair_Display'] text-[#7B3F22]">{editingCard ? 'Editar bono temporal' : 'Nuevo bono temporal'}</h2><p className="ui-meta mt-1">Sin reserva automática. El saldo se descuenta al validar asistencia.</p></div><button type="button" onClick={() => setShowModal(false)} className="flex h-10 w-10 items-center justify-center rounded-full text-[#8B6B5E] hover:bg-[#F3E7DC]" aria-label="Cerrar"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 18 18 6M6 6l12 12" /></svg></button></header><div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 custom-scrollbar sm:px-8">

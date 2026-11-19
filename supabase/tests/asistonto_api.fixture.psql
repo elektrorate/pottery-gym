@@ -133,6 +133,21 @@ select public.t_assert((select s.student_category = 'temporal' and g.external_me
   where g.external_reference = 'asistonto:' || (select v from t_state where k='w1')), 'W1 links a new temporal student and records approvalRef');
 set role service_role;
 
+-- W1 phones: accepted, validated, and stored on the card and the temporal student.
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – no usar","numClasses":1,"buyerPhone":"abc"}}')$q$, 'AS400', 'invalid buyerPhone rejected');
+select public.t_reject($q$select public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft','{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – no usar","numClasses":1,"recipientPhone":"12"}}')$q$, 'AS400', 'invalid recipientPhone rejected');
+insert into public.t_state select 'w1p', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
+  '{"kind":"bono.create","payload":{"recipient":"PRUEBA RIO – telefonos","numClasses":2,"paymentStatus":"paid","price":100,"buyer":"Aina","buyerPhone":"606 130 865","recipientPhone":"600 000 000"}}')#>>'{data,draftId}';
+select public.asistonto_write('30000000-0000-0000-0000-000000000001','rio','approve',
+  jsonb_build_object('draftId', (select v from t_state where k='w1p'), 'approvalRef', 't-phones'));
+insert into public.t_state select 'w1pc', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','commit',
+  jsonb_build_object('draftId', (select v from t_state where k='w1p')))::text;
+reset role;
+select public.t_assert((select g.buyer = 'Aina' and g.buyer_phone = '606 130 865' and g.price = 100 and s.phone = '600 000 000' and s.student_category = 'temporal'
+  from public.gift_cards g join public.students s on s.id = g.recipient_student_id
+  where g.external_reference = 'asistonto:' || (select v from t_state where k='w1p')), 'W1 stores buyerPhone on the card and recipientPhone on the temporal student');
+set role service_role;
+
 -- Discard + expiry.
 insert into public.t_state select 'disc', public.asistonto_write('30000000-0000-0000-0000-000000000001','asistonto','draft',
   '{"kind":"student.create","payload":{"name":"PRUEBA RIO – no usar"}}')#>>'{data,draftId}';

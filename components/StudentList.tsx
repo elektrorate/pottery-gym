@@ -1,7 +1,7 @@
-import { hasVerifiedMembership, needsStudentReview, studentBalanceLabel } from '../utils/studentPresentation';
+import { hasVerifiedMembership, needsStudentReview, studentBalanceLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining } from '../utils/studentPresentation';
 import { showError } from '../context/toast';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Student, AssignedClass, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent } from '../types';
+import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
@@ -10,6 +10,7 @@ import type { ManualCreditIntent, PenaltySettlementIntent, SessionBusinessIntent
 
 interface StudentListProps {
   students: Student[];
+  giftCards?: GiftCard[];
   detailsLoading?: boolean;
   reviewOnly?: boolean;
   onAddStudent: (student: Omit<Student, 'id'>) => Promise<void>;
@@ -242,6 +243,7 @@ const getMonthCalendarDays = (monthKey: string): Array<number | null> => {
 
 const StudentList: React.FC<StudentListProps> = ({
   students,
+  giftCards = [],
   detailsLoading = false, reviewOnly = false,
   onAddStudent,
   onRenew,
@@ -342,7 +344,7 @@ const StudentList: React.FC<StudentListProps> = ({
       classesRemaining: student.classesRemaining,
       price: student.price ?? (isTemporal ? 0 : MEMBERSHIP_PLANS[membershipTier].price),
       paymentStatus: getStudentPaymentStatus(student),
-      classType: student.classType || 'Modelado',
+      classType: student.classType || studentClassTypeFromGiftCards(student, giftCards) || 'Modelado',
       expiryDate: student.expiryDate || '',
       assignedClasses: student.assignedClasses || [],
       studentCategory: student.studentCategory || 'membresia',
@@ -436,7 +438,12 @@ const StudentList: React.FC<StudentListProps> = ({
           await onUpdate(editingStudent.id, { name: form.name, surname: form.surname, email: form.email,
             phone: form.phone, notes: form.notes, observations: form.observations, classType: form.classType });
         } else {
-          await onUpdate(editingStudent.id, { ...data, studentCategory: editingStudent.studentCategory,
+          const linkedBalance = studentGiftCardBalance(editingStudent.id, giftCards);
+          const { bonosAsignados: _bonosAsignados, classesRemaining: _classesRemaining, ...profileWithoutGiftBalance } = data;
+          const update = linkedBalance.cards.length
+            ? profileWithoutGiftBalance
+            : data;
+          await onUpdate(editingStudent.id, { ...update, studentCategory: editingStudent.studentCategory,
             paymentStatus: form.paymentStatus === 'unknown' ? null : form.paymentStatus });
         }
       } else {
@@ -607,9 +614,9 @@ const StudentList: React.FC<StudentListProps> = ({
               const initials = `${s.name.charAt(0)}${s.surname?.charAt(0) || ''}`.toUpperCase();
               const percentage = hasVerifiedMembership(s) ? Math.min(100, (s.classesRemaining / s.bonosAsignados!) * 100) : 0;
                return <button key={s.id} data-student-id={s.id} onClick={() => handleEditClick(s)} className="ui-list w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-3 md:gap-4 items-center px-4 md:px-5 py-3.5 border-b last:border-0 border-[#EDE2D8] hover:bg-[#FCF8F4] focus:outline-none focus:bg-[#FCF8F4] transition-colors group">
-                  <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{s.name} {s.surname}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{s.classType || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' && !hasVerifiedMembership(s) ? 'Plan por confirmar · Por verificar' : CATEGORY_LABELS[cat] || cat}</span></span></div>
-                  <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{s.classType || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? (hasVerifiedMembership(s) ? MEMBERSHIP_PLANS[membershipTier].label : 'Plan por confirmar') : CATEGORY_LABELS[cat] || cat}</span></div>
-                  <div className="max-w-[112px] text-right md:max-w-none md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{hasVerifiedMembership(s) ? <>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados}</span></> : <span className="block whitespace-normal text-[12px] leading-snug">{studentBalanceLabel(s)}</span>}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
+                  <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{s.name} {s.surname}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{studentActivityLabel(s, giftCards) || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' && !hasVerifiedMembership(s) ? 'Plan por confirmar · Por verificar' : CATEGORY_LABELS[cat] || cat}</span></span></div>
+                  <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{studentActivityLabel(s, giftCards) || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? (hasVerifiedMembership(s) ? MEMBERSHIP_PLANS[membershipTier].label : 'Plan por confirmar') : CATEGORY_LABELS[cat] || cat}</span></div>
+                  <div className="max-w-[112px] text-right md:max-w-none md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{hasVerifiedMembership(s) ? <>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados}</span></> : <span className="block whitespace-normal text-[12px] leading-snug">{studentBalanceLabel(s, giftCards)}</span>}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
                   <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : cat === 'temporal' ? 'Bonos temporales' : isExpired ? 'Vencida' : needsStudentReview(s) ? 'Por verificar' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
@@ -630,8 +637,45 @@ const StudentList: React.FC<StudentListProps> = ({
                     {(['plata', 'gold', 'platinum'] as MembershipTier[]).map(tier => <button key={tier} type="button" disabled={managedEdit} onClick={() => requestMembershipTierChange(tier)} className={`min-h-11 rounded-lg border px-2 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors ${form.membershipTier === tier ? 'border-brand bg-brand text-white shadow-sm' : 'border-neutral-border bg-white text-neutral-textMain hover:border-brand hover:text-brand'}`}><span>{MEMBERSHIP_PLANS[tier].label}</span><span className={`block text-[11px] font-medium normal-case tracking-normal ${form.membershipTier === tier ? 'text-white/90' : 'text-neutral-textSec'}`}>{MEMBERSHIP_PLANS[tier].price}€ · {MEMBERSHIP_PLANS[tier].bonuses} bonos</span></button>)}
                </div>}
 
-               {editingStudent && (editingStudent.studentCategory ?? 'membresia') === 'membresia' && !hasVerifiedMembership(editingStudent) ? <p className="rounded-lg border border-neutral-border p-3 text-sm">{studentBalanceLabel(editingStudent)}. Plan por confirmar. Este dato de origen no acredita un período ni un pago.</p> : <>
-               <fieldset disabled={managedEdit || form.studentCategory === 'membresia'} className="border-t border-[#E6D8CB] pt-3">
+               
+               {editingStudent && studentGiftCardBalance(editingStudent.id, giftCards).allCards.length > 0 && (() => {
+                 const balance = studentGiftCardBalance(editingStudent.id, giftCards);
+                 return (
+                   <section className="border-t border-[#E6D8CB] pt-3" aria-label="Bonos vinculados">
+                     <h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Bonos vinculados</h4>
+                     <div className="grid grid-cols-2 gap-1.5 mb-3">
+                       <div>
+                         <label className="block text-[16px] font-medium text-[#7B3F22] mb-1">Bonos contratados</label>
+                         <div className="flex h-10 items-center justify-center rounded-md border border-[#E7B899] bg-white">
+                           <input type="number" readOnly value={balance.contracted} aria-label="Bonos contratados" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />
+                         </div>
+                       </div>
+                       <div>
+                         <div className="flex items-center justify-between mb-1"><label className="block text-[16px] font-medium text-[#7B3F22]">Bonos restantes</label><span className="text-[11px] font-bold text-[#A85D3B]">{balance.remaining}/{balance.contracted}</span></div>
+                         <div className="flex h-10 items-center justify-center rounded-md border border-[#E7B899] bg-white">
+                           <input type="number" readOnly value={balance.remaining} aria-label="Bonos restantes" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />
+                         </div>
+                       </div>
+                     </div>
+                     <div className="h-1 bg-[#F0E5DB] rounded-full overflow-hidden mb-3"><div className={`h-full ${balance.remaining <= 0 ? 'bg-[#A85D3B]' : 'bg-[#7B3F22]'}`} style={{ width: `${Math.min(100, balance.contracted ? (balance.remaining / balance.contracted) * 100 : 0)}%` }} /></div>
+                     <ul className="space-y-2">
+                       {balance.allCards.map(card => (
+                         <li key={card.id} className="rounded-md border border-[#E6D8CB] bg-white px-3 py-2.5">
+                           <p className="text-[13px] font-bold text-[#7B3F22]">{card.code || 'Sin código'} · {giftCardTypeLabel(card.type)}</p>
+                           <p className="text-[12px] text-[#8B6B5E]">{giftCardSessionsRemaining(card)} / {card.numClasses} clases · {card.price != null ? `${card.price} €` : 'Sin importe'} · {giftCardPaymentLabel(card.paymentStatus)}</p>
+                           <p className="text-[12px] text-[#8B6B5E]">Comprador: {card.buyer || 'Sin comprador'}{card.buyerEmail ? ` · ${card.buyerEmail}` : ''}{card.buyerPhone ? ` · ${card.buyerPhone}` : ''}</p>
+                           {card.recipientEmail && <p className="text-[12px] text-[#8B6B5E]">Email del destinatario: {card.recipientEmail}</p>}
+                           {card.dedication && <p className="text-[12px] text-[#7B3F22]">«{card.dedication}»</p>}
+                           {card.status === 'cancelled' && <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#9C4235]">Anulado (no cuenta en el saldo)</p>}
+                         </li>
+                       ))}
+                     </ul>
+                   </section>
+                 );
+               })()}
+
+               {editingStudent && (editingStudent.studentCategory ?? 'membresia') === 'membresia' && !hasVerifiedMembership(editingStudent) ? <p className="rounded-lg border border-neutral-border p-3 text-sm">{studentBalanceLabel(editingStudent, giftCards)}. Plan por confirmar. Este dato de origen no acredita un período ni un pago.</p> : <>
+               {!(editingStudent && form.studentCategory !== 'membresia' && studentGiftCardBalance(editingStudent.id, giftCards).allCards.length > 0) && <fieldset disabled={managedEdit || form.studentCategory === 'membresia'} className="border-t border-[#E6D8CB] pt-3">
                  <div className="flex items-baseline justify-between mb-2">
                   <h4 className="text-[14px] font-bold text-[#7B3F22]">Bonos</h4>
                 </div>
@@ -658,7 +702,7 @@ const StudentList: React.FC<StudentListProps> = ({
                    <input type="date" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} aria-label="Fecha de vencimiento de membresía" className="h-10 px-2.5 bg-white border border-[#E7B899] rounded-md text-[12px] text-[#A85D3B] outline-none focus:border-[#C68952]" />
                     {form.studentCategory === 'membresia' && <p className="text-[12px] text-[#8B6B5E]">Membresía pendiente durante los cinco días posteriores al vencimiento y vencida desde el sexto. Renovar no confirma el pago ni reactiva una ficha archivada.</p>}
                 </div>
-              </fieldset>
+              </fieldset>}
                </>}
               {managedEdit && <p className="text-sm">El perfil no modifica categoría, plan, fechas, precio, clases ni pagos. Usa las acciones de período. No se puede revertir un pago confirmado ni eliminar el historial; el archivo manual sigue disponible.</p>}
             </div>

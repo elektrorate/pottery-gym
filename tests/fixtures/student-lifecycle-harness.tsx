@@ -18,6 +18,7 @@ const Harness = () => {
   const [students, setStudents] = useState(fixtures);
   const [saved, setSaved] = useState<unknown>(null);
   const [dashboard, setDashboard] = useState(false);
+  const [giftCards, setGiftCards] = useState<GiftCard[]>([]);
   const update = async (id: string, changes: Partial<Student>) => {
     setSaved(changes);
     setStudents(current => current.map(s => s.id === id ? { ...s, ...changes } : s));
@@ -27,9 +28,14 @@ const Harness = () => {
     classType: 'mesa', students: ['ALEX PEREZ', 'ALEX PEREZ'], studentIds: ['active', 'temporary'], attendanceByStudentId: { active: 'present', temporary: 'absent' } }];
   return <>
     <button onClick={() => setDashboard(!dashboard)}>Cambiar pantalla de prueba</button>
+    <button onClick={() => {
+      setStudents(current => current.some(s => s.id === 'paula') ? current : [...current, { ...base, id: 'paula', name: 'PAULA BONO', studentCategory: 'temporal', classesRemaining: 0, bonosAsignados: 0, classType: undefined, paymentStatus: undefined }]);
+      setGiftCards([{ id: 'paula-card', code: 'CR-796024D9E0', buyer: 'Aina', buyerPhone: '606 130 865', recipient: 'PAULA BONO', recipientStudentId: 'paula', numClasses: 2, type: 'modelado', price: 100, paymentStatus: 'paid', status: 'active', sessionsUsed: 0, sessionsRemaining: 2, dedication: 'T´estimo molt !', createdAt: '2026-11-19T13:15:00Z' }]);
+    }}>Cargar bono vinculado</button>
+
     <output data-testid="saved">{JSON.stringify(saved)}</output>
     {dashboard ? <DashboardView students={students} sessions={sessions} giftCards={[]} onUpdateStudent={update} onUpdateSession={noop} onRedeemGiftCardSession={noop} onReverseGiftCardSession={noop} onNavigate={() => {}} onOpenStudentProfile={() => {}} onOpenSession={(sessionId, date) => setSaved({ sessionId, date })} /> :
-      <StudentList students={students} onUpdate={update} onAddStudent={async s => { setSaved(s); setStudents(current => [...current, { ...s, id: 'created' }]); }} onRenew={noop} onDeleteStudent={async id => setStudents(current => current.filter(s => s.id !== id))} />}
+      <StudentList students={students} giftCards={giftCards} onUpdate={update} onAddStudent={async s => { setSaved(s); setStudents(current => [...current, { ...s, id: 'created' }]); }} onRenew={noop} onDeleteStudent={async id => setStudents(current => current.filter(s => s.id !== id))} />}
   </>;
 };
 createRoot(document.getElementById('root')!).render(<Harness />);

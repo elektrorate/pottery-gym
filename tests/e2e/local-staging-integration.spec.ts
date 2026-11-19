@@ -382,7 +382,7 @@ test('1: real policy2 UI corrections retain the original debit and active gift h
   for (const adjustment of corrected.adjustments) expect(restored.adjustments).toContainEqual(adjustment);
 
   await page.goto('/giftcards');
-  await page.getByRole('textbox', { name: 'Buscar tarjeta por nombre del comprador', exact: true }).fill(f.buyer);
+  await page.getByRole('textbox', { name: 'Buscar tarjeta por comprador, destinatario o código', exact: true }).fill(f.buyer);
   await expect(page.getByRole('tab', { name: /^Activos / })).toHaveAttribute('aria-selected', 'true');
   const card = page.getByRole('button').filter({ has: page.getByText(f.code, { exact: true }) });
   await expect(card).toBeVisible();
@@ -524,7 +524,7 @@ test('3: real recipient UI distinguishes fresh homonyms by ID, creates no people
     expect(await rows(owner, 'gift_cards', `id=eq.${cards[0].id}`)).toEqual(cards);
     expect(await rows(owner, 'students', `id=${ids([f.member, f.temporary])}`, '*', 'id')).toEqual(exactPeople);
     expect(await rows(owner, 'students', `sede_id=eq.${ownSede}&name=eq.Alex&surname=eq.Perez`, 'id,student_category', 'id')).toEqual(homonyms);
-    await page.getByRole('textbox', { name: 'Buscar tarjeta por nombre del comprador', exact: true }).fill(f.buyer);
+    await page.getByRole('textbox', { name: 'Buscar tarjeta por comprador, destinatario o código', exact: true }).fill(f.buyer);
     await page.getByRole('button').filter({ has: page.getByText(code, { exact: true }) }).click();
     await expect(cardForm(page).getByLabel('Alumno destinatario', { exact: true })).toHaveValue(target);
     await cardForm(page).getByRole('button', { name: 'Cancelar', exact: true }).click();
