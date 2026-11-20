@@ -425,7 +425,7 @@ const AdminApp: React.FC = () => {
   const handleSignOut = async () => {
     if (!supabase) return;
     clearDesignerCaches(); resetSensitiveState();
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     setShowHistory(false);
   };
 

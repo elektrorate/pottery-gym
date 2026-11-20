@@ -811,9 +811,6 @@ const SettingsView: React.FC = () => {
                 }
                 try {
                   setPasswordLoading(true);
-                  const { createClient } = await import('@supabase/supabase-js');
-                  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.VITE_SUPABASE_PROJECT_URL || '';
-                  const supabase = createClient(supabaseUrl, import.meta.env.VITE_SUPABASE_ANON_KEY || '');
                   const { error } = await supabase.auth.updateUser({ password: passwordForm.newPassword });
                   if (error) {
                     setPasswordFeedback({ type: 'error', msg: error.message || 'Error al cambiar contraseña.' });

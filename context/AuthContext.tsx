@@ -176,9 +176,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             if (!isCurrent(generation)) return;
             console.error('Error logging out:', err);
             try {
-                Object.keys(localStorage)
-                    .filter(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
-                    .forEach(k => localStorage.removeItem(k));
+                for (const storage of [localStorage, sessionStorage]) {
+                    Object.keys(storage)
+                        .filter(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
+                        .forEach(k => storage.removeItem(k));
+                }
             } catch {}
         } finally {
             if (signOutInProgressRef.current === generation) signOutInProgressRef.current = null;
@@ -337,12 +339,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 return;
             }
 
-            if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && newSession?.user) {
+            // INITIAL_SESSION is how a stored aal2 session comes back after a reload
+            // or a new deploy. MFA_CHALLENGE_VERIFIED carries the upgraded token.
+            if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION' || event === 'MFA_CHALLENGE_VERIFIED') && newSession?.user) {
                 const endedActor = endedActorRef.current;
                 if (!actorRef.current && endedActor && (endedActor.id === newSession.user.id
                     || (endedActor.email && endedActor.email === newSession.user.email?.toLowerCase())
                     || (!endedActor.id && !endedActor.email))
-                    && (event === 'TOKEN_REFRESHED' || signOutInProgressRef.current !== null)) return;
+                    && (event !== 'SIGNED_IN' || signOutInProgressRef.current !== null)) return;
+                if (event === 'INITIAL_SESSION' && actorRef.current === newSession.user.id) {
+                    sessionRef.current = newSession;
+                    setSession(newSession);
+                    setUser(newSession.user);
+                    return;
+                }
                 const passwordRequest = passwordRequestRef.current;
                 if (event === 'SIGNED_IN' && passwordRequest
                     && newSession.user.email?.toLowerCase() === passwordRequest.email) {

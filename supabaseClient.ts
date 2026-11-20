@@ -7,4 +7,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, { db: { retry: false } });
+// Keep the aal2 session in localStorage under the SDK's default key
+// (`sb-<project-ref>-auth-token`). Do not switch this to sessionStorage:
+// that storage dies with the tab, so every reload asks for the password again.
+const browserAuthStorage = typeof window === 'undefined' ? undefined : window.localStorage;
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  db: { retry: false },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: 'implicit',
+    ...(browserAuthStorage ? { storage: browserAuthStorage } : {}),
+  },
+});
