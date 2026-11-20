@@ -1,5 +1,5 @@
 import type { GiftCard, Student } from '../types';
-import { isNonMembershipCategory } from './classTypeLabels';
+import { isNonMembershipCategory } from './classTypeLabels.ts';
 
 export function hasVerifiedMembership(student: Student): boolean {
   return !!student.effectivePeriodId && !!student.membershipTier && Number.isSafeInteger(student.bonosAsignados) && student.bonosAsignados! > 0;
