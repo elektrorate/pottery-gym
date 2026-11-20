@@ -1403,7 +1403,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   {(sessionForm.classType === 'mesa' || sessionForm.classType === 'torno') && (
                     <div>
                       <label htmlFor="session-teacher" className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">
-                        Profesor <span className="font-normal normal-case tracking-normal text-[#8B6B5E]">{sessionForm.classType === 'mesa' ? '(obligatorio)' : '(opcional)'}</span>
+                        Profesor {requiresTeacher(sessionForm.classType)
+                          ? <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr>
+                          : <span className="font-normal normal-case tracking-normal text-[#8B6B5E]">(opcional)</span>}
                       </label>
                   <select
                     id="session-teacher"

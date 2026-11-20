@@ -5,6 +5,7 @@ import { useAppContext } from '../context/AppContext';
 import { Toast, Icon, Button } from './UI';
 import ThemeToggle from '../../components/shared/ThemeToggle';
 import DiagonalPattern from '../../components/shared/DiagonalPattern';
+import { presentDisplayName } from '../../utils/displayName';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { toast, currentUser, logout, workshops, globalMetrics, showToast } = useAppContext();
@@ -43,7 +44,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     globalMetrics.unlinkedGiftCards +
     globalMetrics.missingExpiryGiftCards +
     globalMetrics.nullAudienceSessions;
-  const displayName = currentUser?.nombre || (isLoggingOut ? 'Cerrando sesión' : 'Admin');
+  const accountName = currentUser?.nombre || (isLoggingOut ? 'Cerrando sesión' : 'Admin');
+  const displayName = presentDisplayName(accountName);
   const displayStatus = currentUser ? 'Activo' : (isLoggingOut ? 'Cerrando' : 'Sin sesión');
 
   const handleLogout = async () => {
@@ -102,7 +104,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
           <div className="p-4 bg-neutral-sec rounded-2xl flex items-center gap-3 border border-neutral-border">
             <div className="w-10 h-10 rounded-full border-2 border-white overflow-hidden shadow-sm shrink-0 bg-white">
-              <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${displayName}`} alt="Admin" />
+              <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${accountName}`} alt="Admin" />
             </div>
             <div className="overflow-hidden">
               <p className="text-[13px] font-semibold truncate text-neutral-textMain leading-tight mb-0.5">{displayName}</p>
