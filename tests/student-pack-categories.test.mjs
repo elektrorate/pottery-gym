@@ -69,6 +69,8 @@ test('canonical Spanish labels for categories and session types', async () => {
     assert.equal(mod.STUDENT_CATEGORY_LABELS.temporal, 'Bonos temporales');
     assert.equal(mod.STUDENT_CATEGORY_LABELS.grupal, 'Grupal');
     assert.equal(mod.STUDENT_CATEGORY_LABELS.grupo_temporal, 'Grupo temporal');
+    assert.equal(mod.studentCategoryLabel('grupal'), 'Grupal');
+    assert.equal(mod.studentCategoryLabel('grupo_temporal'), 'Grupo temporal');
     assert.equal(mod.sessionTypeLabel('mesa'), 'Modelado/Mesa');
     assert.equal(mod.sessionTypeLabel('torno'), 'Torno');
     assert.equal(mod.sessionTypeLabel('coworking'), 'Coworking');

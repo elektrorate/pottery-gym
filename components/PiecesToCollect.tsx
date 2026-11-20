@@ -3,15 +3,14 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { CeramicPiece, PieceStatus, Student } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { studentCategoryLabel } from '../utils/classTypeLabels';
 
 // ─── Category visual helpers ───
-const CATEGORY_LABELS: Record<string, string> = {
-  membresia: 'Membresía',
-  temporal: 'Bonos temporales'
-};
 const CATEGORY_BADGE: Record<string, string> = {
   membresia: 'bg-brand/10 text-brand border-brand/20',
-  temporal: 'bg-amber-50 text-amber-700 border-amber-100'
+  temporal: 'bg-amber-50 text-amber-700 border-amber-100',
+  grupal: 'bg-[#8B6B5E]/10 text-[#8B6B5E] border-[#8B6B5E]/20',
+  grupo_temporal: 'bg-[#A85D3B]/10 text-[#A85D3B] border-[#A85D3B]/20'
 };
 
 // ─── PieceCard ───
@@ -68,7 +67,7 @@ const PieceCard: React.FC<PieceCardProps> = ({ piece, studentCategory, groupName
           </div>
           <div className="flex flex-wrap gap-1.5 mt-1">
              <span className={`inline-flex px-2 py-0.5 rounded-md text-[12px] font-semibold border ${CATEGORY_BADGE[cat] || 'bg-neutral-alt text-neutral-textHelper border-neutral-border'}`}>
-              {CATEGORY_LABELS[cat] || cat}
+              {studentCategoryLabel(cat)}
             </span>
              {groupName && <span className="hidden sm:inline-flex px-2 py-0.5 rounded-md text-[12px] font-semibold bg-neutral-sec text-neutral-textSec">{groupName}</span>}
           </div>
@@ -357,7 +356,9 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
 
   // Category counts for ACTIVE pieces only
   const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = { todos: activePieces.length, membresia: 0, temporal: 0 };
+    const counts: Record<string, number> = {
+      todos: activePieces.length, membresia: 0, temporal: 0, grupal: 0, grupo_temporal: 0
+    };
     activePieces.forEach(p => {
       const student = getStudentForPiece(p);
       const cat = student?.studentCategory || 'membresia';
@@ -421,7 +422,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
               >
                 <span className="min-w-0">
                   <span className="block text-[12px] font-semibold text-neutral-textMain truncate">{name}</span>
-                  <span className={`text-[11px] font-semibold ${cat === 'membresia' ? 'text-brand' : 'text-caramelo'}`}>{CATEGORY_LABELS[cat] || 'Regular'}</span>
+                  <span className={`text-[11px] font-semibold ${cat === 'membresia' ? 'text-brand' : 'text-caramelo'}`}>{studentCategoryLabel(cat)}</span>
                 </span>
                 <span className="text-[11px] font-semibold text-neutral-textHelper shrink-0">{pieceCount} pieza{pieceCount !== 1 ? 's' : ''}</span>
               </button>
@@ -493,7 +494,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   {selectedStudent && (
                     <span className={`inline-block px-2.5 py-1 rounded-lg text-[11px] font-semibold border ${CATEGORY_BADGE[selectedStudent.studentCategory || 'membresia'] || 'bg-neutral-alt text-neutral-textHelper border-neutral-border'}`}>
-                      {CATEGORY_LABELS[selectedStudent.studentCategory || 'membresia']}
+                      {studentCategoryLabel(selectedStudent.studentCategory)}
                     </span>
                   )}
                   {selectedStudent?.groupName && (
@@ -520,7 +521,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
           <div className="rounded-2xl bg-neutral-sec border border-neutral-border p-3 md:p-4 space-y-3 animate-fade-in">
         {/* Row 2: Category filter + Group filter */}
         <div className="flex flex-wrap gap-2 items-center">
-          {(['todos', 'membresia', 'temporal'] as const).map(cat => (
+          {(['todos', 'membresia', 'temporal', 'grupal', 'grupo_temporal'] as const).map(cat => (
             <button
               key={cat}
               onClick={() => setCategoryFilter(cat)}
@@ -529,7 +530,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                 : 'bg-white text-neutral-textSec border-neutral-border hover:border-arena hover:text-brand'
                 }`}
             >
-              {cat === 'todos' ? 'Todas categorías' : CATEGORY_LABELS[cat]} ({categoryCounts[cat] || 0})
+              {cat === 'todos' ? 'Todas categorías' : studentCategoryLabel(cat)} ({categoryCounts[cat] || 0})
             </button>
           ))}
 
@@ -729,7 +730,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                       <option value="" disabled>Seleccionar Alumno</option>
                       {sortedStudents.map(student => (
                         <option key={student.id} value={`${student.name} ${student.surname || ''}`.trim()}>
-                          {`${student.name} ${student.surname || ''}`.trim()} — {CATEGORY_LABELS[student.studentCategory || 'membresia']}
+                          {`${student.name} ${student.surname || ''}`.trim()} — {studentCategoryLabel(student.studentCategory)}
                         </option>
                       ))}
                     </select>

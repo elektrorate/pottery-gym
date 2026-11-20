@@ -1,4 +1,5 @@
 import { getStudentSessionStatus } from '../utils/recordPresentation';
+import { STUDENT_CATEGORY_LABELS, studentCategoryLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Student, ClassSession, CeramicPiece, GiftCard } from '../types';
@@ -10,26 +11,23 @@ interface HistoryViewProps {
   giftCards: GiftCard[];
 }
 
-// Constantes de categorías
 const CATEGORY_LABELS: Record<string, string> = {
-  membresia: 'Membresía',
-  temporal: 'Bonos temporales'
+  ...STUDENT_CATEGORY_LABELS
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
   membresia: 'bg-brand text-white',
-  temporal: 'bg-amber-500 text-white'
+  temporal: 'bg-amber-500 text-white',
+  grupal: 'bg-[#8B6B5E] text-white',
+  grupo_temporal: 'bg-[#A85D3B] text-white'
 };
 
-type CategoryFilter = 'todos' | 'membresia' | 'temporal';
 const SEARCH_DEBOUNCE_MS = 250;
 const SIDEBAR_PAGE_SIZE = 80;
 const SIDEBAR_WINDOW_SIZE = 24;
 const SIDEBAR_OVERSCAN = 8;
 const APPROX_ROW_HEIGHT = 92;
-const isTemporaryCategory = (category?: string) =>
-  category === 'temporal';
-const getDisplayCategory = (category?: string) => (isTemporaryCategory(category) ? 'temporal' : (category || 'membresia'));
+const isTemporaryCategory = (category?: string) => isNonMembershipCategory(category);
 
 type ExtendedCategoryFilter = 'todos' | 'membresia' | 'temporal' | 'bonos_especiales';
 
@@ -292,7 +290,6 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                 <div className="space-y-2">
                   {virtualStudents.map(s => {
                     const cat = s.studentCategory || 'membresia';
-                    const displayCat = getDisplayCategory(cat);
                     const isTemporary = isTemporaryCategory(cat);
                     return (
                       <button
@@ -304,7 +301,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                           <p className={`font-semibold text-[14px] truncate ${selectedStudentId === s.id ? 'text-white' : 'text-neutral-textMain'}`}>{s.name} {s.surname || ''}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className={`text-[11px] font-semibold ${selectedStudentId === s.id ? 'text-white/80' : 'text-neutral-textHelper'}`}>
-                              {CATEGORY_LABELS[displayCat]}
+                              {studentCategoryLabel(cat)}
                             </span>
                             {s.groupName && (
                               <span className={`text-[11px] ${selectedStudentId === s.id ? 'text-white/70' : 'text-neutral-textSec'}`}>
@@ -347,7 +344,6 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
               {/* CABECERA ALUMNO */}
               {(() => {
                 const cat = studentDetails.student.studentCategory || 'membresia';
-                const displayCat = getDisplayCategory(cat);
                 const isTemporary = studentDetails.isTemporary;
                 const expired = isExpired(studentDetails.student.expiryDate);
                 return (
@@ -357,8 +353,8 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                         <span className="eyebrow mb-2 block">Registro integral</span>
                          <h3 className="ui-section-title text-neutral-textMain">{studentDetails.fullName}</h3>
                         <div className="flex flex-wrap gap-2 mt-3">
-                          <span className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold ${CATEGORY_COLORS[displayCat]}`}>
-                            {CATEGORY_LABELS[displayCat]}
+                          <span className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold ${CATEGORY_COLORS[cat] || CATEGORY_COLORS.membresia}`}>
+                            {studentCategoryLabel(cat)}
                           </span>
                           {studentDetails.student.groupName && (
                             <span className="px-3 py-1.5 bg-neutral-sec border border-neutral-border rounded-[10px] text-[12px] font-semibold text-neutral-textSec">

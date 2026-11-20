@@ -34,9 +34,18 @@ export const isNonMembershipCategory = (
 ): category is NonMembershipCategory =>
   NON_MEMBERSHIP_CATEGORIES.includes((category ?? 'membresia') as NonMembershipCategory);
 
-export const studentCategoryLabel = (category: Student['studentCategory'] | string | null | undefined) =>
-  STUDENT_CATEGORY_LABELS[(category as Student['studentCategory']) || 'membresia']
-  || (category ? String(category) : STUDENT_CATEGORY_LABELS.membresia);
+/** Spanish label for a student category; never returns raw codes like `grupal`. */
+export const studentCategoryLabel = (category: Student['studentCategory'] | string | null | undefined) => {
+  const key = (category as Student['studentCategory']) || 'membresia';
+  if (STUDENT_CATEGORY_LABELS[key]) return STUDENT_CATEGORY_LABELS[key];
+  if (!category) return STUDENT_CATEGORY_LABELS.membresia;
+  // Unknown codes: title-case words, never snake_case in UI
+  return String(category)
+    .split('_')
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+};
 
 export const sessionTypeLabel = (type: ClassSession['classType'] | string | undefined) =>
   (type && SESSION_TYPE_LABELS[type as ClassSession['classType']]) || type || 'Sesión';

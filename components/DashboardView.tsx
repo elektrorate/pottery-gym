@@ -7,7 +7,7 @@ import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
-import { sessionTypeLabel } from '../utils/classTypeLabels';
+import { studentCategoryLabel, sessionTypeLabel } from '../utils/classTypeLabels';
 
 
 interface DashboardViewProps {
@@ -215,8 +215,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
     alertAudioContextRef.current?.close().catch(() => undefined);
   }, []);
 
-  const CATEGORY_LABELS: Record<string, string> = { membresia: 'Membresía', temporal: 'Bonos temporales' };
-  const CATEGORY_COLORS: Record<string, string> = { membresia: 'bg-brand', temporal: 'bg-caramelo' };
+  const CATEGORY_COLORS: Record<string, string> = {
+    membresia: 'bg-brand',
+    temporal: 'bg-caramelo',
+    grupal: 'bg-[#8B6B5E]',
+    grupo_temporal: 'bg-[#A85D3B]'
+  };
+  // Metric «Pendientes de pago» must match the Pagos pendientes alert group (same counter).
+  const pendingPaymentAlertCount = paymentAlerts.length;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-neutral-base animate-fade-in">
@@ -249,7 +255,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
              <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="payments" /></span>
              <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Pendientes de pago</p>
-               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{detailsReady ? globalStats.pendingStudents : '—'}</span>
+               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{detailsReady ? pendingPaymentAlertCount : '—'}</span>
             </div>
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="bonuses" /></span>
@@ -275,7 +281,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
             {Object.entries(globalStats.byCategory).filter(([, count]) => (count as number) > 0).map(([cat, count]) => (
               <div key={cat} className="flex items-center gap-2 rounded-full border border-neutral-border bg-white px-2.5 py-1">
                 <div className={`w-2.5 h-2.5 rounded-full ${CATEGORY_COLORS[cat] || 'bg-neutral-border'}`}></div>
-                <span className="text-[14px] font-semibold text-neutral-textMain md:text-[11px]">{CATEGORY_LABELS[cat] || cat}</span>
+                <span className="text-[14px] font-semibold text-neutral-textMain md:text-[11px]">{studentCategoryLabel(cat)}</span>
                 <span className="text-[14px] font-semibold text-neutral-textHelper md:text-[11px]">{count}</span>
               </div>
             ))}
