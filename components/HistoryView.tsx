@@ -1,3 +1,5 @@
+import { EmptyState } from './shared/EmptyState';
+import { claseLabel } from '../utils/pluralize';
 import { getStudentSessionStatus } from '../utils/recordPresentation';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
 
@@ -283,7 +285,10 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
             className="flex-1 overflow-y-auto custom-scrollbar p-4"
           >
             {filteredStudents.length === 0 ? (
-              <p className="text-center py-8 text-[13px] text-neutral-textHelper italic">Sin resultados</p>
+              <EmptyState
+                title={students.length === 0 ? 'Todavía no hay alumnos en el historial' : 'Ningún alumno coincide con la búsqueda o la categoría'}
+                body={students.length === 0 ? 'Cuando haya fichas, podrás ver aquí sus clases y sus piezas.' : 'Prueba con otro nombre o vuelve a Todos.'}
+              />
             ) : (
               <>
                 <div style={{ height: virtualTopSpacer }} />
@@ -312,7 +317,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                           {/* Info rápida para temporales */}
                           {isTemporary && (
                             <div className={`flex items-center gap-2 mt-1 text-[11px] ${selectedStudentId === s.id ? 'text-white/70' : 'text-neutral-textSec'}`}>
-                              <span>{s.classesRemaining} clases</span>
+                              <span>{claseLabel(s.classesRemaining)}</span>
                               {s.expiryDate && (
                                 <span className={isExpired(s.expiryDate) ? 'text-[#9E3B2B] font-semibold' : ''}>
                                   • Exp: {formatExpiryDate(s.expiryDate)}
@@ -429,9 +434,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                     <h4 className="text-[16px] font-bold text-neutral-textMain">Bonos regalo</h4>
                   </div>
                   {studentDetails.giftCards.length === 0 ? (
-                    <div className="bg-neutral-sec/60 p-6 rounded-2xl border border-dashed border-neutral-border text-center">
-                      <p className="text-neutral-textHelper text-[14px]">Sin bonos regalo asociados a este perfil</p>
-                    </div>
+                    <EmptyState title="Este alumno no tiene bonos regalo" body="Cuando le asignes uno, el saldo y la caducidad se verán aquí." />
                   ) : (
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       {studentDetails.giftCards.map(card => {
@@ -440,7 +443,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                           <div key={card.id} className="bg-white p-4 rounded-2xl border border-neutral-border soft-shadow flex items-start justify-between gap-4">
                             <div className="space-y-1">
                               <p className="text-[14px] font-bold text-neutral-textMain">
-                                {card.type} · {card.numClasses} clases
+                                {card.type} · {claseLabel(card.numClasses)}
                               </p>
                               <p className="text-[12px] font-semibold text-neutral-textSec">
                                 Emitido: <span className="text-neutral-textMain">{formatGiftCardDate(card.createdAt)}</span>
@@ -476,9 +479,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                   </div>
                   <div className="space-y-3">
                     {studentDetails.sessions.length === 0 ? (
-                      <div className="bg-neutral-sec/60 p-6 rounded-2xl border border-dashed border-neutral-border text-center">
-                        <p className="text-neutral-textHelper text-[14px]">No se registran asistencias aún</p>
-                      </div>
+                      <EmptyState title="Todavía no hay clases registradas" body="Las sesiones de este alumno aparecerán aquí cuando asista o falte." />
                     ) : (
                       studentDetails.sessions.map(s => {
                         const status = getStudentSessionStatus(s, studentDetails.student.id, [studentDetails.fullName, studentDetails.student.name]);
@@ -506,9 +507,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                   </div>
                   <div className="space-y-3">
                     {studentDetails.pieces.length === 0 ? (
-                      <div className="bg-neutral-sec/60 p-6 rounded-2xl border border-dashed border-neutral-border text-center">
-                        <p className="text-neutral-textHelper text-[14px]">No hay piezas registradas</p>
-                      </div>
+                      <EmptyState title="Todavía no hay piezas de este alumno" body="Registra la primera desde Piezas para seguir la quema y la entrega." />
                     ) : (
                       studentDetails.pieces.map(p => (
                         <div key={p.id} className="bg-white p-4 rounded-2xl border border-neutral-border flex flex-col gap-3 group hover:border-arena transition-all">

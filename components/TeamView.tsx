@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { DangerZone } from './shared/DangerZone';
+import { EmptyState } from './shared/EmptyState';
+import { pluralize } from '../utils/pluralize';
 import { supabase } from '../supabaseClient';
 
 interface StaffMember {
@@ -199,8 +202,8 @@ const TeamView: React.FC = () => {
                         </button>
 
                     </div>
-                    <div className="text-[12px] font-semibold text-neutral-textHelper">
-                        {staff.length} Colaborador{staff.length !== 1 ? 'es' : ''} Registrado{staff.length !== 1 ? 's' : ''}
+                    <div className="text-[14px] font-semibold text-neutral-textSec">
+                        {pluralize(staff.length, 'colaborador registrado', 'colaboradores registrados')}
                     </div>
                 </div>
 
@@ -210,11 +213,7 @@ const TeamView: React.FC = () => {
                         <div className="w-8 h-8 border-[3px] border-brand border-t-transparent rounded-full animate-spin"></div>
                     </div>
                 ) : staff.length === 0 ? (
-                    <div className="bg-white/60 border border-dashed border-neutral-border p-8 md:p-12 rounded-2xl text-center">
-                        <svg className="w-14 h-14 mx-auto text-neutral-border mb-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-                        <p className="text-neutral-textHelper text-[13px] mb-2">Aún no tienes colaboradores</p>
-                        <p className="text-neutral-textSec text-[13px]">Agrega miembros a tu equipo para que te ayuden a gestionar el taller.</p>
-                    </div>
+                    <EmptyState title="Todavía no hay colaboradores" body="Añade a quien te ayuda en el taller. Tendrá acceso parecido al tuyo, sin poder crear más cuentas." actionLabel="Añadir el primer colaborador" onAction={() => setShowCreateModal(true)} />
                 ) : (
                     <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                         {staff.map((member) => {
@@ -231,7 +230,7 @@ const TeamView: React.FC = () => {
                                         <div className="overflow-hidden">
                         <h4 className="ui-card-title text-neutral-textMain truncate">
                                                 {member.name}
-                                                {isMe && <span className="text-[12px] ml-2 text-brand font-semibold">( TÚ )</span>}
+                                                {isMe && <span className="text-[13px] ml-2 text-brand font-semibold">(tú)</span>}
                                             </h4>
                                             <p className="text-[13px] text-neutral-textSec truncate mt-0.5">{member.email}</p>
                                         </div>
@@ -251,15 +250,12 @@ const TeamView: React.FC = () => {
                                     </div>
 
                                     {!isMe && (
-                                        <div className="pt-4 mt-4 border-t border-neutral-border">
-                                            <button
-                                                onClick={() => handleDeleteStaff(member.id, member.name)}
-                                                disabled={actionLoading}
-                                                className="w-full min-h-[44px] py-2 text-[13px] font-semibold text-[#9E3B2B] hover:text-[#8A3325] transition-colors disabled:opacity-50"
-                                            >
-                                                Eliminar del equipo
-                                            </button>
-                                        </div>
+                                        <DangerZone
+                                          description={`Quitar a ${member.name} del equipo cierra su acceso. No se puede deshacer desde aquí.`}
+                                          actionLabel="Eliminar del equipo"
+                                          disabled={actionLoading}
+                                          onAction={() => handleDeleteStaff(member.id, member.name)}
+                                        />
                                     )}
                                 </div>
                             );
@@ -276,7 +272,7 @@ const TeamView: React.FC = () => {
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
                         <div className="p-4 md:p-6">
-                            <h3 className="text-[24px] font-bold text-neutral-textMain leading-none mb-2">Nuevo Colaborador</h3>
+                            <h3 className="text-[24px] font-bold text-neutral-textMain leading-none mb-2">Nuevo colaborador</h3>
                             <p className="text-neutral-textSec text-[14px] mb-5">Agrega un miembro a tu equipo de trabajo.</p>
 
                             <form onSubmit={handleCreateStaff} className="space-y-4">
@@ -328,8 +324,8 @@ const TeamView: React.FC = () => {
 
             <ConfirmModal
                 isOpen={!!staffToDelete}
-                title="¿Eliminar colaborador?"
-                message={`¿Estás seguro de que deseas eliminar a "${staffToDelete?.name}" del equipo? Esta acción no se puede deshacer.`}
+                title={staffToDelete ? `¿Eliminar a ${staffToDelete.name} del equipo?` : '¿Eliminar colaborador?'}
+                message={staffToDelete ? `${staffToDelete.name} dejará de tener acceso al taller. Esta acción no se puede deshacer.` : 'Esta acción no se puede deshacer.'}
                 isDestructive={true}
                 loading={actionLoading}
                 onConfirm={() => { if (staffToDelete) executeStaffDeletion(staffToDelete.id); }}

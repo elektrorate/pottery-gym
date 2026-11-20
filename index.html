@@ -19,8 +19,8 @@
       --surface-soft: #F0F0F0;
       --line: #E3E3E3;
       --text-primary: #111111;
-      --text-secondary: #707070;
-      --text-muted: #999999;
+      --text-secondary: #3F3F3F;
+      --text-muted: #595959;
       --brand: #FFA365;
       --brand-hover: #E38B4E;
       --brand-pressed: #E38B4E;
@@ -56,8 +56,8 @@
       --surface-soft: #444444;
       --line: #484848;
       --text-primary: #F5F5F5;
-      --text-secondary: #B8B8B8;
-      --text-muted: #999999;
+      --text-secondary: #E4E4E4;
+      --text-muted: #C8C8C8;
       --brand: #FFA365;
       --brand-hover: #E38B4E;
       --brand-pressed: #E38B4E;
@@ -111,9 +111,9 @@
      .ui-card-title { font-size: 1rem; line-height: 1.3; font-weight: 600; }
      .ui-body { font-size: 0.875rem; line-height: 1.5; }
      .ui-data { font-size: 0.8125rem; line-height: 1.4; }
-     .ui-secondary { font-size: 0.8125rem; line-height: 1.45; color: var(--text-secondary); }
-     .ui-meta { font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); }
-     .ui-label { font-size: 0.75rem; line-height: 1.35; font-weight: 600; color: var(--text-secondary); }
+     .ui-secondary { font-size: 0.9375rem; line-height: 1.5; color: var(--text-secondary); }
+     .ui-meta { font-size: 0.875rem; line-height: 1.45; color: var(--text-secondary); }
+     .ui-label { font-size: 0.875rem; line-height: 1.4; font-weight: 600; color: var(--text-secondary); letter-spacing: 0; text-transform: none; }
      .ui-kpi { font-size: clamp(1.5rem, 2.5vw, 1.875rem); line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
      .ui-control { min-height: 2.75rem; font-size: 0.875rem; line-height: 1.45; }
      button[aria-expanded]:has(> span:first-child > h4) > span:last-child { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 12px; }
@@ -234,13 +234,19 @@
     .day-pill-active { color: #FFFFFF; background: var(--brand); border-color: var(--brand); }
 
     .eyebrow {
-      color: var(--text-muted);
-      font-family: 'Outfit', system-ui, sans-serif;
-       font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.16em;
-      line-height: 1.2;
-      text-transform: uppercase;
+      color: var(--text-secondary);
+      font-family: 'Manrope', system-ui, sans-serif;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.01em;
+      line-height: 1.35;
+      text-transform: none !important;
+    }
+
+    /* Sentence case for labels, tabs and headings. Brand wordmarks keep their own CSS. */
+    .uppercase {
+      letter-spacing: 0.01em !important;
+      text-transform: none !important;
     }
 
     .accent-line { width: 38px; height: 4px; background: var(--brand); border-radius: 99px; }
@@ -324,7 +330,27 @@
     }
     .calendar-mini-cell { min-height: 44px; border-width: 1px; border-style: solid; border-radius: 9px; padding: 7px; }
 
-     .menu-typography-110 .eyebrow { font-size: 11px; }
+     .menu-typography-110 .eyebrow { font-size: 13px; }
+
+    @media (max-height: 820px) {
+      .fixed.inset-0 > * {
+        max-height: calc(100dvh - 1rem);
+        overflow-y: auto;
+      }
+    }
+    .text-\[\#8B6B5E\],
+    .text-\[\#9B8175\],
+    .text-\[\#6E5145\] { color: #4E3428 !important; }
+    .text-neutral-textHelper,
+    .text-neutral-textSec { color: var(--text-secondary) !important; }
+    .text-\[11px\].text-neutral-textHelper,
+    .text-\[12px\].text-neutral-textHelper,
+    .text-\[11px\].text-neutral-textSec,
+    .text-\[12px\].text-neutral-textSec,
+    .text-\[13px\].text-neutral-textHelper {
+      font-size: 0.875rem !important;
+      line-height: 1.45;
+    }
     @media (min-width: 768px) {
       .calendar-density-cell { min-height: 84px; padding: 10px; border-radius: 13px; }
     }

@@ -12,6 +12,7 @@ import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSched
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
 import { studentEffectiveRemainingClasses } from '../utils/studentPresentation';
+import { sesionLabel } from '../utils/pluralize';
 interface CalendarViewProps {
   readOnly?: boolean;
   sessions: ClassSession[];
@@ -970,7 +971,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                    const density = getMonthlyCalendarClass(daySessions);
                   const densityClass = `calendar-density-${density}`;
                   const isPastSessionDay = daySessions.length > 0 && dayKey < formatDateKey(new Date());
-                  const countLabel = daySessions.length === 1 ? '1 sesión' : `${daySessions.length} sesiones`;
+                  const countLabel = sesionLabel(daySessions.length);
                   return (
                     <button
                       type="button"
