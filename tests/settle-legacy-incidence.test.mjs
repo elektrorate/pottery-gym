@@ -35,22 +35,19 @@ const settleLegacy = ({ penalty, student, billing, existingDebits = [], dryRun =
   }
 
   const existing = existingDebits.find(d => d.delta === -1 && !d.reversed);
-  log(`balance_before=${student.classes_remaining} existing_debit=${existing?.id ?? null} dry_run=${dryRun}`);
+  if (existing) throw new Error('Ya existe un débito no revertido para esta sesión/alumno; no se descuenta dos veces');
+  log(`balance_before=${student.classes_remaining} dry_run=${dryRun}`);
 
   if (dryRun) {
     log(`DRY-RUN would set penalty.state=charged reason=${NOTE}`);
-    return { dryRun: true, notices, student, penalty, billing, debit: existing || null };
+    return { dryRun: true, notices, student, penalty, billing, debit: null };
   }
 
-  let debit = existing;
-  const nextStudent = { ...student };
-  if (!debit) {
-    if (!(student.classes_remaining > 0)) {
-      throw new Error(`Saldo escalar insuficiente para descontar (classes_remaining=${student.classes_remaining})`);
-    }
-    nextStudent.classes_remaining -= 1;
-    debit = { id: 'debit-new', delta: -1, disposition: 'scalar_balance', reversed: false };
+  if (!(student.classes_remaining > 0)) {
+    throw new Error(`Saldo insuficiente para descontar (classes_remaining=${student.classes_remaining})`);
   }
+  const nextStudent = { ...student, classes_remaining: student.classes_remaining - 1 };
+  const debit = { id: 'debit-new', delta: -1, disposition: 'scalar_balance', reversed: false };
 
   return {
     dryRun: false,
@@ -95,8 +92,8 @@ test('apply deducts one scalar class and marks charged with fix26 note', () => {
   assert.equal(result.debit.disposition, 'scalar_balance');
 });
 
-test('idempotent: existing unreverted debit skips second deduction', () => {
-  const result = settleLegacy({
+test('refuses when an unreversed debit already exists (never debits twice)', () => {
+  assert.throws(() => settleLegacy({
     penalty: {
       id: 'pen-1', state: 'pending', reason: LEGACY_REASON, kind: 'no_show',
       period_id: null, gift_card_id: null, manual_credit_id: null, debit_id: null
@@ -105,10 +102,19 @@ test('idempotent: existing unreverted debit skips second deduction', () => {
     billing: { state: 'incident', penalty_id: 'pen-1', debit_id: null },
     existingDebits: [{ id: 'debit-old', delta: -1, disposition: 'scalar_balance', reversed: false }],
     dryRun: false
-  });
-  assert.equal(result.student.classes_remaining, 1);
-  assert.equal(result.debit.id, 'debit-old');
-  assert.equal(result.penalty.debit_id, 'debit-old');
+  }), /no se descuenta dos veces/);
+});
+
+test('second run after apply is rejected (incidence no longer pending)', () => {
+  assert.throws(() => settleLegacy({
+    penalty: {
+      id: 'pen-1', state: 'charged', reason: NOTE, kind: 'no_show',
+      period_id: null, gift_card_id: null, manual_credit_id: null, debit_id: 'debit-new'
+    },
+    student: { id: 'st-1', student_category: 'temporal', classes_remaining: 3 },
+    billing: { state: 'charged', penalty_id: 'pen-1', debit_id: 'debit-new' },
+    dryRun: false
+  }), /no está pending/);
 });
 
 test('rejects membership students and non-legacy reasons', () => {
@@ -139,4 +145,14 @@ test('SQL file still matches the unit-tested contract', async () => {
   assert.match(sql, /session_business_adjust_scalar/);
   assert.match(sql, /scalar_balance|current_period/);
   assert.match(sql, /dry_run/);
+  // psql does not interpolate :vars inside $…$ bodies: the DO block must read GUCs.
+  const doBody = sql.slice(sql.indexOf('DO $settle$'), sql.lastIndexOf('$settle$;'));
+  assert.doesNotMatch(doBody, /:'[a-z_]+'/);
+  assert.match(doBody, /current_setting\('rio\.settle_incidence_id'/);
+  assert.match(doBody, /current_setting\('rio\.settle_student_id'/);
+  // Append-only guard is only bypassed for the single UPDATE and re-enabled.
+  assert.equal((doBody.match(/DISABLE TRIGGER guard_business_history/g) || []).length, 1);
+  assert.equal((doBody.match(/ENABLE TRIGGER guard_business_history/g) || []).length, 1);
+  // No settlement row: student_penalty_settlements requires exactly one source.
+  assert.doesNotMatch(doBody, /INSERT INTO public\.student_penalty_settlements/i);
 });

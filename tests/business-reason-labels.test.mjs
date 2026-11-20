@@ -65,7 +65,7 @@ test('legacy settle SQL script is dry-run by default and documents safety rails'
   assert.match(sql, /Unsupported temporal\/manual funding/);
   assert.match(sql, /DRY-RUN/);
   assert.match(sql, /ROLLBACK/);
-  assert.match(sql, /existing_debit/);
+  assert.match(sql, /no se descuenta dos veces/);
   assert.match(sql, /NO ES UNA MIGRACIÓN/);
   assert.match(sql, /ilkrcakrduibgsfqfzti/);
   assert.doesNotMatch(sql, /supabase db push/i);
