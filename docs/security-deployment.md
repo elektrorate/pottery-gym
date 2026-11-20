@@ -6,6 +6,8 @@ Deploy the profile privileges migration first. Deploy the frontend with the MFA 
 
 Owners and superadministrators must enroll a TOTP authenticator and verify a code. New and reset passwords require 12 characters; existing passwords can still sign in. TOTP is enabled in hosted Auth. Leaked-password protection requires the provider plan to support it; verify that the setting persists instead of assuming a successful toggle enabled it.
 
+The browser keeps the Supabase session in localStorage and reads the TOTP time from the session JWT `amr` claim. The code is asked again, together with the password, 30 days after that claim. This does not change RLS or `security_has_aal2`. In the Supabase Auth dashboard, confirm that a session time-box or inactivity timeout is not shorter than 30 days and that the refresh-token reuse interval is not zero; those settings are not changed from this repo. If they are shorter, a reload can revoke the session even though the app still has the token.
+
 For lost MFA access, the project administrator must verify the person's identity through an independent channel before removing the lost factor in the Supabase dashboard. The user then enrolls again. Never disable the server-side AAL2 requirement or restore broad profile grants as an access workaround. Do not put TOTP seeds or recovery credentials in logs or support tickets.
 
 The designer scopes draft, template and history cache by user and workshop, clears these caches on logout/identity change and discards unattributed legacy cache. Server records are untouched. Workshop owners removing staff now remove only that workshop membership, preserving Auth and other workshops. Privileged or shared accounts require a superadministrator for account mutations.
