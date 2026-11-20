@@ -5,7 +5,9 @@ import { CeramicPiece, PieceStatus, Student } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
+import DateField from './shared/DateField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
+import { formatDate, madridDateKey, weekRangeForDateKey } from '../utils/dateFormat';
 
 // ─── Category visual helpers ───
 const CATEGORY_BADGE: Record<string, string> = {
@@ -80,7 +82,7 @@ const PieceCard: React.FC<PieceCardProps> = ({ piece, studentCategory, groupName
         <p className="text-[14px] text-neutral-textMain truncate">{piece.description}</p>
         <div className="flex items-center gap-2 mt-1">
            {piece.glazeType && <span className="ui-meta text-neutral-textSec truncate"><span className="font-semibold text-brand">Esmalte:</span> {piece.glazeType}</span>}
-           {isHistory && piece.deliveryDate && <span className="ui-meta shrink-0">· {new Date(piece.deliveryDate).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}</span>}
+           {isHistory && piece.deliveryDate && <span className="ui-meta shrink-0">· {formatDate(piece.deliveryDate)}</span>}
         </div>
         {piece.extraCommentary && (
           <div className="flex items-center gap-2 mt-1">
@@ -144,7 +146,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   const [showHistory, setShowHistory] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [dateFilter, setDateFilter] = useState<'all' | 'day' | 'week'>('all');
-  const [dateValue, setDateValue] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [dateValue, setDateValue] = useState<string>(madridDateKey);
   const [groupFilter, setGroupFilter] = useState<string>('todos');
   const [pieceToDelete, setPieceToDelete] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -184,15 +186,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   }, [students]);
 
   // ─── Date helpers ───
-  const getWeekRange = (dateStr: string) => {
-    const date = new Date(dateStr + 'T00:00:00');
-    const day = date.getDay();
-    const monday = new Date(date);
-    monday.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    return { start: monday.toISOString().split('T')[0], end: sunday.toISOString().split('T')[0] };
-  };
+  const getWeekRange = (dateStr: string) => weekRangeForDateKey(dateStr);
 
   const pieceMatchesDateFilter = (piece: CeramicPiece): boolean => {
     if (dateFilter === 'all') return true;
@@ -373,7 +367,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   const weekLabel = useMemo(() => {
     if (dateFilter !== 'week') return '';
     const { start, end } = getWeekRange(dateValue);
-    const fmt = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+    const fmt = (d: string) => formatDate(d);
     return `${fmt(start)} – ${fmt(end)}`;
   }, [dateFilter, dateValue]);
 
@@ -574,10 +568,10 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
             ))}
           </div>
           {dateFilter !== 'all' && (
-            <input
-              type="date"
+            <DateField
+              aria-label="Fecha de filtro"
               value={dateValue}
-              onChange={(e) => setDateValue(e.target.value)}
+              onChange={setDateValue}
               className="min-h-[40px] px-3.5 py-2 bg-white border border-neutral-border rounded-[10px] text-[14px] text-neutral-textMain outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 cursor-pointer"
             />
           )}
@@ -766,8 +760,8 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                 </div>
 
                 <div>
-                  <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Fecha de entrega</label>
-                  <input type="date" value={form.deliveryDate} onChange={(e) => setForm({ ...form, deliveryDate: e.target.value })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" />
+<label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Fecha de entrega</label>
+                  <DateField aria-label="Fecha de entrega" value={form.deliveryDate} onChange={(deliveryDate) => setForm({ ...form, deliveryDate })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" />
                 </div>
 
                 <div>

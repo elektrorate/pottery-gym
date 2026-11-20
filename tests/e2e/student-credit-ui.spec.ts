@@ -129,8 +129,8 @@ test('explicit quantity, activity, dates, reason and evidence are mandatory; the
   await expect(approve).toBeDisabled();
   expect(await panel(page).evaluate(element => element.closest('form') === null)).toBe(true);
   await expect(panel(page).locator('form')).toHaveCount(0);
-  await expect(panel(page).getByLabel('Inicio del crédito manual')).toHaveValue('2026-10-12');
-  await expect(panel(page).getByLabel('Fin del crédito manual')).toHaveValue('2026-11-12');
+  await expect(panel(page).getByLabel('Inicio del crédito manual')).toHaveValue('12/10/2026');
+  await expect(panel(page).getByLabel('Fin del crédito manual')).toHaveValue('12/11/2026');
   await fillCredit(page);
   for (const label of ['Cantidad de clases manuales', 'Inicio del crédito manual', 'Fin del crédito manual', 'Motivo del crédito manual', 'Evidencia / origen del crédito manual']) {
     const input = panel(page).getByLabel(label, { exact: true });
@@ -214,7 +214,7 @@ for (const fixture of ['period', 'manual', 'late']) test(`${fixture} settlement 
   await expect(audit).toContainText(call.input.requestKey);
   await expect(audit).toContainText(call.input.reason);
   await expect(audit).toContainText(actorId);
-  await expect(audit).toContainText('2026-10-12T08:00:00Z');
+  await expect(audit).toContainText('12/10/2026, 10:00');
   expect(await output(page, 'ledger')).toEqual([{ operation: 'settle_penalty', studentId, penaltyId, sourceId: originalId, delta: -1 }]);
   expect((await output(page, 'students'))[0].classesRemaining).toBe(4);
 });
@@ -336,7 +336,7 @@ for (const fixture of ['charged', 'waived']) test(`${fixture} audit rows do not 
   await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText(settlementId);
   await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText('Motivo de liquidacion original');
   await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText(actorId);
-  await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText('2026-10-11T20:00:00Z');
+  await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText('11/10/2026, 22:00');
   if (fixture === 'waived') await expect(penalty(page).locator('input, select, button')).toHaveCount(0);
   else await expect(penalty(page).getByRole('button', { name: 'Eximir incidencia' })).toBeDisabled();
   expect(await output(page, 'calls')).toEqual([]);

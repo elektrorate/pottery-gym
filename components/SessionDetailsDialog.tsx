@@ -1,6 +1,9 @@
 import React, { useRef, useState } from 'react';
 import type { ClassSession, Teacher, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
+import { formatDate, formatTime } from '../utils/dateFormat';
+import DateField from './shared/DateField';
+import TimeField from './shared/TimeField';
 
 export default function SessionDetailsDialog({ session, mode, teachers, schedule, exceptions, readOnly, onSave, onClose }: {
   session: ClassSession; mode: 'teacher' | 'schedule'; teachers: Teacher[]; schedule: WorkshopScheduleDay[]; exceptions: WorkshopScheduleException[]; readOnly: boolean;
@@ -34,11 +37,11 @@ export default function SessionDetailsDialog({ session, mode, teachers, schedule
   return <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-label={mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}>
     <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-neutral-border bg-white p-5 shadow-xl">
       <h2 className="text-lg font-semibold text-neutral-textMain">{mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}</h2>
-      <p className="my-3 text-sm text-neutral-textHelper">{session.date} · {session.startTime}–{session.endTime}. Los alumnos, el saldo y la asistencia se conservan.</p>
+      <p className="my-3 text-sm text-neutral-textHelper">{formatDate(session.date)} · {formatTime(session.startTime)}–{formatTime(session.endTime)}. Los alumnos, el saldo y la asistencia se conservan.</p>
       <fieldset disabled={readOnly || busy || locked} className="space-y-3">
         {mode === 'teacher' ? <label className="block text-sm">Profesor<select value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} className={inputClass}><option value="">Sin asignar</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name} {teacher.surname}</option>)}</select></label> : <>
-          <label className="block text-sm">Fecha<input required type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className={inputClass}/></label>
-          <div className="grid grid-cols-2 gap-3"><label className="text-sm">Inicio<input required type="time" value={form.startTime} onChange={e => setForm({ ...form, startTime: e.target.value })} className={inputClass}/></label><label className="text-sm">Fin<input required type="time" value={form.endTime} onChange={e => setForm({ ...form, endTime: e.target.value })} className={inputClass}/></label></div>
+          <label className="block text-sm">Fecha<DateField required aria-label="Fecha" value={form.date} onChange={date => setForm({ ...form, date })} className={inputClass}/></label>
+          <div className="grid grid-cols-2 gap-3"><label className="text-sm">Inicio<TimeField required aria-label="Inicio" value={form.startTime} onChange={startTime => setForm({ ...form, startTime })} className={inputClass}/></label><label className="text-sm">Fin<TimeField required aria-label="Fin" value={form.endTime} onChange={endTime => setForm({ ...form, endTime })} className={inputClass}/></label></div>
         </>}
       </fieldset>
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}

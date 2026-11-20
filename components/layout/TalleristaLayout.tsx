@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { logoutAndRedirect } from '../../utils/logout';
+import { capitalizeEs, formatDate } from '../../utils/dateFormat';
 import ThemeToggle from '../shared/ThemeToggle';
 import DiagonalPattern from '../shared/DiagonalPattern';
 
@@ -88,15 +89,7 @@ const menuConfig = [
     { group: 'Sistema', items: [{ path: '/settings', label: 'Administración del taller' }] }
 ];
 
-const workshopTodayLabel = () => {
-    const formatted = new Intl.DateTimeFormat('es-ES', {
-        timeZone: 'Europe/Madrid',
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-    }).format(new Date());
-    return formatted.charAt(0).toUpperCase() + formatted.slice(1);
-};
+const workshopTodayLabel = () => capitalizeEs(formatDate(new Date(), 'long'));
 
 const getViewTitle = (pathname: string) => {
     switch (pathname) {

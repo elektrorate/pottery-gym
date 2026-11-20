@@ -27,6 +27,7 @@ import logoAdjunto from './assets/logos/logo-casa-rosier.png';
 import { buildGiftCardPdfBytes } from '../supabase/functions/_shared/gift-card-pdf/giftCardPdf.ts';
 import { ScaledCard } from './components/ScaledCard';
 import { DEFAULT_VALIDITY_TEXT, LEGACY_DEFAULT_VALIDITY_TEXT, PREVIOUS_DEFAULT_VALIDITY_TEXT, VALIDITY_OPTIONS, presentGiftCardCopy } from './lib/giftCardDefaults';
+import { formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
 import { supabase } from '../supabaseClient';
 import { validateGiftCard } from './lib/validation';
 import {
@@ -55,7 +56,7 @@ const isSupabaseConfigured = true;
 
 
 
-const todayEs = () => new Date().toLocaleDateString('es-ES');
+const todayEs = () => formatDate(new Date());
 
 /** Tells pottery-gym /giftcards (parent frame, same origin) to reload its bonos. */
 const notifyParent = (message: { type: 'bonos-designer:saved'; code: string }) => {
@@ -1152,7 +1153,7 @@ const AdminApp: React.FC = () => {
           <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
             <span className="flex min-w-0 items-center gap-1 truncate">
               <CheckCircle2 size={13} className="shrink-0 text-emerald-600" />
-              {draftSavedAt ? `Borrador guardado ${draftSavedAt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` : 'Guardando borrador...'}
+              {draftSavedAt ? `Borrador guardado ${formatTime(draftSavedAt)}` : 'Guardando borrador...'}
             </span>
             <button
               type="button"
@@ -1460,7 +1461,7 @@ const AdminApp: React.FC = () => {
                   <div key={record.id} className="bg-stone-50 border border-stone-200 rounded-md p-3 space-y-2">
                     <p className="text-[12px] font-semibold text-stone-700 break-all">{record.fileName}</p>
                     <p className="text-[11px] text-stone-500">
-                      {new Date(record.createdAt).toLocaleString('es-ES')}
+                      {formatDateTime(record.createdAt)}
                     </p>
                     <p className="text-[11px] text-stone-500">
                       Código: <span className="font-semibold text-stone-700">{record.voucherCode || 'Sin código'}</span>

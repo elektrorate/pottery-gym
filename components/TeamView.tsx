@@ -5,6 +5,7 @@ import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
 import { pluralize } from '../utils/pluralize';
 import { supabase } from '../supabaseClient';
+import { formatDate } from '../utils/dateFormat';
 
 interface StaffMember {
     id: string;
@@ -160,12 +161,7 @@ const TeamView: React.FC = () => {
 
 
 
-    const formatDate = (dateStr: string) => {
-        if (!dateStr) return '—';
-        try {
-            return new Date(dateStr).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
-        } catch { return dateStr; }
-    };
+    const formatJoinedDate = (dateStr: string) => formatDate(dateStr, 'numeric', '—');
 
     const currentUserEmail = session?.user?.email || '';
 
@@ -245,7 +241,7 @@ const TeamView: React.FC = () => {
                                         </div>
                                         <div className="flex justify-between items-center gap-3">
                                             <span className="text-[12px] font-semibold text-neutral-textSec">Ingreso</span>
-                                            <span className="text-[13px] font-semibold text-neutral-textMain">{formatDate(member.joinedAt)}</span>
+                                            <span className="text-[13px] font-semibold text-neutral-textMain">{formatJoinedDate(member.joinedAt)}</span>
                                         </div>
                                     </div>
 

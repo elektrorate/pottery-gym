@@ -8,6 +8,7 @@ import { EmptyState } from './shared/EmptyState';
 import { activityTypeLabel, sessionTypeLabel } from '../utils/classTypeLabels';
 import { pluralize } from '../utils/pluralize';
 import { teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
+import { formatDate, formatTime } from '../utils/dateFormat';
 
 interface TeachersViewProps {
   teachers: Teacher[];
@@ -49,22 +50,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
     return `${teacher.name} ${teacher.surname || ''}`.trim();
   };
 
-  const formatSessionDate = (dateValue: string) => {
-    const parts = dateValue.split('-').map(Number);
-    if (parts.length === 3 && parts.every(n => Number.isFinite(n))) {
-      const [year, month, day] = parts;
-      return new Date(year, month - 1, day).toLocaleDateString('es-ES', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long'
-      });
-    }
-    return new Date(dateValue).toLocaleDateString('es-ES', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long'
-    });
-  };
+  const formatSessionDate = (dateValue: string) => formatDate(dateValue, 'long');
 
   const handleOpenNew = () => {
     setEditingTeacher(null);
@@ -178,7 +164,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                   </div>
                 </div>
                 {isExpanded && (
-                  <div className="px-4 md:px-6 py-3 bg-neutral-sec border-b border-neutral-border animate-fade-in space-y-4">
+<div className="px-4 md:px-6 py-3 bg-neutral-sec border-b border-neutral-border animate-fade-in space-y-4">
                     <div>
                       <p className="text-[14px] font-semibold text-neutral-textSec mb-2">Clases programadas</p>
                       {scheduledSessions.length === 0 ? (
@@ -190,7 +176,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                             const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
                             return (
                               <Link key={session.id} to={`${calendarHref}&date=${session.date}&sessionId=${encodeURIComponent(session.id)}`} className="p-3 bg-white rounded-xl border border-neutral-border hover:border-brand/40">
-                                <p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p>
+                                <p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {formatTime(session.startTime)} - {formatTime(session.endTime)}</p>
                                 <p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>
                                 {isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}
                               </Link>
@@ -209,7 +195,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                           {concludedSessions.slice(0, 3).map(session => {
                             const blocks = teacherBlockActivities(session, teacher.id);
                             const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
-                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p><p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>{isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
+                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {formatTime(session.startTime)} - {formatTime(session.endTime)}</p><p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>{isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
                           })}
                         </div>
                       )}

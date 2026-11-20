@@ -1,6 +1,7 @@
 import { EmptyState } from './shared/EmptyState';
 import { claseLabel } from '../utils/pluralize';
 import { getStudentSessionStatus } from '../utils/recordPresentation';
+import { formatDate, formatTime, madridDateKey, parseDateOnly } from '../utils/dateFormat';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
@@ -49,22 +50,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
     return () => clearTimeout(timeout);
   }, [searchQuery]);
 
-  const formatSessionDate = (dateValue: string) => {
-    const parts = dateValue.split('-').map(Number);
-    if (parts.length === 3 && parts.every(n => Number.isFinite(n))) {
-      const [year, month, day] = parts;
-      return new Date(year, month - 1, day).toLocaleDateString('es-ES', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long'
-      });
-    }
-    return new Date(dateValue).toLocaleDateString('es-ES', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long'
-    });
-  };
+  const formatSessionDate = (dateValue: string) => formatDate(dateValue, 'long');
 
   const normalizeIdentity = (value?: string) => {
     if (!value) return '';
@@ -76,24 +62,11 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
       .toLowerCase();
   };
 
-  const formatGiftCardDate = (dateValue?: string) => {
-    if (!dateValue) return 'Sin fecha';
-    return new Date(dateValue).toLocaleDateString('es-ES', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    });
-  };
-
-  const formatExpiryDate = (dateStr?: string) => {
-    if (!dateStr) return 'Sin fecha';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
-  };
-
+  const formatGiftCardDate = (dateValue?: string) => formatDate(dateValue, 'numeric', 'Sin fecha');
+  const formatExpiryDate = (dateStr?: string) => formatDate(dateStr, 'numeric', 'Sin fecha');
   const isExpired = (dateStr?: string) => {
-    if (!dateStr) return false;
-    return new Date(dateStr) < new Date();
+    const key = parseDateOnly(dateStr);
+    return !!key && key < madridDateKey();
   };
 
   const studentDetails = useMemo(() => {
@@ -487,7 +460,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                           <div key={s.id} className="bg-white p-4 rounded-2xl border border-neutral-border flex justify-between items-center gap-3 group hover:border-arena transition-all">
                             <div className="flex flex-col">
                               <p className="text-[15px] font-semibold text-neutral-textMain">{formatSessionDate(s.date)}</p>
-                              <p className="text-[13px] text-neutral-textSec mt-0.5">{s.startTime} - {s.endTime} • {s.classType}</p>
+                              <p className="text-[13px] text-neutral-textSec mt-0.5">{formatTime(s.startTime)} - {formatTime(s.endTime)} • {s.classType}</p>
                             </div>
                             <div className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold shrink-0 ${status === 'Asistió' ? 'bg-[#DFF0E4] text-[#20663B] border border-[#BFDECB]' : status === 'Faltó' ? 'bg-[#F8E1DA] text-[#9E3B2B] border border-[#EFC9BE]' : 'bg-neutral-alt text-neutral-textHelper border border-neutral-border'}`}>
                               {status}

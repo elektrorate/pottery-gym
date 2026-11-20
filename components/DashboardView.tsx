@@ -8,6 +8,7 @@ import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
 import { studentCategoryLabel, sessionTypeLabel } from '../utils/classTypeLabels';
+import { formatDate, formatTime } from '../utils/dateFormat';
 
 
 interface DashboardViewProps {
@@ -154,7 +155,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
       const isExpired = Boolean(student.expiryDate && student.expiryDate < todayStr);
       getPendingMembershipPayments(student).forEach(period => list.push({
         id: student.id, key: `${student.id}:${period.id}:payment`, name: fullName,
-        reason: `Pago pendiente · ${period.startsOn || 'Sin inicio'} — ${period.endsOn || 'Sin vencimiento'}`,
+        reason: `Pago pendiente · ${period.startsOn ? formatDate(period.startsOn) : 'Sin inicio'} — ${period.endsOn ? formatDate(period.endsOn) : 'Sin vencimiento'}`,
         type: 'warning', category: 'payment'
       }));
       if (isStudentArchived(student, todayStr)) return;
@@ -164,7 +165,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
         list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `Clases agotándose (${remaining} rest.)`, type: 'critical', category: 'bonuses' });
       }
       if (isExpired && isMembership) {
-        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:expiry`, name: fullName, reason: `Membresía vencida · ${student.expiryDate}`,  type: 'critical', category: 'expiry' });
+        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:expiry`, name: fullName, reason: `Membresía vencida · ${formatDate(student.expiryDate)}`,  type: 'critical', category: 'expiry' });
       }
 
     });
@@ -307,7 +308,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
             <div className="space-y-3">
               {onOpenSession && todaySessions.filter(session => session.classType !== 'feriado').map(session => (
                 <div key={session.id} data-session-id={session.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
-                  <p className="text-[13px] font-semibold text-neutral-textMain">{session.startTime} · {sessionTypeLabel(session.classType)}</p>
+                  <p className="text-[13px] font-semibold text-neutral-textMain">{formatTime(session.startTime)} · {sessionTypeLabel(session.classType)}</p>
                   <button type="button" onClick={() => onOpenSession(session.id, session.date)} className="min-h-[36px] rounded-lg border border-neutral-border px-3 py-2 text-[12px] font-semibold text-brand hover:text-brand-hover">Control de asistencia</button>
                 </div>
               ))}
@@ -321,7 +322,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
               ) : (
                  <>
                  {todayActivities.map(activity => <div key={activity.id} className="flex items-start gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
-                   <time className="min-w-[46px] pt-0.5 text-[13px] font-semibold text-neutral-textMain">{activity.time}</time>
+                   <time className="min-w-[46px] pt-0.5 text-[13px] font-semibold text-neutral-textMain">{formatTime(activity.time)}</time>
                    <div className="min-w-0 flex-1"><p className="text-[18px] font-semibold leading-tight text-brand">{activity.title}</p><p className="mt-1 text-[14px] leading-snug text-neutral-textHelper">{activity.description || 'Sin descripción'}</p></div>
                    <button type="button" aria-label={`Eliminar ${activity.title}`} onClick={() => onNavigate('agenda')} className="text-[12px] text-neutral-textHelper hover:text-brand">Eliminar</button>
                  </div>)}

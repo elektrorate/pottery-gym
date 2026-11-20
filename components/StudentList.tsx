@@ -3,6 +3,9 @@ import { showError } from '../context/toast';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import DateField from './shared/DateField';
+import TimeField from './shared/TimeField';
+import { formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
 import { getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
@@ -156,10 +159,10 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
       {(student.manualCredits || []).length === 0 ? <p>Sin derechos manuales aprobados.</p> : student.manualCredits!.map(credit => <article key={credit.id}
         data-manual-credit-id={credit.id} className="min-w-0 space-y-1 rounded-md border border-[#E6D8CB] bg-white p-3 break-words">
         <p className="font-bold text-[#7B3F22]">{credit.mode === 'reconcile_legacy' ? 'Conciliación de saldo legado' : 'Nuevo crédito manual'} · {CREDIT_ACTIVITY_LABELS[credit.activity]}</p>
-        <p>{credit.remainingClasses} restantes / {credit.allocatedClasses} aprobadas · {credit.startsOn} a {credit.endsOn}</p>
+<p>{credit.remainingClasses} restantes / {credit.allocatedClasses} aprobadas · {formatDate(credit.startsOn)} a {formatDate(credit.endsOn)}</p>
         <p className="break-all">Derecho: <code>{credit.id}</code> · Alumno: <code>{credit.studentId}</code> · Taller: <code>{credit.sedeId}</code></p>
         <p>Motivo: {credit.reason}</p><p>Evidencia / origen: {credit.evidence}</p>
-        <p className="break-all">Aprobado por (ID de actor): <code>{credit.approvedBy}</code> · {credit.approvedAt}</p>
+        <p className="break-all">Aprobado por (ID de actor): <code>{credit.approvedBy}</code> · {formatDateTime(credit.approvedAt)}</p>
       </article>)}
     </div>
     {ownerHint ? <fieldset disabled={locked || !student.sedeId || !recoveryAvailable || !onApproveManualCredit} className="min-w-0 space-y-3 rounded-md border border-[#DDBFA4] p-3">
@@ -174,8 +177,8 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         </select></label>
         <label>Cantidad de clases manuales<input aria-label="Cantidad de clases manuales" className={controlClass} type="number" min="1" step="1" value={draft.quantity} onChange={event => setDraft({ ...draft, quantity: event.target.value })} /></label>
         <p>{draft.mode === 'reconcile_legacy' ? `La conciliación debe incluir el saldo legado completo (${legacyBalance ?? 'desconocido'} clases), no una cantidad parcial. ` : ''}La cantidad, actividad y vigencia requieren aprobación expresa. Las fechas propuestas son editables; no acreditan validez antes de aprobar.</p>
-        <label>Inicio del crédito manual<input aria-label="Inicio del crédito manual" className={controlClass} type="date" value={draft.startsOn} onChange={event => setDraft({ ...draft, startsOn: event.target.value })} /></label>
-        <label>Fin del crédito manual<input aria-label="Fin del crédito manual" className={controlClass} type="date" value={draft.endsOn} onChange={event => setDraft({ ...draft, endsOn: event.target.value })} /></label>
+        <label>Inicio del crédito manual<DateField aria-label="Inicio del crédito manual" className={controlClass} value={draft.startsOn} onChange={startsOn => setDraft({ ...draft, startsOn })} /></label>
+        <label>Fin del crédito manual<DateField aria-label="Fin del crédito manual" className={controlClass} value={draft.endsOn} onChange={endsOn => setDraft({ ...draft, endsOn })} /></label>
       </div>
       <label>Motivo del crédito manual<textarea aria-label="Motivo del crédito manual" maxLength={2000} className={`${controlClass} min-h-20 py-2`} value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value })} /></label>
       <label>Evidencia / origen del crédito manual<textarea aria-label="Evidencia / origen del crédito manual" maxLength={10000} className={`${controlClass} min-h-20 py-2`} value={draft.evidence} onChange={event => setDraft({ ...draft, evidence: event.target.value })} /></label>
@@ -191,7 +194,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         const validReason = !!reasons[penalty.id]?.trim() && reasons[penalty.id].trim().length <= 2000;
         return <article key={penalty.id} data-penalty-id={penalty.id} data-penalty-state={penalty.state} className="min-w-0 space-y-2 rounded-md border border-[#E6D8CB] bg-white p-3 break-words">
           <p className="font-bold text-[#7B3F22]">{penaltyKindLabel(penalty.kind)} · {penalty.state === 'pending' ? 'Pendiente de resolución' : penalty.state === 'charged' ? 'Descuento aplicado' : 'Eximida'}</p>
-          <p>{penalty.sessionDate} · {penalty.sessionStart} · Revisión de sesión: {penalty.sessionRevision ?? 'Sin revisión'}</p>
+<p>{formatDate(penalty.sessionDate)} · {formatTime(penalty.sessionStart)} · Revisión de sesión: {penalty.sessionRevision ?? 'Sin revisión'}</p>
           <p className="break-all">Incidencia: <code>{penalty.id}</code> · Sesión: <code>{penalty.sessionId}</code> · Alumno: <code>{penalty.studentId}</code> · Taller: <code>{penalty.sedeId}</code></p>
           <div data-testid="penalty-original-source">{sources.length ? sources.map(([label, id]) => <p key={label} className="break-all">{label}: <code>{id}</code></p>) : <p>Sin derecho original atribuible. No se sustituye por el saldo actual.</p>}</div>
           <p>Motivo registrado: {businessReasonLabel(penalty.reason)}</p>
@@ -200,7 +203,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
             {penalty.settlementId && <p className="break-all">Liquidación: <code>{penalty.settlementId}</code></p>}
             {penalty.settlementReason && <p>Motivo de liquidación: {penalty.settlementReason}</p>}
             {penalty.settledBy && <p className="break-all">Aplicada por (ID de actor): <code>{penalty.settledBy}</code></p>}
-            {penalty.settledAt && <p>Fecha de liquidación: {penalty.settledAt}</p>}
+            {penalty.settledAt && <p>Fecha de liquidación: {formatDateTime(penalty.settledAt)}</p>}
           </div>}
           {penalty.blockedReason && <p>{penalty.blockedReason}</p>}
           {penalty.state === 'pending' && <p>La disponibilidad indicada se calcula en la aplicación sobre el derecho original; no concede permiso ni garantiza un cargo. El servidor valida la operación final.{penalty.canSettle !== true ? ' El descuento no está disponible con los datos actuales.' : ''}</p>}
@@ -231,7 +234,7 @@ const getMonthKey = (date: string) => date.slice(0, 7);
 
 const formatMonthLabel = (monthKey: string) => {
   const [year, month] = monthKey.split('-').map(Number);
-  return new Date(year, month - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+  return formatDate(`${year}-${String(month).padStart(2, '0')}-01`, 'monthYear');
 };
 
 const getMonthCalendarDays = (monthKey: string): Array<number | null> => {
@@ -713,7 +716,7 @@ const StudentList: React.FC<StudentListProps> = ({
                 </div>
                  <div className="h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-2"><div className={`h-full ${form.classesRemaining <= 0 ? 'bg-[#A85D3B]' : 'bg-[#7B3F22]'}`} style={{ width: `${Math.min(100, (form.classesRemaining / form.bonosAsignados) * 100)}%` }} /></div>
                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
-                   <input type="date" value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} aria-label="Fecha de vencimiento de membresía" className="h-10 px-2.5 bg-white border border-[#E7B899] rounded-md text-[12px] text-[#A85D3B] outline-none focus:border-[#C68952]" />
+                   <DateField value={form.expiryDate} onChange={(expiryDate) => setForm({ ...form, expiryDate })} aria-label="Fecha de vencimiento de membresía" className="h-10 px-2.5 bg-white border border-[#E7B899] rounded-md text-[12px] text-[#A85D3B] outline-none focus:border-[#C68952]" />
                     {form.studentCategory === 'membresia' && <p className="text-[12px] text-[#8B6B5E]">Membresía pendiente durante los cinco días posteriores al vencimiento y vencida desde el sexto. Renovar no confirma el pago ni reactiva una ficha archivada.</p>}
                 </div>
               </fieldset>}
@@ -723,7 +726,7 @@ const StudentList: React.FC<StudentListProps> = ({
 
              <div id="student-attendance-panel" className="space-y-7">
                <style>{`#student-attendance-panel > section:first-of-type { display: none; }`}</style>
-              <section><div className="flex items-baseline justify-between mb-3"><h4 className="text-[14px] font-bold text-[#7B3F22]">Asistencia</h4><span className="text-[11px] text-[#8B6B5E]">Registro de sesiones</span></div><div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar">{form.assignedClasses.length === 0 ? <p className="py-6 border border-dashed border-[#DDBFA4] rounded-md text-center text-[12px] text-[#8B6B5E]">No hay asistencias registradas aún.</p> : form.assignedClasses.map((ac, idx) => <div key={idx} className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white border border-[#E6D8CB] rounded-md"><div><p className="text-[13px] font-bold text-[#7B3F22]">{ac.date}</p><p className="text-[11px] text-[#8B6B5E]">{ac.startTime} - {ac.endTime}</p></div><div className="flex gap-1"><button type="button" onClick={() => { const updated = [...form.assignedClasses]; updated[idx].status = updated[idx].status === 'present' ? 'pending' : 'present'; setForm({ ...form, assignedClasses: updated }); }} className={`w-8 h-8 rounded-md flex items-center justify-center border ${ac.status === 'present' ? 'bg-[#7B3F22] text-white border-[#7B3F22]' : 'bg-white text-[#8B6B5E] border-[#DDBFA4]'}`} aria-label="Marcar presente">✓</button><button type="button" onClick={() => { const updated = [...form.assignedClasses]; updated[idx].status = updated[idx].status === 'absent' ? 'pending' : 'absent'; setForm({ ...form, assignedClasses: updated }); }} className={`w-8 h-8 rounded-md flex items-center justify-center border ${ac.status === 'absent' ? 'bg-[#A85D3B] text-white border-[#A85D3B]' : 'bg-white text-[#8B6B5E] border-[#DDBFA4]'}`} aria-label="Marcar ausente">×</button></div></div>)}</div><div className="grid grid-cols-[1fr_1fr_44px] gap-2 mt-3"><input type="date" value={newSessionDate} onChange={(e) => setNewSessionDate(e.target.value)} aria-label="Fecha de asistencia" className="h-10 px-2 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22]" /><input type="time" value={newSessionTime} onChange={(e) => setNewSessionTime(e.target.value)} aria-label="Hora de asistencia" className="h-10 px-2 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22]" /><button type="button" onClick={handleAddSession} className="h-10 rounded-md bg-[#F0E2D6] text-[#7B3F22] text-lg hover:bg-[#DDBFA4]" aria-label="Añadir asistencia">+</button></div></section>
+              <section><div className="flex items-baseline justify-between mb-3"><h4 className="text-[14px] font-bold text-[#7B3F22]">Asistencia</h4><span className="text-[11px] text-[#8B6B5E]">Registro de sesiones</span></div><div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar">{form.assignedClasses.length === 0 ? <p className="py-6 border border-dashed border-[#DDBFA4] rounded-md text-center text-[12px] text-[#8B6B5E]">No hay asistencias registradas aún.</p> : form.assignedClasses.map((ac, idx) => <div key={idx} className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white border border-[#E6D8CB] rounded-md"><div><p className="text-[13px] font-bold text-[#7B3F22]">{formatDate(ac.date)}</p><p className="text-[11px] text-[#8B6B5E]">{formatTime(ac.startTime)} - {formatTime(ac.endTime)}</p></div><div className="flex gap-1"><button type="button" onClick={() => { const updated = [...form.assignedClasses]; updated[idx].status = updated[idx].status === 'present' ? 'pending' : 'present'; setForm({ ...form, assignedClasses: updated }); }} className={`w-8 h-8 rounded-md flex items-center justify-center border ${ac.status === 'present' ? 'bg-[#7B3F22] text-white border-[#7B3F22]' : 'bg-white text-[#8B6B5E] border-[#DDBFA4]'}`} aria-label="Marcar presente">✓</button><button type="button" onClick={() => { const updated = [...form.assignedClasses]; updated[idx].status = updated[idx].status === 'absent' ? 'pending' : 'absent'; setForm({ ...form, assignedClasses: updated }); }} className={`w-8 h-8 rounded-md flex items-center justify-center border ${ac.status === 'absent' ? 'bg-[#A85D3B] text-white border-[#A85D3B]' : 'bg-white text-[#8B6B5E] border-[#DDBFA4]'}`} aria-label="Marcar ausente">×</button></div></div>)}</div><div className="grid grid-cols-[1fr_1fr_44px] gap-2 mt-3"><DateField value={newSessionDate} onChange={setNewSessionDate} aria-label="Fecha de asistencia" className="h-10 px-2 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22]" /><TimeField value={newSessionTime} onChange={setNewSessionTime} aria-label="Hora de asistencia" className="h-10 px-2 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22]" /><button type="button" onClick={handleAddSession} className="h-10 rounded-md bg-[#F0E2D6] text-[#7B3F22] text-lg hover:bg-[#DDBFA4]" aria-label="Añadir asistencia">+</button></div></section>
                 <section className="border-t border-[#E6D8CB] pt-6">
                   <div className="flex items-baseline justify-between mb-3">
                     <h4 className="text-[14px] font-bold text-[#7B3F22]">Asistencia de {formatMonthLabel(currentMonthKey)}</h4>
@@ -753,15 +756,15 @@ const StudentList: React.FC<StudentListProps> = ({
                     const isExpanded = expandedAttendanceMonth === monthKey;
                     const presentCount = records.filter(record => record.status === 'present').length;
                     const absentCount = records.filter(record => record.status === 'absent').length;
-                    return <div key={monthKey} className="rounded-md border border-[#E6D8CB] bg-white overflow-hidden"><button type="button" onClick={() => setExpandedAttendanceMonth(isExpanded ? currentMonthKey : monthKey)} className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-[#FCF8F4]"><span className="text-[12px] font-bold capitalize text-[#7B3F22]">{formatMonthLabel(monthKey)}</span><span className="text-[11px] text-[#8B6B5E]">{presentCount} presentes · {absentCount} faltas <span className="ml-1">{isExpanded ? '−' : '+'}</span></span></button>{isExpanded && <div className="border-t border-[#E6D8CB] px-3 py-2 space-y-1.5">{records.map((record, index) => <div key={`${record.date}-${record.startTime}-${index}`} className="flex items-center justify-between text-[11px]"><span className="text-[#7B3F22]">{record.date} · {record.startTime} - {record.endTime}</span><span className={`font-bold ${record.status === 'present' ? 'text-[#47704D]' : 'text-[#9C4235]'}`}>{record.status === 'present' ? 'Presente' : 'Falta'}</span></div>)}</div>}</div>;
+                    return <div key={monthKey} className="rounded-md border border-[#E6D8CB] bg-white overflow-hidden"><button type="button" onClick={() => setExpandedAttendanceMonth(isExpanded ? currentMonthKey : monthKey)} className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-[#FCF8F4]"><span className="text-[12px] font-bold capitalize text-[#7B3F22]">{formatMonthLabel(monthKey)}</span><span className="text-[11px] text-[#8B6B5E]">{presentCount} presentes · {absentCount} faltas <span className="ml-1">{isExpanded ? '−' : '+'}</span></span></button>{isExpanded && <div className="border-t border-[#E6D8CB] px-3 py-2 space-y-1.5">{records.map((record, index) => <div key={`${record.date}-${record.startTime}-${index}`} className="flex items-center justify-between text-[11px]"><span className="text-[#7B3F22]">{formatDate(record.date)} · {formatTime(record.startTime)} - {formatTime(record.endTime)}</span><span className={`font-bold ${record.status === 'present' ? 'text-[#47704D]' : 'text-[#9C4235]'}`}>{record.status === 'present' ? 'Presente' : 'Falta'}</span></div>)}</div>}</div>;
                   })}</div>}
                 </section>
                <section className="border-t border-[#E6D8CB] pt-6"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-3">Observaciones internas</h4><textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} placeholder="Preferencias, nivel o avisos relevantes" aria-label="Observaciones internas" className="w-full min-h-[120px] p-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none resize-y focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></section>
-               <div className="text-[11px] text-[#8B6B5E] border-t border-[#E6D8CB] pt-4">{editingStudent?.createdAt ? `Ficha creada el ${new Date(editingStudent.createdAt).toLocaleDateString('es-ES')}` : 'La ficha se registrará al guardar.'}</div>
+               <div className="text-[11px] text-[#8B6B5E] border-t border-[#E6D8CB] pt-4">{editingStudent?.createdAt ? `Ficha creada el ${formatDate(editingStudent.createdAt)}` : 'La ficha se registrará al guardar.'}</div>
                {managedEdit && liveEditingStudent && <section className="space-y-3 border-t pt-4">
                  <h4 className="font-bold">Períodos y pagos</h4>
                  {(liveEditingStudent.membershipPeriods || []).map(period => <div key={period.id} className="border rounded p-3 text-sm">
-                   <p>{period.startsOn || 'Sin inicio'} — {period.endsOn || 'Sin vencimiento'} · {period.membershipTier || 'Plan desconocido'}</p>
+                   <p>{period.startsOn ? formatDate(period.startsOn) : 'Sin inicio'} — {period.endsOn ? formatDate(period.endsOn) : 'Sin vencimiento'} · {period.membershipTier || 'Plan desconocido'}</p>
                    <p>{period.id === liveEditingStudent.effectivePeriodId ? 'Período actual' : period.startsOn && period.startsOn > today ? 'Renovación programada' : 'Historial'} · {period.paymentStatus === 'paid' ? 'Pagado' : period.paymentStatus === 'pending' ? 'Pago pendiente' : 'Pago desconocido'}</p>
                    {period.paymentStatus !== 'paid' && <button type="button" disabled={isSubmitting} onClick={() => void runMembershipAction(() => onConfirmPayment(liveEditingStudent.id, period.id))}>Confirmar pago de este período</button>}
                  </div>)}

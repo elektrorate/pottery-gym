@@ -5,6 +5,7 @@ import { Card, Button, Icon, ActivityPill } from '../components/UI';
 import { useNavigate } from 'react-router-dom';
 import { WorkshopStatus } from '../types';
 import DiagonalPattern from '../../components/shared/DiagonalPattern';
+import { capitalizeEs, formatDate } from '../../utils/dateFormat';
 
 export const Dashboard: React.FC = () => {
   const { workshops, users, globalMetrics } = useAppContext();
@@ -38,7 +39,7 @@ export const Dashboard: React.FC = () => {
             <div className="px-4 py-2 bg-neutral-alt rounded-full flex items-center gap-2.5">
               <div className="w-2 h-2 bg-[#20663B] rounded-full animate-pulse"></div>
               <span className="eyebrow">
-                {new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
+                {capitalizeEs(formatDate(new Date(), 'long'))}
               </span>
             </div>
             <div className="px-4 py-2 border border-neutral-border rounded-full flex items-center gap-2.5 text-neutral-textMain">

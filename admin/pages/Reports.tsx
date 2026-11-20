@@ -2,6 +2,7 @@
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
 import { Card, Button } from '../components/UI';
+import { madridDateKey } from '../../utils/dateFormat';
 
 export const Reports: React.FC = () => {
     const { workshops, users, workshopMetrics, globalMetrics, showToast } = useAppContext();
@@ -81,7 +82,7 @@ export const Reports: React.FC = () => {
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.setAttribute('href', url);
-            link.setAttribute('download', `reporte_talleres_${new Date().toISOString().split('T')[0]}.csv`);
+            link.setAttribute('download', `reporte_talleres_${madridDateKey()}.csv`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
