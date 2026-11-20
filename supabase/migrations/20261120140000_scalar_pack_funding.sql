@@ -20,21 +20,41 @@ alter table public.session_credit_movements
     or (disposition <> 'scalar_balance' and num_nonnulls(period_id, gift_card_id, manual_credit_id) = 1)
   );
 
--- Rewrite accidental current_period inserts that have no source IDs (scalar pack debits).
+-- Scalar pack movements (temporal / grupal / grupo_temporal students without period, gift or manual source):
+--  * debits written by the attendance flow as 'current_period' are stored as 'scalar_balance';
+--  * a reversal (+1, e.g. waived penalty) of a scalar debit restores the class to classes_remaining,
+--    exactly once (reverses_id is unique), so ledger and balance stay consistent.
+-- Membership students are never rewritten: a sourceless movement for them still fails the constraint.
 create or replace function private.normalize_scalar_credit_disposition()
 returns trigger
-language plpgsql security invoker set search_path = '' as $$
+language plpgsql security definer set search_path = '' as $$
+declare original public.session_credit_movements;
 begin
+  if tg_op <> 'INSERT' then return new; end if;
   if new.period_id is null and new.gift_card_id is null and new.manual_credit_id is null
-     and new.disposition is distinct from 'scalar_balance' then
+     and exists (select 1 from public.students st where st.id = new.student_id
+       and coalesce(st.student_category, 'membresia') in ('temporal', 'grupal', 'grupo_temporal')) then
+    if new.delta = 1 then
+      select * into original from public.session_credit_movements where id = new.reverses_id;
+      if original.id is null or original.disposition is distinct from 'scalar_balance'
+         or original.student_id is distinct from new.student_id or original.session_id is distinct from new.session_id then
+        raise exception 'Scalar pack reversal must reference its exact original scalar debit';
+      end if;
+      if new.adjustment_id is null then
+        perform private.session_business_adjust_scalar(new.student_id, 1);
+      end if;
+    end if;
     new.disposition := 'scalar_balance';
   end if;
   return new;
 end $$;
 
+revoke all on function private.normalize_scalar_credit_disposition()
+  from public, anon, authenticated, service_role;
+
 drop trigger if exists normalize_scalar_credit_disposition on public.session_credit_movements;
 create trigger normalize_scalar_credit_disposition
-  before insert or update on public.session_credit_movements
+  before insert on public.session_credit_movements
   for each row execute function private.normalize_scalar_credit_disposition();
 
 -- 2) Scalar pack adjust: decrement/increment students.classes_remaining without a membership period.
@@ -50,7 +70,8 @@ begin
      or st.classes_remaining is null
      or p_delta not in (-1, 1)
      or st.classes_remaining + p_delta < 0
-     or (st.bonos_asignados is not null and st.classes_remaining + p_delta > st.bonos_asignados) then
+     -- Only a restore (+1) is capped by the assigned pack size; a debit never fails because of a stale cap.
+     or (p_delta = 1 and st.bonos_asignados is not null and st.classes_remaining + 1 > st.bonos_asignados) then
     raise exception 'Original scalar pack balance requires reconciliation';
   end if;
   update public.students
@@ -188,7 +209,7 @@ end $$;
 revoke all on function private.session_business_funding(uuid, uuid),
   private.session_business_funding_before_scalar_pack(uuid, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function private.session_business_funding(uuid, uuid) to authenticated;
+-- No direct grant: only the security-definer session RPCs call the funding helper (same ACL as before).
 
 -- Keep reservation is_temporary flag consistent for pack categories (idempotent replace of insert helper is not needed;
 -- reservation already works; funding/attendance are the operational blockers).
