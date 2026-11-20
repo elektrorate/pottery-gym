@@ -158,9 +158,9 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                     <span className="block text-[14px] font-medium text-neutral-textSec">{pluralize(concludedSessions.length, 'concluida', 'concluidas')}</span>
                   </span>
                   <div className="col-span-2 md:col-span-1 flex flex-wrap items-center justify-end gap-2 pt-2 md:pt-0 border-t border-neutral-border md:border-0">
-                     <Link to={calendarHref} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-brand border border-brand/20 hover:bg-brand-soft transition-colors" aria-label={`Calendario de ${fullName}`}>Calendario</Link>
+                     <Link to={calendarHref} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] border border-neutral-border bg-white text-[12px] font-semibold text-neutral-textMain transition-colors hover:border-arena hover:text-brand" aria-label={`Calendario de ${fullName}`}>Calendario</Link>
                      <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedTeacherId(isExpanded ? null : teacher.id)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-neutral-textSec border border-neutral-border hover:border-arena hover:text-brand transition-colors">Historial</button>
-                     <button onClick={() => handleOpenEdit(teacher)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-brand border border-brand/20 hover:bg-brand-soft transition-colors">Editar</button>
+                     <button onClick={() => handleOpenEdit(teacher)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] border border-neutral-border bg-white text-[12px] font-semibold text-neutral-textMain transition-colors hover:border-arena hover:text-brand">Editar</button>
                   </div>
                 </div>
                 {isExpanded && (

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { logoutAndRedirect } from '../../utils/logout';
 import { capitalizeEs, formatDate } from '../../utils/dateFormat';
+import { presentDisplayName } from '../../utils/displayName';
 import ThemeToggle from '../shared/ThemeToggle';
 import DiagonalPattern from '../shared/DiagonalPattern';
 
@@ -125,7 +126,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
         await logoutAndRedirect('/login');
     };
 
-    const displayName = profile?.full_name || profile?.email?.split('@')[0] || 'Estudio';
+    const displayName = presentDisplayName(profile?.full_name || profile?.email?.split('@')[0] || 'Estudio');
     const isStaff = profile?.role === 'staff';
 
     // Staff cannot see team management or settings
