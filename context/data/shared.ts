@@ -2,6 +2,7 @@ import React from 'react';
 import { supabase } from '../../supabaseClient';
 import { Student, ClassSession, GiftCard, WorkshopCapacityDefault } from '../../types';
 export { mapStudentRowToModel, mapMembershipPeriod, joinStudentMemberships } from '../../utils/studentLifecycle';
+import { workshopDateToTimestamptz } from '../../utils/studentLifecycle';
 
 export { supabase };
 
@@ -139,7 +140,7 @@ export const buildStudentPayload = (student: Partial<Student>) => {
     if (student.observations !== undefined) payload.observations = student.observations || null;
     if (student.price !== undefined) payload.price = student.price ?? null;
     if (student.classType !== undefined) payload.class_type = student.classType || null;
-    if (student.expiryDate !== undefined) payload.expiry_date = student.expiryDate || null;
+    if (student.expiryDate !== undefined) payload.expiry_date = workshopDateToTimestamptz(student.expiryDate || null);
     if (student.studentCategory !== undefined) payload.student_category = student.studentCategory || 'membresia';
     if (student.membershipTier !== undefined) payload.membership_tier = student.membershipTier || null;
     if (student.membershipActivatedAt !== undefined) payload.membership_activated_at = student.membershipActivatedAt || null;
@@ -147,7 +148,7 @@ export const buildStudentPayload = (student: Partial<Student>) => {
     if (student.groupName !== undefined) payload.group_name = student.groupName || null;
     if (student.bonosAsignados !== undefined) payload.bonos_asignados = student.bonosAsignados;
     if (student.repetirMensualmente !== undefined) payload.repetir_mensualmente = student.repetirMensualmente;
-    if (student.studentCategory === 'temporal') {
+    if (student.studentCategory && student.studentCategory !== 'membresia') {
         payload.membership_tier = null;
         payload.membership_activated_at = null;
         payload.repetir_mensualmente = false;

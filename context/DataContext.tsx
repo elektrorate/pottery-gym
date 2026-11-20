@@ -208,7 +208,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             };
 
             const buildQuery = (table: string, limit?: number, range?: { start: string; end: string }, signal?: AbortSignal,
-                options: { columns?: string; exactCount?: boolean; studentCategory?: string } = {}) => {
+                options: { columns?: string; exactCount?: boolean; studentCategory?: string; studentCategories?: string[] } = {}) => {
                 const activityRoster = table === 'session_activity_block_students';
                 const exactCount = options.exactCount !== false;
                 const select = () => {
@@ -218,7 +218,8 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     // table through its activity block/session parent.
                     let query = supabase.from(table).select(options.columns || '*', exactCount ? { count: 'exact' } : undefined);
                     if (!activityRoster && !isSuperAdmin && sedeId) query = query.eq('sede_id', sedeId);
-                    if (table === 'students' && options.studentCategory) query = query.eq('student_category', options.studentCategory);
+                    if (table === 'students' && options.studentCategories?.length) query = query.in('student_category', options.studentCategories);
+                    else if (table === 'students' && options.studentCategory) query = query.eq('student_category', options.studentCategory);
                     if (range && table === 'sessions') query = query.gte('date', range.start).lte('date', range.end);
                     return query;
                 };
@@ -250,13 +251,16 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 'phase.critical.snapshot',
                 Promise.all([
                     // The first paint only needs a small, predictable page of
-                    // Memberships remain paginated for the first paint. Temporary
-                    // students are loaded completely because the archived view
-                    // must include exhausted gift-card recipients (including
-                    // records beyond the first page), while this roster is small
-                    // compared with the membership history.
+                    // Memberships remain paginated for the first paint. Non-membership
+                    // students (bonos temporales, grupal, grupo temporal) are loaded
+                    // completely because the archived view must include exhausted
+                    // gift-card recipients (including records beyond the first page),
+                    // while this roster is small compared with the membership history.
                     buildQuery('students', 50, undefined, undefined, { exactCount: false, studentCategory: 'membresia' }),
-                    buildQuery('students', undefined, undefined, undefined, { exactCount: false, studentCategory: 'temporal' }),
+                    buildQuery('students', undefined, undefined, undefined, {
+                        exactCount: false,
+                        studentCategories: ['temporal', 'grupal', 'grupo_temporal']
+                    }),
                     buildQuery('teachers'), buildQuery('sessions', undefined, calendarRange),
                     buildQuery('session_students', undefined, undefined, undefined, {
                         columns: 'session_id,student_id,student_name,attendance,gift_card_id,manual_credit_id',

@@ -1,4 +1,5 @@
 import type { GiftCard, Student } from '../types';
+import { isNonMembershipCategory } from './classTypeLabels';
 
 export function hasVerifiedMembership(student: Student): boolean {
   return !!student.effectivePeriodId && !!student.membershipTier && Number.isSafeInteger(student.bonosAsignados) && student.bonosAsignados! > 0;
@@ -53,4 +54,13 @@ export function studentBalanceLabel(student: Student, giftCards?: GiftCard[]): s
   }
   if (hasVerifiedMembership(student)) return `${student.classesRemaining} / ${student.bonosAsignados}`;
   return student.legacyManualBalance == null ? 'Saldo por verificar' : `Saldo importado: ${student.legacyManualBalance} clases`;
+}
+
+/** Remaining classes for alerts/dashboard: gift cards when linked, else student balance. */
+export function studentEffectiveRemainingClasses(student: Student, giftCards?: GiftCard[]): number {
+  if (isNonMembershipCategory(student.studentCategory) && giftCards) {
+    const { cards, remaining } = studentGiftCardBalance(student.id, giftCards);
+    if (cards.length) return remaining;
+  }
+  return student.classesRemaining ?? 0;
 }

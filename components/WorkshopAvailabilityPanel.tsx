@@ -9,7 +9,7 @@ import { addDays, getScheduleConflictReason, getWeekMonday, madridDateKey } from
 const dayLabels: Record<number, string> = { 0: 'Domingo', 1: 'Lunes', 2: 'Martes', 3: 'Miércoles', 4: 'Jueves', 5: 'Viernes', 6: 'Sábado' };
 const dayOrder = [1, 2, 3, 4, 5, 6, 0];
 const activityLabels: Record<CapacityActivity, string> = {
-  mesa: 'Mesa', torno: 'Torno', coworking: 'Coworking', workshop: 'Workshop', privada: 'Privadas'
+  mesa: 'Modelado/Mesa', torno: 'Torno', coworking: 'Coworking', workshop: 'Workshop', privada: 'Privadas'
 };
 const activityTypes: CapacityActivity[] = ['mesa', 'torno', 'coworking', 'workshop', 'privada'];
 const inputClass = 'h-10 rounded-[9px] border border-neutral-border bg-white px-3 text-[13px] font-medium text-neutral-textMain outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15';

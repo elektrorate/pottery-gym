@@ -44,6 +44,12 @@ test('single lifecycle tabs and dashboard share the same membership counts', asy
   const summary = page.locator('[aria-label="Resumen de alumnos"]');
   await expect(summary.getByText('membresías', { exact: true }).locator('..')).toHaveText(/^3\s*membresías$/i);
   await expect(summary.getByText('bonos temporales', { exact: true }).locator('..')).toHaveText(/^1\s*bonos temporales$/i);
+  await expect(summary.getByText('grupales', { exact: true }).locator('..')).toHaveText(/^1\s*grupales$/i);
+  await expect(summary.getByText('grupo temporal', { exact: true }).locator('..')).toHaveText(/^1\s*grupo temporal$/i);
+  await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
+  await expect(page.getByRole('button', { name: /GRUPAL VISIBLE/ })).toBeVisible();
+  await page.getByRole('button', { name: /^Grupo temporal\s+1$/i }).click();
+  await expect(page.getByRole('button', { name: /GRUPO TEMPORAL VISIBLE/ })).toBeVisible();
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
   await expect(page.getByText('Activos de membresía').locator('..')).toContainText('1');
   await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
@@ -86,14 +92,28 @@ test('mobile layout keeps tabs and row state visible', async ({ page }) => {
   await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toContainText('Activo');
 });
 
-test('new temporary has one class and an independent category/status', async ({ page }) => {
+test('new temporary can raise the contracted class count above 1', async ({ page }) => {
   await page.getByRole('button', { name: 'Crear nuevo alumno' }).click();
   await page.getByLabel('Categoría del alumno').selectOption('temporal');
   await page.getByRole('button', { name: 'Cambiar categoría', exact: true }).click();
-  await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('1');
-  await expect(page.getByLabel('Bonos restantes', { exact: true })).toHaveValue('1');
+  await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('4');
   await page.getByRole('button', { name: 'Aumentar bonos' }).click();
-  await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('1');
+  await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('5');
+  await page.getByRole('button', { name: 'Aumentar bonos' }).click();
+  await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('6');
+  await expect(page.getByLabel('Bonos restantes', { exact: true })).toHaveValue('6');
+});
+
+test('grupal profile opens and payment status can be confirmed', async ({ page }) => {
+  await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
+  await page.getByRole('button', { name: /GRUPAL VISIBLE/ }).click();
+  await expect(page.getByRole('heading', { name: 'GRUPAL VISIBLE' })).toBeVisible();
+  await expect(page.getByLabel('Bonos contratados', { exact: true })).toHaveValue('4');
+  await expect(page.getByLabel('Bonos restantes', { exact: true })).toHaveValue('4');
+  await page.getByLabel('Estado del pago').selectOption('paid');
+  await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
+  await expect(page.getByTestId('saved')).toContainText('"paymentStatus":"paid"');
+  await expect(page.getByTestId('saved')).toContainText('"studentCategory":"grupal"');
 });
 
 test('editing legacy temporary preserves already assigned classes', async ({ page }) => {
