@@ -152,9 +152,9 @@ test.describe('Flujos operativos', () => {
   test('gift cards: abre formulario, valida campos y permite filtrar archivados', async ({ page }) => {
     await login(page, staffEmail, staffPassword, '/dashboard');
     await page.goto('/giftcards');
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
-    await expect(page.getByRole('heading', { name: 'Nuevo bono temporal' })).toBeVisible();
-    await page.getByRole('button', { name: 'Crear bono' }).click();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
+    await expect(page.getByRole('heading', { name: 'Nuevo bono regalo' })).toBeVisible();
+    await page.getByRole('button', { name: 'Crear bono regalo' }).click();
     await expect(page.getByRole('textbox', { name: 'Nombre del comprador *' })).toHaveAttribute('required', '');
     await expect(page.getByRole('textbox', { name: 'Nombre del destinatario *' })).toHaveAttribute('required', '');
     await page.getByRole('button', { name: 'Cancelar' }).click();
@@ -190,11 +190,11 @@ test.describe('Flujos operativos', () => {
   test('accesibilidad básica: foco, escape y estados de carga', async ({ page }) => {
     await login(page, staffEmail, staffPassword, '/dashboard');
     await page.goto('/giftcards');
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).focus();
-    await expect(page.getByRole('button', { name: /Nueva tarjeta/ })).toBeFocused();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).focus();
+    await expect(page.getByRole('button', { name: /Nuevo bono regalo/ })).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Nuevo bono temporal' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nuevo bono regalo' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('heading', { name: 'Nuevo bono temporal' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Nuevo bono regalo' })).toHaveCount(0);
   });
 });

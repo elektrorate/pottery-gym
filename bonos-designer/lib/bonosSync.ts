@@ -11,7 +11,7 @@ import { DEFAULT_VALIDITY_TEXT, giftCardCopyDefaults } from './giftCardDefaults.
 export const BONOS_VALIDITY_MONTHS = [3, 6, 8, 12] as const;
 export const DEFAULT_VALIDITY_MONTHS = 12;
 
-/** «Validez de la tarjeta: 12 meses» -> 12. Unknown text -> Casa Rosier default (12). */
+/** «Validez del bono regalo: 12 meses» -> 12. Unknown text -> Casa Rosier default (12). */
 export const parseValidityMonths = (validityText?: string | null): number => {
   const match = (validityText || DEFAULT_VALIDITY_TEXT).match(/(\d{1,2})\s*mes/i);
   const months = match ? Number.parseInt(match[1], 10) : DEFAULT_VALIDITY_MONTHS;

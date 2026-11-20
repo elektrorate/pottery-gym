@@ -68,7 +68,7 @@ const mobilePrimaryLabels: Record<string, string> = {
     '/dashboard': 'Resumen',
     '/calendar': 'Clases',
     '/students': 'Alumnos',
-    '/giftcards': 'Bonos',
+    '/giftcards': 'Bonos regalo',
     '/agenda': 'Otras actividades del taller'
 };
 

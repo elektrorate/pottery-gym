@@ -12,7 +12,7 @@ export const addGiftCard = async (ctx: OpsContext, newCard: Omit<GiftCard, 'id' 
         rejectGiftCardValidation('Selecciona la sede y el destinatario por su identidad. El nombre no identifica a una persona.');
     }
     if (newCard.sessionsUsed || newCard.consumedAt || (newCard.status && !['pending', 'active'].includes(newCard.status))) {
-        rejectGiftCardValidation('Un bono nuevo no puede incluir historial de consumo.');
+        rejectGiftCardValidation('Un bono regalo nuevo no puede incluir historial de consumo.');
     }
     const payload: any = {
         buyer: newCard.buyer, recipient: newCard.recipient, recipient_student_id: newCard.recipientStudentId,
@@ -33,18 +33,18 @@ export const addGiftCard = async (ctx: OpsContext, newCard: Omit<GiftCard, 'id' 
     try {
         const { data, error } = await withTimeout('gift_cards.insert', supabase.from('gift_cards').insert(payload).select().single());
         if (error) throw error;
-        if (!data) throw new Error('El servidor no devolvio la tarjeta regalo creada.');
+        if (!data) throw new Error('El servidor no devolvio el bono regalo creado.');
         const mapped = mapGiftCardRowToModel(data);
         ctx.setGiftCards(prev => [mapped, ...prev]);
         await ctx.safeReload();
     } catch (err: any) {
-        showError(`No se pudo crear la tarjeta regalo. ${err?.message || ''}`);
+        showError(`No se pudo crear el bono regalo. ${err?.message || ''}`);
         throw err;
     }
 };
 
 export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Partial<GiftCard>, giftCards: GiftCard[]) => {
-    if (!id) rejectGiftCardValidation('Se requiere la identidad del bono para actualizarlo.');
+    if (!id) rejectGiftCardValidation('Se requiere la identidad del bono regalo para actualizarlo.');
     const previousCard = giftCards.find(gc => gc.id === id);
     const editableUpdates = { ...updates };
     delete editableUpdates.status;
@@ -65,7 +65,7 @@ export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Parti
         }
         payload.recipient_student_id = editableUpdates.recipientStudentId;
     } else if (editableUpdates.recipient !== undefined && !previousCard?.recipientStudentId) {
-        rejectGiftCardValidation('Selecciona el destinatario por su identidad antes de cambiar un bono antiguo sin vinculo.');
+        rejectGiftCardValidation('Selecciona el destinatario por su identidad antes de cambiar un bono regalo antiguo sin vinculo.');
     }
     if (editableUpdates.numClasses !== undefined) payload.num_classes = editableUpdates.numClasses;
     if (editableUpdates.type !== undefined) payload.type = editableUpdates.type;
@@ -80,16 +80,16 @@ export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Parti
     }
     if (editableUpdates.extraCommentary !== undefined) payload.extra_commentary = editableUpdates.extraCommentary || null;
     if (editableUpdates.extraCommentary !== undefined) payload.internal_notes = editableUpdates.extraCommentary || null;
-    if (!Object.keys(payload).length) rejectGiftCardValidation('No hay campos editables para actualizar el bono.');
+    if (!Object.keys(payload).length) rejectGiftCardValidation('No hay campos editables para actualizar el bono regalo.');
 
     try {
         const { data, error } = await withTimeout('gift_cards.update', supabase.from('gift_cards').update(payload).eq('id', id).select().single(), 5000);
         if (error) throw error;
-        if (!data) throw new Error('El servidor no devolvio la tarjeta regalo actualizada.');
+        if (!data) throw new Error('El servidor no devolvio el bono regalo actualizado.');
         updateGiftCardFromRpc(ctx, data);
         await ctx.safeReload();
     } catch (err: any) {
-        showError(`No se pudo actualizar la tarjeta regalo. ${err?.message || ''}`);
+        showError(`No se pudo actualizar el bono regalo. ${err?.message || ''}`);
         throw err;
     }
 };
@@ -110,7 +110,7 @@ export const redeemGiftCardSession = async (ctx: OpsContext, giftCardId: string,
         if (error) throw error;
         updateGiftCardFromRpc(ctx, data);
     } catch (err: any) {
-        throw new Error(err?.message || 'No se pudo descontar la sesión del bono temporal.');
+        throw new Error(err?.message || 'No se pudo descontar la sesión del bono regalo.');
     }
 };
 
@@ -140,7 +140,7 @@ export const reverseGiftCardSession = async (ctx: OpsContext, giftCardId: string
         updateGiftCardFromRpc(ctx, data);
         return true;
     } catch (err: any) {
-        throw new Error(err?.message || 'No se pudo devolver la sesión del bono temporal.');
+        throw new Error(err?.message || 'No se pudo devolver la sesión del bono regalo.');
     }
 };
 
@@ -153,7 +153,7 @@ export const consumeGiftCard = async (ctx: OpsContext, giftCardId: string, consu
         if (error) throw error;
         updateGiftCardFromRpc(ctx, data);
     } catch (err: any) {
-        throw new Error(err?.message || 'No se pudo archivar el bono como consumido.');
+        throw new Error(err?.message || 'No se pudo archivar el bono regalo como consumido.');
     }
 };
 
@@ -165,7 +165,7 @@ export const cancelGiftCard = async (ctx: OpsContext, giftCardId: string) => {
         if (error) throw error;
         updateGiftCardFromRpc(ctx, data);
     } catch (err: any) {
-        throw new Error(err?.message || 'No se pudo anular el bono temporal.');
+        throw new Error(err?.message || 'No se pudo anular el bono regalo.');
     }
 };
 
@@ -185,7 +185,7 @@ export interface GiftCardSessionIntent {
 // Retain this exact intent across uncertain responses. A new correction gets a
 // new key; replaying an old receipt must not resurrect a reversed consumption.
 export const createGiftCardSessionIntent = (giftCardId: string, sessionId: string, studentId: string, reverse = false): GiftCardSessionIntent => {
-    if (!giftCardId || !sessionId || !studentId) throw new Error('Se requieren las identidades del bono, sesion y alumno.');
+    if (!giftCardId || !sessionId || !studentId) throw new Error('Se requieren las identidades del bono regalo, sesion y alumno.');
     return Object.freeze({ giftCardId, sessionId, studentId, reverse, requestKey: crypto.randomUUID() });
 };
 
@@ -197,7 +197,7 @@ export const applyGiftCardSessionIntent = async (ctx: OpsContext, intent: GiftCa
         }
     ));
     if (error) throw error;
-    if (!data) throw new Error('El servidor no devolvio un recibo del bono.');
+    if (!data) throw new Error('El servidor no devolvio un recibo del bono regalo.');
     // A stable historical receipt is not today's projection.
     await ctx.safeReload();
     return mapGiftCardRowToModel(data);

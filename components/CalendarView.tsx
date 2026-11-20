@@ -1086,12 +1086,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                               : bonos <= Math.ceil(bonosTotal * 0.25) ? 'bg-[#F5E8D4] text-[#916438]'
                                 : 'bg-[#E7F0E8] text-[#47704D]'
                               }`}>
-                              Bonos {bonos}/{bonosTotal}
+                              Clases {bonos}/{bonosTotal}
                             </span>
                           )}
                         </div>
                         <span className="ui-meta mt-1 block">ID {shortId(studentId)}</span>
-                        {attendanceSession.giftCardIdByStudentId?.[studentId] && <span className="ui-meta mt-1 block">Bono vinculado ({shortId(attendanceSession.giftCardIdByStudentId[studentId])})</span>}
+                        {attendanceSession.giftCardIdByStudentId?.[studentId] && <span className="ui-meta mt-1 block">Bono regalo vinculado ({shortId(attendanceSession.giftCardIdByStudentId[studentId])})</span>}
                         <span className={`ui-meta mt-1 block font-medium ${status === 'present' ? 'text-[#47704D]' : status === 'absent' ? 'text-[#9C4235]' : 'text-[#9B8175]'}`}>
                           {cancelled ? 'Reserva cancelada (solo lectura)' : status === 'present' ? 'Asiste' : status === 'absent' ? 'No asiste' : 'Pendiente'}
                         </span>
@@ -1387,7 +1387,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         onClick={() => { setSessionForm({ ...sessionForm, sessionAudience: 'temporal' }); setStudentSearchQuery(''); }}
                          className={`min-h-10 rounded-[9px] px-2 text-[12.5px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-brand ${sessionForm.sessionAudience === 'temporal' ? 'bg-white font-bold text-neutral-textMain shadow-sm' : 'text-brand opacity-70 hover:opacity-100'}`}
                       >
-                        Bonos temporales
+                        Bonos de clases
                       </button>
                       <button
                         type="button"
@@ -1535,9 +1535,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                   >
                                     <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin fuente de crédito seleccionada'}</option>
                                     {selectedCardId && !fundingCards.some(card => card.id === selectedCardId) && (
-                                      <option value={selectedCardId} disabled>{linkedCard ? `Bono de ${displayName} (${shortId(selectedCardId)})` : `Vínculo persistido (${shortId(selectedCardId)}): recarga para verificar`}</option>
+                                      <option value={selectedCardId} disabled>{linkedCard ? `Bono regalo de ${displayName} (${shortId(selectedCardId)})` : `Vínculo persistido (${shortId(selectedCardId)}): recarga para verificar`}</option>
                                     )}
-                                    {fundingCards.map(card => <option key={card.id} value={card.id}>Bono de {displayName} ({shortId(card.id)})</option>)}
+                                    {fundingCards.map(card => <option key={card.id} value={card.id}>Bono regalo de {displayName} ({shortId(card.id)})</option>)}
                                     {selectedManualId && !manualCredits.some(credit => credit.id === selectedManualId) && (
                                       <option value={`manual:${selectedManualId}`} disabled>Credito manual original ({shortId(selectedManualId)}): {linkedManual ? 'no disponible para nueva seleccion' : 'no accesible en los datos cargados'}</option>
                                     )}

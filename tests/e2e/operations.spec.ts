@@ -203,21 +203,21 @@ test.describe('Gift Cards', () => {
 
     await login(page);
     await page.goto('/giftcards');
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
     await page.getByRole('textbox', { name: 'Nombre del comprador *' }).fill(buyer);
     await page.getByRole('textbox', { name: 'Teléfono *' }).fill('+34600000004');
     await page.getByRole('textbox', { name: 'Email *' }).fill(`${buyer.toLowerCase()}@barro.test`);
     await page.getByRole('textbox', { name: 'Nombre del destinatario *' }).fill(recipient);
     await page.getByRole('textbox', { name: 'Código de validación' }).fill(code);
     await page.getByRole('combobox', { name: 'Estado del pago' }).selectOption('paid');
-    await page.getByRole('button', { name: 'Crear bono' }).click();
+    await page.getByRole('button', { name: 'Crear bono regalo' }).click();
 
     await expect.poll(async () => findRows(request, 'gift_cards', `select=id,status,payment_status,sessions_used&code=eq.${encodeURIComponent(code)}`)).toHaveLength(1);
     await expect(page.getByRole('button').filter({ hasText: recipient }).first()).toBeVisible();
     await page.getByRole('button').filter({ hasText: recipient }).first().click();
-    await expect(page.getByRole('heading', { name: 'Editar bono temporal' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Editar bono regalo' })).toBeVisible();
     await page.getByRole('textbox', { name: 'Observaciones internas' }).fill('PW-QA edición validada');
-    await page.getByRole('combobox', { name: 'Estado del bono' }).selectOption('consumed');
+    await page.getByRole('combobox', { name: 'Estado del bono regalo' }).selectOption('consumed');
     await page.getByRole('combobox', { name: 'Estado del pago' }).selectOption('refunded');
     await page.getByRole('button', { name: 'Guardar cambios' }).click();
 
@@ -235,14 +235,14 @@ test.describe('Gift Cards', () => {
 
     await login(page);
     await page.goto('/giftcards');
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
     await page.getByRole('textbox', { name: 'Nombre del comprador *' }).fill(buyer);
     await page.getByRole('textbox', { name: 'Teléfono *' }).fill('+34600000005');
     await page.getByRole('textbox', { name: 'Email *' }).fill(`${buyer.toLowerCase()}@barro.test`);
     await page.getByRole('textbox', { name: 'Nombre del destinatario *' }).fill(recipient);
     await page.getByRole('textbox', { name: 'Código de validación' }).fill(code);
     await page.getByRole('combobox', { name: 'Estado del pago' }).selectOption('paid');
-    await page.getByRole('button', { name: 'Crear bono' }).click();
+    await page.getByRole('button', { name: 'Crear bono regalo' }).click();
     await expect.poll(async () => findRows(request, 'gift_cards', `select=id,recipient_student_id,status,sessions_used&code=eq.${encodeURIComponent(code)}`)).toHaveLength(1);
     const giftCardRows = await findRows(request, 'gift_cards', `select=id,recipient_student_id,status,sessions_used&code=eq.${encodeURIComponent(code)}`);
     const giftCardId = giftCardRows[0].id as string;
@@ -293,38 +293,38 @@ test.describe('Gift Cards', () => {
 
     await login(page);
     await page.goto('/giftcards');
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
     await page.getByRole('textbox', { name: 'Nombre del comprador *' }).fill(qaName('MANUAL-BUYER'));
     await page.getByRole('textbox', { name: 'Teléfono *' }).fill('+34600000006');
     await page.getByRole('textbox', { name: 'Email *' }).fill(`${consumedCode.toLowerCase()}@barro.test`);
     await page.getByRole('textbox', { name: 'Nombre del destinatario *' }).fill(qaName('MANUAL-RECIPIENT'));
     await page.getByRole('textbox', { name: 'Código de validación' }).fill(consumedCode);
     await page.getByRole('combobox', { name: 'Estado del pago' }).selectOption('paid');
-    await page.getByRole('button', { name: 'Crear bono' }).click();
+    await page.getByRole('button', { name: 'Crear bono regalo' }).click();
     await expect.poll(async () => findRows(request, 'gift_cards', `select=id,status&code=eq.${encodeURIComponent(consumedCode)}`)).toHaveLength(1);
 
     await page.getByRole('button').filter({ hasText: consumedCode }).first().click();
-    await page.getByRole('button', { name: 'Bono consumido' }).click();
-    await page.getByRole('dialog').filter({ hasText: '¿Marcar bono como consumido?' }).getByRole('button', { name: 'Bono consumido' }).click();
+    await page.getByRole('button', { name: 'Bono regalo consumido' }).click();
+    await page.getByRole('dialog').filter({ hasText: '¿Marcar el bono regalo como consumido?' }).getByRole('button', { name: 'Bono regalo consumido' }).click();
     await expect.poll(async () => {
       const rows = await findRows(request, 'gift_cards', `select=status,consumed_at&code=eq.${encodeURIComponent(consumedCode)}`);
       return rows[0];
     }).toMatchObject({ status: 'consumed' });
 
     await page.getByRole('tab', { name: /Activos/ }).click();
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
     await page.getByRole('textbox', { name: 'Nombre del comprador *' }).fill(qaName('MANUAL-CANCEL-BUYER'));
     await page.getByRole('textbox', { name: 'Teléfono *' }).fill('+34600000007');
     await page.getByRole('textbox', { name: 'Email *' }).fill(`${cancelledCode.toLowerCase()}@barro.test`);
     await page.getByRole('textbox', { name: 'Nombre del destinatario *' }).fill(qaName('MANUAL-CANCEL-RECIPIENT'));
     await page.getByRole('textbox', { name: 'Código de validación' }).fill(cancelledCode);
     await page.getByRole('combobox', { name: 'Estado del pago' }).selectOption('paid');
-    await page.getByRole('button', { name: 'Crear bono' }).click();
+    await page.getByRole('button', { name: 'Crear bono regalo' }).click();
     await expect.poll(async () => findRows(request, 'gift_cards', `select=id,status&code=eq.${encodeURIComponent(cancelledCode)}`)).toHaveLength(1);
 
     await page.getByRole('button').filter({ hasText: cancelledCode }).first().click();
     await page.getByRole('button', { name: 'Anular / eliminar' }).click();
-    await page.getByRole('dialog').filter({ hasText: '¿Anular este bono?' }).getByRole('button', { name: 'Anular bono' }).click();
+    await page.getByRole('dialog').filter({ hasText: '¿Anular este bono regalo?' }).getByRole('button', { name: 'Anular bono regalo' }).click();
     await expect.poll(async () => {
       const rows = await findRows(request, 'gift_cards', `select=status&code=eq.${encodeURIComponent(cancelledCode)}`);
       return rows[0]?.status;

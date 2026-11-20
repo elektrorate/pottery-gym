@@ -26,7 +26,7 @@ import {
 import logoAdjunto from './assets/logos/logo-casa-rosier.png';
 import { buildGiftCardPdfBytes } from '../supabase/functions/_shared/gift-card-pdf/giftCardPdf.ts';
 import { ScaledCard } from './components/ScaledCard';
-import { DEFAULT_VALIDITY_TEXT, LEGACY_DEFAULT_VALIDITY_TEXT, VALIDITY_OPTIONS } from './lib/giftCardDefaults';
+import { DEFAULT_VALIDITY_TEXT, LEGACY_DEFAULT_VALIDITY_TEXT, PREVIOUS_DEFAULT_VALIDITY_TEXT, VALIDITY_OPTIONS, presentGiftCardCopy } from './lib/giftCardDefaults';
 import { supabase } from '../supabaseClient';
 import { validateGiftCard } from './lib/validation';
 import {
@@ -76,7 +76,7 @@ const initialGiftCardData: GiftCardData = {
   creationDate: todayEs(),
   voucherCode: '',
   logoUrl: logoAdjunto,
-  title: 'TARJETA DE REGALO',
+  title: 'BONO REGALO',
   subtitle: 'Clases de Cerámica',
   subtitle2: '',
   introText: '¡Felicidades!',
@@ -84,13 +84,13 @@ const initialGiftCardData: GiftCardData = {
   fromLabel: 'Este regalo tan significativo llega a ti gracias a:',
   experienceTitle: 'Instrucciones de Uso',
   experienceIntro: 'Contacta con nosotros para reservar tus clases',
-  experienceLocation: 'Presenta esta tarjeta al inicio de tu primera clase',
+  experienceLocation: 'Presenta este bono regalo al inicio de tu primera clase',
   experienceBullet4: '',
-  includesLabel: 'Esta tarjeta incluye:',
+  includesLabel: 'Este bono regalo incluye:',
   includesDetails: 'Disfruta de la experiencia creativa',
   validityText: DEFAULT_VALIDITY_TEXT,
   contactTitle: 'Información de contacto',
-  contactSubtitle: 'Cómo usar tu tarjeta',
+  contactSubtitle: 'Cómo usar tu bono regalo',
   phone: '+34 633 788 860',
   email: 'info@casarosierceramica.com',
   website: 'www.casarosierceramica.com',
@@ -109,13 +109,14 @@ const loadDraft = (scope: DesignerScope): GiftCardData => {
     const parsedDraft: unknown = JSON.parse(rawDraft);
     if (parsedDraft && typeof parsedDraft === 'object') {
       const restoredDraft = { ...initialGiftCardData, ...(parsedDraft as Partial<GiftCardData>) };
-      return {
+      return presentGiftCardCopy({
         ...restoredDraft,
         // Always stamp today's date; drafts must not keep a stale emission date.
         creationDate: todayEs(),
         voucherCode: '',
         // Drafts saved before the 12-month default still carry the old default.
         validityText: restoredDraft.validityText === LEGACY_DEFAULT_VALIDITY_TEXT
+          || restoredDraft.validityText === PREVIOUS_DEFAULT_VALIDITY_TEXT
           ? DEFAULT_VALIDITY_TEXT
           : restoredDraft.validityText,
         // Old defaults without accents move to the corrected defaults.
@@ -123,10 +124,11 @@ const loadDraft = (scope: DesignerScope): GiftCardData => {
           ? initialGiftCardData.contactTitle
           : restoredDraft.contactTitle,
         contactSubtitle: restoredDraft.contactSubtitle === 'Como usar tu tarjeta'
+          || restoredDraft.contactSubtitle === 'Cómo usar tu tarjeta'
           ? initialGiftCardData.contactSubtitle
           : restoredDraft.contactSubtitle,
         internalContactPhone: restoredDraft.internalContactPhone || ''
-      };
+      });
     }
   } catch (error) {
     console.warn('No se pudo restaurar el borrador local:', error);
@@ -376,7 +378,7 @@ const AdminApp: React.FC = () => {
 
       const prefill = decodePrefillToken(token);
       if (!prefill) {
-        setNotice({ type: 'error', message: 'No se pudo importar la tarjeta del bot (prefill inválido).' });
+        setNotice({ type: 'error', message: 'No se pudo importar el bono regalo del bot (prefill inválido).' });
         return;
       }
 
@@ -389,7 +391,7 @@ const AdminApp: React.FC = () => {
       }));
       setNotice({
         type: 'success',
-        message: `Tarjeta del bot cargada${prefill.voucherCode ? ` (${prefill.voucherCode})` : ''}.`
+        message: `Bono regalo del bot cargado${prefill.voucherCode ? ` (${prefill.voucherCode})` : ''}.`
       });
 
       params.delete('prefill');
@@ -478,7 +480,7 @@ const AdminApp: React.FC = () => {
       if (!active) return;
       const resolved = owned?.[0]?.id || memberships?.[0]?.sede_id || null;
       setSedeId(resolved); setSedeLoading(false);
-      if (!resolved) setNotice({ type: 'error', message: 'Tu usuario no tiene una sede de pottery-gym asignada. Los bonos no se podrán guardar.' });
+      if (!resolved) setNotice({ type: 'error', message: 'Tu usuario no tiene una sede de pottery-gym asignada. Los bonos regalo no se podrán guardar.' });
     };
     void resolveSede().catch(() => { if (active) { setSedeId(null); setSedeLoading(false); setNotice({type:'error',message:'No se pudo verificar tu taller. Vuelve a iniciar sesión.'}); } });
     return () => {
@@ -620,11 +622,11 @@ const AdminApp: React.FC = () => {
         try {
           await cancelPotteryGiftCard(supabase, id);
           setHistory((prev) => prev.map((item) => (item.id === id ? { ...item, status: 'cancelled' } : item)));
-          setNotice({ type: 'success', message: 'El bono queda en pottery-gym como anulado (cancelado).' });
+          setNotice({ type: 'success', message: 'El bono regalo queda en pottery-gym como anulado (cancelado).' });
           notifyParent({ type: 'bonos-designer:saved', code: target.voucherCode || '' });
         } catch (error) {
           console.warn('No se pudo anular el bono en pottery-gym:', error);
-          setNotice({ type: 'error', message: `No se pudo anular el bono en pottery-gym${error instanceof Error ? ` (${error.message})` : ''}.` });
+          setNotice({ type: 'error', message: `No se pudo anular el bono regalo en pottery-gym${error instanceof Error ? ` (${error.message})` : ''}.` });
         }
         return;
       }
@@ -645,22 +647,22 @@ const AdminApp: React.FC = () => {
     if (target?.origin === 'server') {
       if (status === target.status) return;
       if (target.status === 'cancelled' || target.status === 'redeemed') {
-        setNotice({ type: 'warning', message: 'Este bono ya está cerrado en pottery-gym; su estado no se puede cambiar desde aquí.' });
+        setNotice({ type: 'warning', message: 'Este bono regalo ya está cerrado en pottery-gym; su estado no se puede cambiar desde aquí.' });
         return;
       }
       if (status === 'redeemed') {
-        setNotice({ type: 'warning', message: 'El consumo se registra en pottery-gym (pestaña «Bonos») al validar la asistencia.' });
+        setNotice({ type: 'warning', message: 'El consumo se registra en pottery-gym (pestaña «Bonos regalo») al validar la asistencia.' });
         return;
       }
       if (status === 'cancelled') {
-        if (!window.confirm('¿Anular este bono en pottery-gym? Quedará visible como anulado.')) return;
+        if (!window.confirm('¿Anular este bono regalo en pottery-gym? Quedará visible como anulado.')) return;
         try {
           await cancelPotteryGiftCard(supabase, id);
           setHistory((prev) => prev.map((record) => (record.id === id ? { ...record, status, potteryStatus: 'cancelled' } : record)));
           notifyParent({ type: 'bonos-designer:saved', code: target.voucherCode || '' });
         } catch (error) {
           console.warn('No se pudo anular el bono en pottery-gym:', error);
-          setNotice({ type: 'error', message: 'No se pudo anular el bono en pottery-gym.' });
+          setNotice({ type: 'error', message: 'No se pudo anular el bono regalo en pottery-gym.' });
         }
         return;
       }
@@ -688,12 +690,12 @@ const AdminApp: React.FC = () => {
     setActiveRecordId(record.id);
     setActiveFormToken(record.formToken);
     setShowHistory(false);
-    setNotice({ type: 'success', message: `Se cargó el bono ${record.voucherCode || record.fileName} en el editor.` });
+    setNotice({ type: 'success', message: `Se cargó el bono regalo ${record.voucherCode || record.fileName} en el editor.` });
   };
 
   // Shared vector PDF keeps the official card design on every screen size.
   const buildWhatsAppMessage = (card: GiftCardData, fileName?: string) => (
-    `Hola ${card.buyerName || ''}, te comparto tu tarjeta regalo de Casa Rosier.\n\nDestinatario: ${card.recipientName}\nDe parte de: ${card.donorName}\nClases: ${card.numberOfClasses}\nDuración: ${card.sessionDuration} h\nFecha de emisión: ${card.creationDate}${card.voucherCode ? `\nCódigo: ${card.voucherCode}` : ''}\n\nTe adjunto el PDF del bono${fileName ? ` (${fileName})` : ''}.`
+    `Hola ${card.buyerName || ''}, te comparto tu bono regalo de Casa Rosier.\n\nDestinatario: ${card.recipientName}\nDe parte de: ${card.donorName}\nClases: ${card.numberOfClasses}\nDuración: ${card.sessionDuration} h\nFecha de emisión: ${card.creationDate}${card.voucherCode ? `\nCódigo: ${card.voucherCode}` : ''}\n\nTe adjunto el PDF del bono regalo${fileName ? ` (${fileName})` : ''}.`
   );
 
   const downloadPdfBlob = (pdf: { fileName: string; blob: Blob }) => {
@@ -730,7 +732,7 @@ const AdminApp: React.FC = () => {
     if (canShareFile) {
       try {
         await navigator.share({
-          title: `Bono Casa Rosier → ${card.buyerName || 'comprador'}`,
+          title: `Bono regalo Casa Rosier → ${card.buyerName || 'comprador'}`,
           text: `${message}\n\nDestino: comprador ${card.buyerName || ''} (WhatsApp +${buyerPhone})`,
           files: [pdfFile]
         });
@@ -788,7 +790,7 @@ const AdminApp: React.FC = () => {
 
       const saveResult = await saveCurrentRecord(generated.fileName, generated.voucherCode, generated.cardSnapshot);
       if (saveResult === 'saved') {
-        setNotice({ type: 'success', message: `PDF descargado. Código del bono: ${generated.voucherCode}` });
+        setNotice({ type: 'success', message: `PDF descargado. Código del bono regalo: ${generated.voucherCode}` });
       } else if (saveResult === 'skipped') {
         setNotice({ type: 'warning', message: 'PDF descargado. El historial no está configurado.' });
       } else {
@@ -859,7 +861,7 @@ const AdminApp: React.FC = () => {
   const handleDownloadClick = async () => {
     if (generatedPdf) {
       downloadPdfBlob(generatedPdf);
-      setNotice({ type: 'success', message: `PDF descargado de nuevo (${data.voucherCode || generatedPdf.fileName}). No se ha creado un bono nuevo.` });
+      setNotice({ type: 'success', message: `PDF descargado de nuevo (${data.voucherCode || generatedPdf.fileName}). No se ha creado un bono regalo nuevo.` });
       return;
     }
     await handleDownloadPDF();
@@ -1100,17 +1102,17 @@ const AdminApp: React.FC = () => {
                 onChange={(event) => setRecipientStudentId(event.target.value)}
                 className="input-field mt-1.5 bg-white"
               >
-                <option value="">Crear alumno temporal nuevo con el nombre del destinatario</option>
+                <option value="">Crear alumno de bonos de clases con el nombre del destinatario</option>
                 {students.map((student) => (
                   <option key={student.id} value={student.id}>
-                    {student.name}{student.category === 'temporal' ? ' (temporal)' : ''}
+                    {student.name}{student.category === 'temporal' ? ' (bonos de clases)' : ''}
                   </option>
                 ))}
               </select>
             </label>
           </div>
           <p className="mt-3 text-xs leading-relaxed text-slate-600">
-            El teléfono no aparece en la tarjeta. Se usa para enviar el formulario y el PDF.
+            El teléfono no aparece en el bono regalo. Se usa para enviar el formulario y el PDF.
           </p>
         </section>
 
@@ -1120,7 +1122,7 @@ const AdminApp: React.FC = () => {
           className="mb-6 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white py-3 text-sm font-bold uppercase tracking-wider text-slate-800 shadow-sm transition hover:bg-slate-100"
         >
           <HistoryIcon size={16} />
-          Bonos generados
+          Bonos regalo generados
         </button>
 
         <div className="mb-6 space-y-3 rounded-xl border border-slate-300 bg-white p-4 shadow-sm">
@@ -1162,7 +1164,7 @@ const AdminApp: React.FC = () => {
             </button>
           </div>
           {templates.length === 0 ? (
-            <p className="text-xs leading-relaxed text-slate-600">Guarda una plantilla para reutilizar estos textos en futuros bonos.</p>
+            <p className="text-xs leading-relaxed text-slate-600">Guarda una plantilla para reutilizar estos textos en futuros bonos regalo.</p>
           ) : null}
         </div>
 
@@ -1170,7 +1172,7 @@ const AdminApp: React.FC = () => {
           {/* SECCIÓN 1: DATOS VARIABLES */}
           <EditorSection
             title="1. Datos del regalo"
-            description="Comprador, destinatario y características del bono"
+            description="Comprador, destinatario y características del bono regalo"
             open={openSections.gift}
             onToggle={() => toggleEditorSection('gift')}
           >
@@ -1191,7 +1193,7 @@ const AdminApp: React.FC = () => {
                 <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
                   <p className="text-[9px] font-bold uppercase tracking-widest text-stone-400">Fecha de emisión</p>
                   <p className="mt-1 text-sm text-stone-700">{data.creationDate}</p>
-                  <p className="mt-1 text-[10px] text-stone-400">Generada automáticamente al crear el bono.</p>
+                  <p className="mt-1 text-[10px] text-stone-400">Generada automáticamente al crear el bono regalo.</p>
                 </div>
               </div>
             </div>
@@ -1203,7 +1205,7 @@ const AdminApp: React.FC = () => {
             className="rounded-xl border border-slate-300 bg-white p-4 shadow-sm"
           >
             <h2 id="send-actions-title" className="text-sm font-bold uppercase tracking-[0.16em] text-slate-800">
-              Enviar el bono
+              Enviar el bono regalo
             </h2>
             <button
               type="button"
@@ -1216,12 +1218,12 @@ const AdminApp: React.FC = () => {
                 ? 'Generando...'
                 : generatedPdf
                   ? 'Volver a enviar por WhatsApp'
-                  : 'Crear bono y enviar por WhatsApp'}
+                  : 'Crear bono regalo y enviar por WhatsApp'}
             </button>
             <p className="mt-2 text-center text-xs leading-relaxed text-slate-600">
               {generatedPdf
-                ? 'Usa el mismo PDF y el mismo código. No crea un bono nuevo.'
-                : `Guarda el bono, descarga el PDF y abre el WhatsApp del comprador (${data.internalContactPhone || 'indica su número arriba'}).`}
+                ? 'Usa el mismo PDF y el mismo código. No crea un bono regalo nuevo.'
+                : `Guarda el bono regalo, descarga el PDF y abre el WhatsApp del comprador (${data.internalContactPhone || 'indica su número arriba'}).`}
             </p>
             <button
               type="button"
@@ -1230,7 +1232,7 @@ const AdminApp: React.FC = () => {
               className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white py-3 text-sm font-bold uppercase tracking-wider text-slate-800 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download size={16} />
-              {generatedPdf ? 'Descargar de nuevo el PDF' : 'Crear bono y descargar PDF'}
+              {generatedPdf ? 'Descargar de nuevo el PDF' : 'Crear bono regalo y descargar PDF'}
             </button>
 
 
@@ -1425,11 +1427,11 @@ const AdminApp: React.FC = () => {
               ) : historyLoading ? (
                 <p className="text-[12px] text-stone-500">Cargando historial...</p>
               ) : history.length === 0 ? (
-                <p className="text-[12px] text-stone-500">Aún no hay bonos guardados.</p>
+                <p className="text-[12px] text-stone-500">Aún no hay bonos regalo guardados.</p>
               ) : (
                 <>
                   <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
-                    <label className="sr-only" htmlFor="history-search">Buscar bono</label>
+                    <label className="sr-only" htmlFor="history-search">Buscar bono regalo</label>
                     <input
                       id="history-search"
                       type="search"

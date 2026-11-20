@@ -330,7 +330,7 @@ async function openAttendance(page: Page, f: Fixture) {
   await expect(dialog(page).locator('[data-student-id]')).toHaveCount(2);
   for (const id of [f.member, f.temporary]) await expect(attendanceRow(page, id)).toBeVisible();
 }
-const cardForm = (page: Page) => page.locator('form').filter({ has: page.getByRole('heading', { name: /^(Nuevo|Editar) bono temporal$/ }) });
+const cardForm = (page: Page) => page.locator('form').filter({ has: page.getByRole('heading', { name: /^(Nuevo|Editar) bono regalo$/ }) });
 
 test('1: real policy2 UI corrections retain the original debit and active gift history; only explicit owner waiver refunds', async ({ page }) => {
   const f = await fixture('correction');
@@ -382,14 +382,14 @@ test('1: real policy2 UI corrections retain the original debit and active gift h
   for (const adjustment of corrected.adjustments) expect(restored.adjustments).toContainEqual(adjustment);
 
   await page.goto('/giftcards');
-  await page.getByRole('textbox', { name: 'Buscar tarjeta por comprador, destinatario o código', exact: true }).fill(f.buyer);
+  await page.getByRole('textbox', { name: 'Buscar bono regalo por comprador, destinatario o código', exact: true }).fill(f.buyer);
   await expect(page.getByRole('tab', { name: /^Activos / })).toHaveAttribute('aria-selected', 'true');
   const card = page.getByRole('button').filter({ has: page.getByText(f.code, { exact: true }) });
   await expect(card).toBeVisible();
   await expect(card).toContainText('Activo');
   await expect(card).toContainText('1/2 sesiones');
   await card.click();
-  await expect(cardForm(page).getByLabel('Estado del bono', { exact: true })).toHaveValue('active');
+  await expect(cardForm(page).getByLabel('Estado del bono regalo', { exact: true })).toHaveValue('active');
   await expect(cardForm(page).getByLabel('Sesiones utilizadas', { exact: true })).toHaveValue('1');
   await expect(cardForm(page).getByText('Asistencia validada', { exact: true })).toHaveCount(1);
   await expect(cardForm(page).getByText('Asistencia corregida', { exact: true })).toHaveCount(0);
@@ -493,7 +493,7 @@ test('3: real recipient UI distinguishes fresh homonyms by ID, creates no people
   await loginBrowser(page);
   await page.goto('/giftcards');
   for (const target of [f.member, f.temporary]) {
-    await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
+    await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
     const form = cardForm(page);
     await form.getByLabel('Buscar alumno destinatario', { exact: true }).fill('Alex Perez');
     const recipient = form.getByLabel('Alumno destinatario', { exact: true });
@@ -503,7 +503,7 @@ test('3: real recipient UI distinguishes fresh homonyms by ID, creates no people
       await expect(recipient.locator(`option[value="${id}"]`)).toContainText(id);
     }
     await form.getByLabel('Nombre del destinatario', { exact: true }).fill('Alex Perez');
-    await expect(form.getByRole('button', { name: 'Crear bono', exact: true })).toBeDisabled();
+    await expect(form.getByRole('button', { name: 'Crear bono regalo', exact: true })).toBeDisabled();
     await expect(form.getByRole('status')).toContainText('No se crean alumnos');
     await recipient.selectOption(target);
     await expect(recipient).toHaveValue(target);
@@ -515,7 +515,7 @@ test('3: real recipient UI distinguishes fresh homonyms by ID, creates no people
     await form.getByLabel('C\u00f3digo de validaci\u00f3n', { exact: true }).fill(code);
     await form.getByLabel('N\u00famero de sesiones', { exact: true }).selectOption('2');
     await form.getByLabel('Estado del pago', { exact: true }).selectOption('paid');
-    await form.getByRole('button', { name: 'Crear bono', exact: true }).click();
+    await form.getByRole('button', { name: 'Crear bono regalo', exact: true }).click();
     await expect(form).toHaveCount(0);
     const cards = await rows(owner, 'gift_cards', `sede_id=eq.${ownSede}&code=eq.${code}`);
     expect(cards).toHaveLength(1);
@@ -524,7 +524,7 @@ test('3: real recipient UI distinguishes fresh homonyms by ID, creates no people
     expect(await rows(owner, 'gift_cards', `id=eq.${cards[0].id}`)).toEqual(cards);
     expect(await rows(owner, 'students', `id=${ids([f.member, f.temporary])}`, '*', 'id')).toEqual(exactPeople);
     expect(await rows(owner, 'students', `sede_id=eq.${ownSede}&name=eq.Alex&surname=eq.Perez`, 'id,student_category', 'id')).toEqual(homonyms);
-    await page.getByRole('textbox', { name: 'Buscar tarjeta por comprador, destinatario o código', exact: true }).fill(f.buyer);
+    await page.getByRole('textbox', { name: 'Buscar bono regalo por comprador, destinatario o código', exact: true }).fill(f.buyer);
     await page.getByRole('button').filter({ has: page.getByText(code, { exact: true }) }).click();
     await expect(cardForm(page).getByLabel('Alumno destinatario', { exact: true })).toHaveValue(target);
     await cardForm(page).getByRole('button', { name: 'Cancelar', exact: true }).click();

@@ -124,7 +124,7 @@ test('funding requires an explicit recipient-ID match and never chooses the late
   await expect(selector).toHaveValue('');
   await expect(selector.locator('option')).toHaveCount(3);
   expect(await selector.locator('option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))).toEqual(['', newCardId, oldCardId]);
-  await expect(selector.locator(`option[value="${oldCardId}"]`)).toHaveText('Bono de Alex Perez (00000001)');
+  await expect(selector.locator(`option[value="${oldCardId}"]`)).toHaveText('Bono regalo de Alex Perez (00000001)');
   await selector.selectOption(oldCardId);
   await sessionDialog(page).getByRole('button', { name: 'Crear sesión', exact: true }).click();
   await expect(sessionDialog(page)).toHaveCount(0);

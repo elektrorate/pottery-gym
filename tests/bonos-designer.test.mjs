@@ -35,7 +35,7 @@ test('card geometry and copy are the bonos app ones', () => {
   assert.equal(m.CARD_PX_WIDTH, 480);
   assert.equal(m.classesCountLabel(1), '1 clase');
   assert.equal(m.classesCountLabel(4), '4 clases');
-  assert.equal(m.DEFAULT_VALIDITY_TEXT, 'Validez de la tarjeta: 12 meses');
+  assert.equal(m.DEFAULT_VALIDITY_TEXT, 'Validez del bono regalo: 12 meses');
   assert.equal(m.giftCardCopyDefaults.contactTitle, 'Información de contacto');
   assert.equal(m.giftCardCopyDefaults.phone, '+34 633 788 860');
   assert.match(m.generateVoucherCode('Rolando Diaz', 'Julián Díaz', '18/11/2026'), /^CR-181126-RD-JD-[A-Z2-9]{2}$/);
@@ -91,7 +91,7 @@ test('history: designer rows reload the exact design; API rows are rebuilt', () 
   assert.equal(api.data.donorName, 'Rolando');
   assert.equal(api.data.sessionDuration, '2.5');
   assert.equal(api.data.creationDate, '18/11/2026');
-  assert.equal(api.data.validityText, 'Validez de la tarjeta: 12 meses');
+  assert.equal(api.data.validityText, 'Validez del bono regalo: 12 meses');
   assert.equal(api.data.internalContactPhone, '+34600');
   assert.equal(api.status, 'redeemed');
   assert.equal(api.data.mainQuote, defaults.mainQuote);
