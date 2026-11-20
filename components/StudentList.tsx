@@ -1,12 +1,14 @@
 import { hasVerifiedMembership, isClassesRunningLow, needsStudentReview, studentBalanceLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining } from '../utils/studentPresentation';
 import { showError } from '../context/toast';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent } from '../types';
+import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent, ScalarClassAdjustment } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { ClassAdjustmentDialog } from './shared/ClassAdjustmentDialog';
+import { DangerZone } from './shared/DangerZone';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
-import { countVisibleStudentsByCategory, getPendingMembershipPayments, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getPendingMembershipPayments, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel } from '../utils/classTypeLabels';
@@ -14,6 +16,11 @@ import { businessReasonLabel, penaltyKindLabel } from '../utils/businessReasonLa
 import type { ManualCreditIntent, PenaltySettlementIntent, SessionBusinessIntent, PendingStudentCreditOperation } from '../types';
 
 const TEMPORAL_MAX_BONOS = 50;
+
+const deleteStudentMessage = (student?: Student) => {
+  const name = student ? `${student.name} ${student.surname || ''}`.trim() : 'este alumno';
+  return `Vas a eliminar a ${name}. Esta acción no se puede deshacer. Si solo quieres ocultar la ficha, usa Archivar.`;
+};
 
 interface StudentListProps {
   students: Student[];
@@ -30,6 +37,7 @@ interface StudentListProps {
   onConfirmPayment: (studentId: string, periodId: string) => Promise<void>;
   onActivateMembership: (studentId: string) => Promise<void>;
   onAdjustClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
+  onAdjustRemainingClasses?: (adjustment: ScalarClassAdjustment) => Promise<void>;
   canAdjustClasses?: boolean;
   onUpdate: (id: string, updates: Partial<Student>) => Promise<void>;
   onDeleteStudent: (id: string) => Promise<void>;
@@ -261,7 +269,7 @@ const StudentList: React.FC<StudentListProps> = ({
   listPreset = null, enrolledStudentIds, initialCategory, initialTab, onClearListPreset,
   onAddStudent,
   onRenew,
-  onConfirmPayment, onActivateMembership, onAdjustClasses, canAdjustClasses = true,
+  onConfirmPayment, onActivateMembership, onAdjustClasses, onAdjustRemainingClasses, canAdjustClasses = true,
   onUpdate,
   onDeleteStudent,
   selectedStudentId,
@@ -282,6 +290,7 @@ const StudentList: React.FC<StudentListProps> = ({
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [studentToDelete, setStudentToDelete] = useState<string | null>(null);
   const [studentToArchive, setStudentToArchive] = useState<string | null>(null);
+  const [pendingClassAdjustment, setPendingClassAdjustment] = useState<{ current: number; next: number } | null>(null);
   const [pendingCategory, setPendingCategory] = useState<StudentCategoryValue | null>(null);
   const [pendingMembershipTier, setPendingMembershipTier] = useState<MembershipTier | null>(null);
   const today = useWorkshopDate();
@@ -342,6 +351,7 @@ const StudentList: React.FC<StudentListProps> = ({
   };
 
   const handleEditClick = (student: Student) => {
+    setPendingClassAdjustment(null);
     setEditingStudent(student);
     renewalIntentRef.current = pendingIntents.current.get<RenewalIntent>(`renew:${student.id}`);
     adjustmentIntentRef.current = pendingIntents.current.get<ClassAdjustmentIntent>(`adjust:${student.id}`);
@@ -499,6 +509,60 @@ const StudentList: React.FC<StudentListProps> = ({
     finally { setIsSubmitting(false); }
   };
 
+  const confirmVisiblePayment = async () => {
+    if (!liveEditingStudent || isSubmitting || !studentHasPendingPayment(liveEditingStudent)) return;
+    const periodId = selectConfirmablePaymentPeriodId(liveEditingStudent);
+    setIsSubmitting(true);
+    try {
+      if (periodId) {
+        await onConfirmPayment(liveEditingStudent.id, periodId);
+        if (periodId === liveEditingStudent.effectivePeriodId || !liveEditingStudent.membershipPeriods?.length) {
+          setForm(current => ({ ...current, paymentStatus: 'paid' }));
+        }
+      } else if (!isManagedMembership(liveEditingStudent)) {
+        await onUpdate(liveEditingStudent.id, { paymentStatus: 'paid' });
+        setForm(current => ({ ...current, paymentStatus: 'paid' }));
+      } else {
+        showError('Inicializa el período antes de confirmar el pago.');
+      }
+    } catch (error: any) {
+      showError(error.message || 'No se pudo confirmar el pago.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const requestRemainingClassChange = (delta: number) => {
+    if (!editingStudent) {
+      setForm(current => ({ ...current, classesRemaining: Math.max(0, Math.min(current.bonosAsignados, current.classesRemaining + delta)) }));
+      return;
+    }
+    if (pendingClassAdjustment || isSubmitting) return;
+    const current = form.classesRemaining;
+    const next = Math.max(0, Math.min(form.bonosAsignados, current + delta));
+    if (next === current) return;
+    setPendingClassAdjustment({ current, next });
+  };
+
+  const confirmRemainingClassChange = async (reason: string) => {
+    if (!editingStudent || !pendingClassAdjustment || isSubmitting) return;
+    const { current, next } = pendingClassAdjustment;
+    const adjustment: ScalarClassAdjustment = {
+      studentId: editingStudent.id, expectedBalance: current, delta: next - current, resultingBalance: next, reason
+    };
+    setIsSubmitting(true);
+    try {
+      if (onAdjustRemainingClasses) await onAdjustRemainingClasses(adjustment);
+      else await onUpdate(editingStudent.id, { classesRemaining: next });
+      setForm(value => ({ ...value, classesRemaining: next }));
+      setPendingClassAdjustment(null);
+    } catch (error: any) {
+      showError(error.message || 'No se pudo ajustar las clases.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleAddSession = () => {
     if (!newSessionDate) return;
     const [h, m] = newSessionTime.split(':').map(Number);
@@ -649,6 +713,7 @@ const StudentList: React.FC<StudentListProps> = ({
       {showModal && <div className="fixed inset-0 bg-[#4B2A1D]/45 backdrop-blur-[2px] z-[100] flex items-end md:items-center justify-center overflow-hidden">
         <div className={`bg-[#FDFBF9] w-full ${editingStudent ? 'md:max-w-5xl' : 'md:max-w-2xl'} h-[100dvh] md:h-auto md:max-h-[92dvh] md:rounded-xl shadow-[0_20px_60px_rgba(75,42,29,0.2)] relative flex flex-col overflow-hidden animate-fade-in`}>
           <div className="px-4 sm:px-7 py-4 border-b border-[#E6D8CB] flex items-center justify-between shrink-0 bg-[#FDFBF9]"><div className="flex items-center gap-3 min-w-0"><span className="hidden sm:flex w-10 h-10 rounded-full bg-[#F0E2D6] text-[#7B3F22] items-center justify-center text-[12px] font-bold">{editingStudent ? `${editingStudent.name.charAt(0)}${editingStudent.surname?.charAt(0) || ''}` : '+'}</span><div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8B6B5E]">{editingStudent ? 'Perfil del alumno' : 'Nuevo alumno'}</p><h3 className="text-[20px] text-[#7B3F22] truncate" style={{ fontFamily: "'Outfit', sans-serif" }}>{editingStudent ? `${editingStudent.name} ${editingStudent.surname || ''}`.trim() : 'Crear ficha'}</h3></div></div><button onClick={() => setShowModal(false)} className="w-9 h-9 rounded-md border border-[#DDBFA4] text-[#8B6B5E] flex items-center justify-center hover:bg-[#F0E2D6] hover:text-[#7B3F22] transition-colors" aria-label="Cerrar ficha"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 6l12 12M18 6 6 18" /></svg></button></div>
+          {editingStudent && liveEditingStudent && <div className="px-4 sm:px-7 py-3 border-b border-[#E6D8CB] bg-[#FDFBF9] shrink-0" data-testid="student-payment-action">{studentHasPendingPayment(liveEditingStudent) ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[13px] font-semibold text-[#A85D3B]">Pago pendiente</p><button type="button" onClick={() => void confirmVisiblePayment()} disabled={isSubmitting} className="h-11 px-5 bg-[#7B3F22] text-white rounded-md text-[14px] font-bold hover:bg-[#63321C] disabled:opacity-60">Confirmar pago</button></div> : <p data-testid="payment-state" className="inline-flex min-h-10 items-center rounded-md bg-[#F5F1E9] px-3 text-[13px] font-bold text-[#7B3F22]">{getStudentPaymentStatus(liveEditingStudent) === 'paid' ? 'Pago al día' : 'Pago desconocido'}</p>}</div>}
 
             <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-4 pb-28 sm:px-7 md:pb-28"><form onSubmit={handleSubmit} className={`grid grid-cols-1 gap-6 py-5 md:py-6 ${editingStudent ? 'lg:grid-cols-[1.2fr_1fr] lg:gap-8' : ''}`}>
               <div className="space-y-5">
@@ -720,9 +785,9 @@ const StudentList: React.FC<StudentListProps> = ({
                   <div>
                      <div className="flex items-center justify-between mb-1"><label className="block text-[16px] font-medium text-[#7B3F22]">Clases restantes</label><span className="text-[11px] font-bold text-[#A85D3B]">{form.classesRemaining}/{form.bonosAsignados}</span></div>
                      <div className="flex items-center bg-white border border-[#E7B899] rounded-md overflow-hidden h-10">
-                       <button type="button" onClick={() => setForm(f => ({ ...f, classesRemaining: Math.max(0, f.classesRemaining - 1) }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Reducir clases restantes">-</button>
+                       <button type="button" onClick={() => requestRemainingClassChange(-1)} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Reducir clases restantes">-</button>
                       <input type="number" readOnly value={form.classesRemaining} aria-label="Clases restantes" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />
-                        <button type="button" onClick={() => setForm(f => ({ ...f, classesRemaining: Math.min(f.bonosAsignados, f.classesRemaining + 1) }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Aumentar clases restantes">+</button>
+                        <button type="button" onClick={() => requestRemainingClassChange(1)} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Aumentar clases restantes">+</button>
                     </div>
                   </div>
                 </div>
@@ -802,7 +867,6 @@ const StudentList: React.FC<StudentListProps> = ({
                </section>}
                {editingStudent && isStudentArchived(editingStudent, today) && <button type="button" disabled={isSubmitting} onClick={async () => { setIsSubmitting(true); try { await onUpdate(editingStudent.id, getStudentReactivationUpdates()); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo reactivar.'); } finally { setIsSubmitting(false); } }} className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7B3F22] hover:text-[#C68952] disabled:opacity-50">Reactivar alumno manualmente</button>}
                {editingStudent && !isStudentArchived(editingStudent, today) && <button type="button" onClick={() => setStudentToArchive(editingStudent.id)} className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7B3F22] hover:text-[#C68952]">Archivar alumno manualmente</button>}
-               {editingStudent && !managedEdit && <button type="button" onClick={() => setStudentToDelete(editingStudent.id)} className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#A85D3B] hover:text-[#7B3F22]">Eliminar alumno</button>}
             </div>}
           </form>
           {editingStudent && students.find(student => student.id === editingStudent.id) && <StudentCreditPanel key={editingStudent.id}
@@ -810,6 +874,7 @@ const StudentList: React.FC<StudentListProps> = ({
             onApproveManualCredit={onApproveManualCredit} onSettlePendingPenalty={onSettlePendingPenalty}
             onWaivePendingPenalty={onWaivePendingPenalty} canManageStudentCredits={canManageStudentCredits}
             getPendingStudentCreditOperation={getPendingStudentCreditOperation} onRetryPendingStudentCreditOperation={onRetryPendingStudentCreditOperation} />}
+          {editingStudent && !managedEdit && <section aria-label="Zona de peligro"><DangerZone description={`Eliminar a ${`${editingStudent.name} ${editingStudent.surname || ''}`.trim()} borra la ficha para siempre. No se puede deshacer. Si solo quieres ocultarla, usa Archivar.`} actionLabel="Eliminar alumno" disabled={isSubmitting} onAction={() => setStudentToDelete(editingStudent.id)} /></section>}
           </div>
 
           <div className="absolute bottom-0 left-0 right-0 px-4 sm:px-7 py-3 bg-[#FDFBF9]/95 backdrop-blur border-t border-[#E6D8CB] flex items-center justify-end gap-3 shrink-0 z-10"><button type="button" onClick={() => setShowModal(false)} className="h-10 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E] hover:text-[#7B3F22]">Cancelar</button><button onClick={handleSubmit} disabled={isSubmitting} className="h-10 px-4 sm:px-5 bg-[#7B3F22] text-white rounded-md text-[11px] font-bold uppercase tracking-[0.1em] hover:bg-[#63321C] transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? 'Guardando...' : (editingStudent ? 'Guardar cambios' : 'Guardar alumno')}</button></div>
@@ -818,7 +883,8 @@ const StudentList: React.FC<StudentListProps> = ({
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory ? studentCategoryLabel(pendingCategory) : ''}. Se ajustarán sus clases y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y las clases contratadas.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />
         <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo con la acción Reactivar alumno manualmente, sin renovar ni confirmar un pago." confirmText="Archivar" isDestructive={false} onConfirm={async () => { if (studentToArchive && !isSubmitting) { setIsSubmitting(true); try { await onUpdate(studentToArchive, { archivedAt: getWorkshopDate() }); setStudentToArchive(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo archivar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToArchive(null)} />
-       <ConfirmModal isOpen={!!studentToDelete} title="¿Eliminar alumno?" message="¿Seguro que deseas eliminar el historial de este alumno? Esta acción no se puede deshacer." isDestructive={true} onConfirm={async () => { if (studentToDelete && !isSubmitting) { setIsSubmitting(true); try { await onDeleteStudent(studentToDelete); setStudentToDelete(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo eliminar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToDelete(null)} />
+       <ConfirmModal isOpen={!!studentToDelete} title="¿Eliminar alumno?" message={deleteStudentMessage(students.find(student => student.id === studentToDelete))} isDestructive={true} onConfirm={async () => { if (studentToDelete && !isSubmitting) { setIsSubmitting(true); try { await onDeleteStudent(studentToDelete); setStudentToDelete(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo eliminar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToDelete(null)} />
+       {pendingClassAdjustment && <ClassAdjustmentDialog current={pendingClassAdjustment.current} next={pendingClassAdjustment.next} loading={isSubmitting} onCancel={() => { if (!isSubmitting) setPendingClassAdjustment(null); }} onConfirm={reason => void confirmRemainingClassChange(reason)} />}
     </div>
   );
 };
