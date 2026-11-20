@@ -3,6 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { Student, ClassSession, GiftCard, WorkshopCapacityDefault } from '../../types';
 export { mapStudentRowToModel, mapMembershipPeriod, joinStudentMemberships } from '../../utils/studentLifecycle';
 import { workshopDateToTimestamptz } from '../../utils/studentLifecycle';
+import { madridDateKey } from '../../utils/dateFormat';
 
 export { supabase };
 
@@ -180,7 +181,7 @@ export const mapGiftCardRowToModel = (row: any): GiftCard => {
     const sessionsUsed = Math.max(0, Number(row.sessions_used ?? 0));
     const numClasses = Math.max(0, Number(row.num_classes ?? 0));
     const expiryDate = row.expiry_date || undefined;
-    const today = new Date().toISOString().split('T')[0];
+    const today = madridDateKey();
     const status = row.status || (
         row.payment_status === 'pending' ? 'pending' :
             sessionsUsed >= numClasses ? 'exhausted' :

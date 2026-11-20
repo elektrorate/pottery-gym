@@ -79,7 +79,7 @@ test('explicit manual selection shows its own balance, validity and evidence ID 
   const info = selectedRow(page, ids.member).getByTestId('selected-manual-credit-info');
   await expect(info).toContainText(`ID de credito manual: ${ids.original}`);
   await expect(info).toContainText('Saldo cargado: 2/3 clases');
-  await expect(info).toContainText('2026-10-01 a 2026-10-31');
+  await expect(info).toContainText('01/10/2026 a 31/10/2026');
   await expect(info).toContainText(`Evidencia: documento:${ids.original}`);
   await expect(info).toContainText('La seleccion no autoriza el cargo');
   await expect(dialog(page)).not.toContainText('server-recorded-actor');

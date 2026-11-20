@@ -1,7 +1,7 @@
 import type { ClassSession, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
+import { madridDateKey } from './dateFormat';
 
-export const madridDateKey = (date = new Date()) =>
-  new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(date);
+export { madridDateKey };
 
 export const dateKeyDayOfWeek = (dateKey: string) =>
   new Date(`${dateKey}T12:00:00Z`).getUTCDay();

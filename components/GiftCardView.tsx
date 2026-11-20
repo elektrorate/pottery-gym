@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import { buildGiftCardPdfBytes } from '../supabase/functions/_shared/gift-card-pdf/giftCardPdf.ts';
 import { cardDataFromGiftCardRow, pdfFileNameFromRow } from '../supabase/functions/_shared/gift-card-pdf/cardDataFromRow.ts';
 import { getSafeFileName, presentGiftCardCopy, todayEs } from '../bonos-designer/lib/giftCardDefaults';
+import { formatDate, madridDateKey } from '../utils/dateFormat';
 import { showError } from '../context/toast';
 import { GiftCard, Student } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
@@ -46,10 +47,7 @@ type GiftCardForm = {
   internalNotes: string;
 };
 
-const todayKey = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
+const todayKey = () => madridDateKey();
 
 const addMonths = (dateValue: string, months: number) => {
   const [year, month, day] = dateValue.split('-').map(Number);
@@ -59,12 +57,7 @@ const addMonths = (dateValue: string, months: number) => {
   return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, '0')}-${String(result.getDate()).padStart(2, '0')}`;
 };
 
-const formatDateOnly = (value?: string) => {
-  if (!value) return 'Sin fecha';
-  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
-  if (![year, month, day].every(Number.isFinite)) return value;
-  return new Date(year, month - 1, day).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
-};
+const formatDateOnly = (value?: string) => formatDate(value, 'numeric', 'Sin fecha');
 
 const typeLabel = (type: GiftCard['type']) => type === 'torno' ? 'Torno' : 'Modelado';
 const paymentLabel = (status?: GiftCard['paymentStatus']) => status === 'paid' ? 'Pagado' : status === 'refunded' ? 'Reembolsado' : status === 'pending' ? 'Pendiente' : 'Sin pago';

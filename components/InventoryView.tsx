@@ -5,7 +5,9 @@ import { InventoryItem, InventoryCategory, InventoryItemStatus, MovementType, In
 import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
+import DateField from './shared/DateField';
 import { pluralize } from '../utils/pluralize';
+import { formatDate, madridDateKey } from '../utils/dateFormat';
 
 interface InventoryViewProps {
   items: InventoryItem[];
@@ -56,7 +58,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
     new_quantity: 0,
     unit: 'kg',
     reason: '',
-    date: new Date().toISOString().split('T')[0],
+    date: madridDateKey(),
     notes: ''
   });
 
@@ -294,14 +296,14 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
         new_quantity: newQuantity,
         unit: movementForm.unit || selectedItem.unit,
         reason: movementForm.reason.trim(),
-        date: movementForm.date || new Date().toISOString(),
+        date: movementForm.date || madridDateKey(),
         notes: movementForm.notes || undefined
       });
       setShowMovementForm(false);
       movementRequest.current = null;
       setMovementForm({
         type: 'in', quantity: 0, new_quantity: 0, unit: selectedItem.unit || 'kg',
-        reason: '', date: new Date().toISOString().split('T')[0], notes: ''
+        reason: '', date: madridDateKey(), notes: ''
       });
     } catch (error: any) {
       showError(error?.message || 'No se pudo registrar el movimiento.');
@@ -526,10 +528,10 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 </div>
                 <div>
                   <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Fecha</label>
-                  <input
-                    type="date"
+                  <DateField
+                    aria-label="Fecha del movimiento"
                     value={movementForm.date}
-                    onChange={(e) => setMovementForm({ ...movementForm, date: e.target.value })}
+                    onChange={(date) => setMovementForm({ ...movementForm, date })}
                     className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                   />
                 </div>
@@ -572,7 +574,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                   </div>
                   <div className="text-right">
                     <p className="text-[14px] font-semibold text-neutral-textMain">{mov.type === 'adjust' ? mov.new_quantity : mov.quantity} {mov.unit}</p>
-                    <p className="text-[12px] text-neutral-textHelper">{mov.date ? new Date(mov.date).toLocaleDateString('es-ES') : 'Sin fecha'}</p>
+                    <p className="text-[12px] text-neutral-textHelper">{mov.date ? formatDate(mov.date, 'numeric', 'Sin fecha') : 'Sin fecha'}</p>
                   </div>
                 </div>
               ))}

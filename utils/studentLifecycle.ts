@@ -1,10 +1,10 @@
 import { inferMembershipTier } from '../types';
 import type { Student, MembershipPeriod } from '../types';
 import { isNonMembershipCategory } from './classTypeLabels';
+import { formatDate, madridDateKey } from './dateFormat';
 
 export type StudentLifecycle = 'active' | 'pending' | 'expired' | 'temporary' | 'archived';
-export const getWorkshopDate = (now = new Date()) =>
-  new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(now);
+export const getWorkshopDate = (now = new Date()) => madridDateKey(now);
 
 /** Calendar date in Europe/Madrid from a timestamptz/ISO value (avoids UTC day-shift). */
 export const toWorkshopDateKey = (value: string | Date | null | undefined): string | undefined => {
@@ -15,7 +15,7 @@ export const toWorkshopDateKey = (value: string | Date | null | undefined): stri
     const sliced = String(value).slice(0, 10);
     return /^\d{4}-\d{2}-\d{2}$/.test(sliced) ? sliced : undefined;
   }
-  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(parsed);
+  return madridDateKey(parsed) || undefined;
 };
 
 /** Persist date-only fields at noon UTC so Europe/Madrid keeps the selected calendar day. */
@@ -55,13 +55,7 @@ export const getStudentLifecycleCounts = (students: Student[], today = getWorksh
   return counts;
 };
 
-const formatLifecycleDate = (date: string) => {
-  const parsed = new Date(`${date}T12:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return date;
-  return parsed.toLocaleDateString('es-ES', {
-    timeZone: 'Europe/Madrid', day: 'numeric', month: 'short', year: 'numeric'
-  });
-};
+const formatLifecycleDate = (date: string) => formatDate(date, 'numeric', date);
 
 export const getStudentLifecycleReason = (student: Student, today = getWorkshopDate()): string => {
   const lifecycle = getStudentLifecycle(student, today);

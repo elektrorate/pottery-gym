@@ -9,6 +9,8 @@ import { getStudentLifecycle, isStudentArchived, isNonMembershipCategory } from 
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
 import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
+import { formatCalendarDate, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
+import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
 import { studentEffectiveRemainingClasses } from '../utils/studentPresentation';
@@ -189,22 +191,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
-  const formatSessionDate = (dateValue: string) => {
-    const parts = dateValue.split('-').map(Number);
-    if (parts.length === 3 && parts.every(n => Number.isFinite(n))) {
-      const [year, month, day] = parts;
-      return new Date(year, month - 1, day).toLocaleDateString('es-ES', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long'
-      });
-    }
-    return new Date(dateValue).toLocaleDateString('es-ES', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long'
-    });
-  };
+  const formatSessionDate = (dateValue: string) => formatDate(dateValue, 'long');
 
   const getTeacherName = (teacherId?: string) => {
     if (!teacherId) return 'Sin profesor';
@@ -737,7 +724,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const renderDayView = () => {
     const dateKey = formatDateKey(selectedDate);
     const daySessions = displaySessions.filter(s => s.date === dateKey);
-    const dayLabel = selectedDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+    const dayLabel = formatCalendarDate(selectedDate, 'long');
     const dayTitle = `${dayLabel.charAt(0).toUpperCase()}${dayLabel.slice(1)}`;
 
     let startHour = 8;
@@ -785,7 +772,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
           </div>
           {weekDays.map((date, i) => {
             const isSelected = date.toDateString() === selectedDate.toDateString();
-            const dName = date.toLocaleDateString('es-ES', { weekday: 'long' });
+            const dName = formatCalendarDate(date, 'weekday');
             return (
               <button
                 key={i}
@@ -805,7 +792,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
             <div className="relative pl-20" style={{ minHeight: `${hours.length * HOUR_HEIGHT}px` }}>
               {hours.map((hour) => (
                 <div key={hour} className="relative flex h-[140px] items-start border-t border-neutral-border/60">
-                  <span className="-ml-20 w-20 text-left text-[12px] font-medium text-neutral-textHelper -mt-2 uppercase tracking-wider">{hour === 24 ? '00' : hour}:00</span>
+                  <span className="-ml-20 w-20 text-left text-[12px] font-medium text-neutral-textHelper -mt-2 uppercase tracking-wider">{formatTime(hour === 24 ? '00:00' : `${String(hour).padStart(2, '0')}:00`)}</span>
                 </div>
               ))}
 
@@ -827,7 +814,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       onClick={() => handleOpenSessionModal(session)}
                     >
                          <div className="flex w-full flex-col items-start gap-2 pr-14 mb-4">
-                           <span className="text-[14px] font-semibold text-neutral-textMain leading-none">{session.startTime} - {session.endTime}</span>
+                           <span className="text-[14px] font-semibold text-neutral-textMain leading-none">{formatTime(session.startTime)} - {formatTime(session.endTime)}</span>
                            <span className={`px-3 py-1 rounded-full text-[11px] font-semibold uppercase tracking-[0.14em] text-white ${getSessionBadgeClasses(session.classType)}`}>{getSessionLabel(session).toUpperCase()}</span>
                           {session.classType !== 'feriado' && <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-textHelper">{getActiveRosterCount(session)}/{occupancy.capacity} cupos</span>}
                          </div>
@@ -958,7 +945,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
               <div className="mt-4 flex items-center justify-between gap-3">
                 <button type="button" aria-label="Mes anterior" onClick={() => setSelectedDate(current => { const next = new Date(current); next.setMonth(next.getMonth() - 1); return next; })} className="flex h-10 w-10 items-center justify-center rounded-full text-neutral-textSec transition hover:bg-brand-soft hover:text-brand"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m15 19-7-7 7-7" /></svg></button>
-                  <h4 className="text-center text-[20px] font-semibold capitalize tracking-tight text-neutral-textMain">{selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</h4>
+                  <h4 className="text-center text-[20px] font-semibold capitalize tracking-tight text-neutral-textMain">{formatCalendarDate(selectedDate, 'monthYear')}</h4>
                 <button type="button" aria-label="Mes siguiente" onClick={() => setSelectedDate(current => { const next = new Date(current); next.setMonth(next.getMonth() + 1); return next; })} className="flex h-10 w-10 items-center justify-center rounded-full text-neutral-textSec transition hover:bg-brand-soft hover:text-brand"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m9 5 7 7-7 7" /></svg></button>
               </div>
 
@@ -977,7 +964,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       type="button"
                       key={`${dayKey}-${index}`}
                       onClick={() => { setSelectedDate(new Date(item.date)); setViewMode('day'); }}
-                      aria-label={`${item.date.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}${daySessions.length ? `, ${countLabel}` : ', sin sesiones'}`}
+                      aria-label={`${formatCalendarDate(item.date, 'long')}${daySessions.length ? `, ${countLabel}` : ', sin sesiones'}`}
                       className={`calendar-density-cell ${densityClass} ${!item.currentMonth ? 'calendar-density-muted' : ''} ${isPastSessionDay ? 'calendar-density-past' : ''} ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-brand' : ''}`}
                     >
                       <span className="text-[14px] font-semibold leading-none">{item.date.getDate()}</span>
@@ -1031,7 +1018,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
               <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
               <div className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-3">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="text-[13px] font-semibold text-[#7B3F22]">{attendanceSession.startTime}–{attendanceSession.endTime}</span>
+                  <span className="text-[13px] font-semibold text-[#7B3F22]">{formatTime(attendanceSession.startTime)}–{formatTime(attendanceSession.endTime)}</span>
                   <span className="h-3 w-px bg-[#DDBFA4]" aria-hidden="true" />
                   <span className="text-[11px] font-semibold text-[#6E5145]">{getSessionLabel(attendanceSession)}</span>
                   <span className="text-[11px] text-[#8B6B5E]">{getTeacherName(attendanceSession.teacherId)}</span>
@@ -1048,7 +1035,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   </p>
                 )}
                 {attendanceSession.completedAt && (
-                  <p className="ui-meta mt-1.5 text-[#47704D]">Completada el {new Date(attendanceSession.completedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                  <p className="ui-meta mt-1.5 text-[#47704D]">Completada el {formatDateTime(attendanceSession.completedAt)}</p>
                 )}
               </div>
 
@@ -1161,10 +1148,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       {policy2 && <div className="mt-2 space-y-3 border-t border-[#EFE3D8] pt-3 text-[12px] text-[#6E5145]">
                         {studentObj?.studentCategory === 'membresia' && <p>Pago: {studentObj.paymentStatus === 'paid' ? 'pagado' : studentObj.paymentStatus === 'pending' ? 'pendiente' : 'desconocido'}. La aprobación no confirma ni modifica el pago.</p>}
                         {cancelled && <p data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: sin consumo' : business?.cancellationKind === 'late' ? 'Cancelación tardía: una clase al finalizar' : 'Cancelación registrada; clasificación pendiente del servidor'}. Motivo: {business?.cancellationReason || 'Registrado en el servidor'}. Cancelada por: {business?.cancelledBy || 'Actor registrado'}.{business?.cancelledAt && ` · Hora registrada: ${business.cancelledAt}`}</p>}
-                        {business?.exceptionId && <p data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Registrado en el servidor'}. Aprobada por: {business.approvedBy || 'Actor registrado'}.{business.approvedAt && ` · Hora registrada: ${business.approvedAt}`}</p>}
+                        {business?.exceptionId && <p data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Registrado en el servidor'}. Aprobada por: {business.approvedBy || 'Actor registrado'}.{business.approvedAt && ` · Hora registrada: ${formatDateTime(business.approvedAt)}`}</p>}
                         {business?.billingState && <p data-testid="billing-state">{billingStateLabel(business.billingState)}{business.billingKind && ` · ${billingKindLabel(business.billingKind)}`}</p>}
                         {business?.penaltyId && <p data-testid="penalty-state">Penalización: {business.penaltyState === 'charged' ? 'una clase consumida' : business.penaltyState === 'waived' ? 'eximida' : 'pendiente de resolución'}.{business.penaltyReason ? ` ${businessReasonLabel(business.penaltyReason)}` : ''}</p>}
-                        {business?.penaltyState === 'waived' && <p data-testid="waiver-state">Motivo de exención: {businessReasonLabel(business.waiverReason) || 'Registrado en el servidor'}. Eximida por: {business.waivedBy || 'Actor registrado'}.{business.waivedAt && ` · Hora registrada: ${business.waivedAt}`}</p>}
+                        {business?.penaltyState === 'waived' && <p data-testid="waiver-state">Motivo de exención: {businessReasonLabel(business.waiverReason) || 'Registrado en el servidor'}. Eximida por: {business.waivedBy || 'Actor registrado'}.{business.waivedAt && ` · Hora registrada: ${formatDateTime(business.waivedAt)}`}</p>}
                         {!cancelled && !attendanceSession.completedAt && onApproveSessionException && <div className="space-y-2">
                           <label htmlFor={`exception-kind-${studentId}`} className="block">Tipo de excepción para {studentName} ({shortId(studentId)})</label>
                           <select id={`exception-kind-${studentId}`} value={businessForm.kind} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, kind: event.target.value as 'membership_override' | 'no_credit' } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]">
@@ -1278,11 +1265,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
                         <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Inicio</span>
-                        <input aria-label="Hora de inicio" type="time" value={sessionForm.startTime} onChange={(e) => setSessionForm({ ...sessionForm, startTime: e.target.value })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
+                        <TimeField aria-label="Hora de inicio" value={sessionForm.startTime} onChange={(startTime) => setSessionForm({ ...sessionForm, startTime })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
                       </label>
                       <label className="block">
                         <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Fin</span>
-                        <input aria-label="Hora de fin" type="time" value={sessionForm.endTime} onChange={(e) => setSessionForm({ ...sessionForm, endTime: e.target.value })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
+                        <TimeField aria-label="Hora de fin" value={sessionForm.endTime} onChange={(endTime) => setSessionForm({ ...sessionForm, endTime })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
                       </label>
                     </div>
                     {sessionForm.classType === 'feriado' && (
@@ -1569,12 +1556,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                     {selectedManualId && !manualCredits.some(credit => credit.id === selectedManualId) && (
                                       <option value={`manual:${selectedManualId}`} disabled>Credito manual original ({shortId(selectedManualId)}): {linkedManual ? 'no disponible para nueva seleccion' : 'no accesible en los datos cargados'}</option>
                                     )}
-                                    {manualCredits.map(credit => <option key={credit.id} value={`manual:${credit.id}`}>Credito manual ({shortId(credit.id)}): {credit.remainingClasses}/{credit.allocatedClasses} clases, {credit.startsOn} a {credit.endsOn}</option>)}
+                                    {manualCredits.map(credit => <option key={credit.id} value={`manual:${credit.id}`}>Credito manual ({shortId(credit.id)}): {credit.remainingClasses}/{credit.allocatedClasses} clases, {formatDate(credit.startsOn)} a {formatDate(credit.endsOn)}</option>)}
                                   </select>
                                 </label>
                                 {selectedManualId && <p data-testid="selected-manual-credit-info" className="mt-2 text-[11px] text-[#8B6B5E] [overflow-wrap:anywhere]">
                                   ID de credito manual: {selectedManualId}.
-                                  {linkedManual ? ` Saldo cargado: ${linkedManual.remainingClasses}/${linkedManual.allocatedClasses} clases. Vigencia: ${linkedManual.startsOn} a ${linkedManual.endsOn}. Evidencia: ${linkedManual.evidence}.`
+                                  {linkedManual ? ` Saldo cargado: ${linkedManual.remainingClasses}/${linkedManual.allocatedClasses} clases. Vigencia: ${formatDate(linkedManual.startsOn)} a ${formatDate(linkedManual.endsOn)}. Evidencia: ${linkedManual.evidence}.`
                                     : ' Fuente original no accesible en los datos cargados; no se sustituira automaticamente.'}
                                   {' La seleccion no autoriza el cargo; el servidor valida identidad, vigencia y saldo de la fuente original.'}
                                 </p>}

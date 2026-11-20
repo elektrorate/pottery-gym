@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { Workshop, User, WorkshopStatus, UserRole, ActivityLog, Invitation, InvitationStatus, WorkshopDataMetrics } from '../types';
 import { logoutAndRedirect } from '../../utils/logout';
+import { madridDateKey } from '../../utils/dateFormat';
 
 interface AppContextType {
   workshops: Workshop[];
@@ -225,7 +226,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const fetchOperationalMetrics = async () => {
     try {
-      const todayIso = new Date().toISOString().split('T')[0];
+      const todayIso = madridDateKey();
       const [studentsRes, sessionsRes, giftCardsRes] = await Promise.all([
         supabase.from('students').select('id, sede_id, student_category'),
         supabase.from('sessions').select('id, sede_id, session_audience'),

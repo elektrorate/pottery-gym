@@ -9,6 +9,8 @@ import { supabase } from '../supabaseClient';
 import { getDefaultSessionCapacity, type WorkshopScheduleDay } from '../types';
 import * as XLSX from 'xlsx';
 import WorkshopAvailabilityPanel, { type WorkshopAvailabilityHandle } from './WorkshopAvailabilityPanel';
+import TimeField from './shared/TimeField';
+import { formatDate, madridDateKey } from '../utils/dateFormat';
 import GoogleDriveRepository from './GoogleDriveRepository';
 
 /* ─── Collapsible Section ─── */
@@ -200,7 +202,7 @@ const SettingsView: React.FC = () => {
   };
 
   const getSessionCapacity = (session: typeof sessions[number]) => session.capacity ?? capacityDefaults.find(item => item.classType === session.classType)?.capacity ?? getDefaultSessionCapacity(session.classType);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = madridDateKey();
   const upcomingSessions = sessions
     .filter(session => session.date >= today && session.classType !== 'feriado')
     .sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`))
@@ -262,7 +264,7 @@ const SettingsView: React.FC = () => {
       const required = mode === 'all' ? ['pieces','gift_card_movements','inventory_items','inventory_movements','workshop_schedules','workshop_capacity_defaults','workshop_schedule_exceptions'] : mode === 'pieces' ? ['pieces'] : mode === 'inventory' ? ['inventory_items','inventory_movements'] : mode === 'giftcards' ? ['gift_card_movements'] : [];
       if (required.some(key => sectionLoads[key as keyof typeof sectionLoads]?.status !== 'ready')) throw new Error('Hay secciones sin cargar o con error. Reintenta su carga antes de exportar.');
       const wb = XLSX.utils.book_new();
-      const today = new Date().toISOString().slice(0, 10);
+      const today = madridDateKey();
 
       const addSheet = (name: string, data: Record<string, unknown>[]) => {
         if (data.length === 0) {
@@ -601,21 +603,19 @@ const SettingsView: React.FC = () => {
                               <span className="w-16 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">Franja {slot.slotIndex + 1}</span>
                               <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">
                                 Abre
-                                <input
+                                <TimeField
                                   aria-label={`${label} franja ${slot.slotIndex + 1} hora de apertura`}
-                                  type="time"
                                   value={slot.opensAt}
-                                  onChange={event => setScheduleDraft(previous => previous.map(item => item.dayOfWeek === dayOfWeek && item.slotIndex === slot.slotIndex ? { ...item, opensAt: event.target.value } : item))}
+                                  onChange={opensAt => setScheduleDraft(previous => previous.map(item => item.dayOfWeek === dayOfWeek && item.slotIndex === slot.slotIndex ? { ...item, opensAt } : item))}
                                   className="h-10 rounded-[9px] border border-neutral-border bg-white px-2 text-[13px] font-semibold text-neutral-textMain outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
                                 />
                               </label>
                               <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-textHelper">
                                 Cierra
-                                <input
+                                <TimeField
                                   aria-label={`${label} franja ${slot.slotIndex + 1} hora de cierre`}
-                                  type="time"
                                   value={slot.closesAt}
-                                  onChange={event => setScheduleDraft(previous => previous.map(item => item.dayOfWeek === dayOfWeek && item.slotIndex === slot.slotIndex ? { ...item, closesAt: event.target.value } : item))}
+                                  onChange={closesAt => setScheduleDraft(previous => previous.map(item => item.dayOfWeek === dayOfWeek && item.slotIndex === slot.slotIndex ? { ...item, closesAt } : item))}
                                   className="h-10 rounded-[9px] border border-neutral-border bg-white px-2 text-[13px] font-semibold text-neutral-textMain outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
                                 />
                               </label>
@@ -662,7 +662,7 @@ const SettingsView: React.FC = () => {
                   const capacity = getSessionCapacity(session);
                   const enrolled = session.students.length;
                   const remaining = capacity - enrolled;
-                  const dateLabel = new Date(`${session.date}T12:00:00`).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
+                  const dateLabel = formatDate(session.date, 'weekdayShort');
                   return (
                     <div key={session.id} className="grid grid-cols-[1fr_auto] items-center gap-2 rounded-xl border border-neutral-border bg-neutral-sec/50 px-3 py-3">
                       <div className="min-w-0">

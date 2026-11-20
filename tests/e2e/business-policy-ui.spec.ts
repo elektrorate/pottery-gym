@@ -184,7 +184,7 @@ for (const funding of ['pending', 'unknown', 'expired']) test(`${funding} fundin
   await approve(page, memberId);
   await expect(dialog(page)).toHaveAttribute('data-revision', '8');
   await expect(row(page, memberId).getByTestId('exception-state')).toContainText('Aprobada por: staff');
-  await expect(row(page, memberId).getByTestId('exception-state')).toContainText('2026-10-11T08:00:00Z');
+  await expect(row(page, memberId).getByTestId('exception-state')).toContainText('11/10/2026, 10:00');
   await expect(row(page, otherId).getByTestId('exception-state')).toHaveCount(0);
   await expect(row(page, memberId).getByRole('button', { name: 'Reaprobar excepción', exact: true })).toBeEnabled();
   const approval = (await output(page, 'calls'))[0];
@@ -717,7 +717,7 @@ for (const fixture of ['completed', 'incident']) test(`only an explicit owner wa
   await expect(row(page, memberId).getByTestId('penalty-state')).toContainText('eximida');
   await expect(row(page, memberId).getByTestId('waiver-state')).toContainText('Revision administrativa del propietario');
   await expect(row(page, memberId).getByTestId('waiver-state')).toContainText('Eximida por: owner');
-  await expect(row(page, memberId).getByTestId('waiver-state')).toContainText('2026-10-11T08:00:00Z');
+  await expect(row(page, memberId).getByTestId('waiver-state')).toContainText('11/10/2026, 10:00');
   await expect(row(page, memberId).getByTestId('penalty-state')).toContainText('Falta');
   const state = (await output(page, 'sessions'))[0].businessStateByStudentId[memberId];
   expect(state.penaltyReason).toBe('Falta');

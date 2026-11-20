@@ -1,4 +1,5 @@
 import type { GiftCardData } from '../types';
+import { formatDate } from '../../utils/dateFormat';
 
 /** Default copy for Casa Rosier gift cards (no browser-only assets). */
 /** Default validity on every new card (web, designer and bot API). */
@@ -72,8 +73,7 @@ export const presentGiftCardCopy = <T extends Partial<GiftCardData>>(data: T): T
 export const classesCountLabel = (count: number): string =>
   `${count} ${count === 1 ? 'clase' : 'clases'}`;
 
-export const todayEs = (now = new Date()): string =>
-  now.toLocaleDateString('es-ES', { timeZone: 'Europe/Madrid' });
+export const todayEs = (now = new Date()): string => formatDate(now);
 
 export const getSafeFileName = (donorName: string): string => {
   const safe = donorName
