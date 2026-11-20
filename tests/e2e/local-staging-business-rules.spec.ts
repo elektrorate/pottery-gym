@@ -660,7 +660,7 @@ async function open(page: Page, s: Session) {
   await expect(dialog(page)).toBeVisible();
   await expect(dialog(page).locator('[data-student-id]')).toHaveCount(1);
   await expect(row(page, s)).toBeVisible();
-  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('Guardar provisional no consume clases');
+  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('descuentan una clase');
 }
 async function uiAction(page: Page, s: Session, name: string, button: string, reason: string, kind?: string) {
   const revision = Number(await dialog(page).getAttribute('data-revision'));

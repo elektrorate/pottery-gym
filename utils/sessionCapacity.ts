@@ -18,6 +18,21 @@ export const capacityDefaultsToMap = (defaults: WorkshopCapacityDefault[] | Capa
     ? defaults.reduce<CapacityDefaults>((result, item) => ({ ...result, [item.classType]: item.capacity }), {})
     : defaults;
 
+/** People counted on a day, using the same cancellation rule as the dashboard. */
+export const enrollmentOnDate = (sessions: ClassSession[], date: string) => {
+  const keys = new Set<string>();
+  const studentIds = new Set<string>();
+  sessions.filter(session => session.date === date).forEach(session => {
+    session.students.forEach((_name, index) => {
+      const id = session.studentIds?.[index];
+      if (id && session.attendancePolicyVersion === 2 && session.businessStateByStudentId?.[id]?.reservationState === 'cancelled') return;
+      if (id) studentIds.add(id);
+      keys.add(id || `${session.id}:${index}`);
+    });
+  });
+  return { count: keys.size, studentIds };
+};
+
 export const getSessionEnrolledCount = (session: ClassSession): number => {
   const enrolled = new Set<string>();
     session.students.forEach((name, index) => {

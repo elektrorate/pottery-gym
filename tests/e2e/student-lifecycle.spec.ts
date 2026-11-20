@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addMembershipMonth, getStudentLifecycle, getStudentPaymentStatus, getStudentReactivationUpdates, getWorkshopDate, isStudentArchived, withStudentCreationDefaults, getPendingMembershipPayments } from '../../utils/studentLifecycle';
+import { addMembershipMonth, countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getStudentReactivationUpdates, getWorkshopDate, isStudentArchived, withStudentCreationDefaults, getPendingMembershipPayments } from '../../utils/studentLifecycle';
 import type { Student } from '../../types';
 
 const member: Student = {
@@ -88,4 +88,14 @@ test('pending payments include expired, scheduled and archived periods but never
   ] };
   expect(getPendingMembershipPayments(student).map(period => period.id)).toEqual(['old', 'future']);
   expect(getPendingMembershipPayments({ ...member, paymentStatus: 'pending' })).toHaveLength(1);
+});
+
+test('membership total matches the non-archived membership rows, including pending and expired', () => {
+  const students = [
+    member,
+    { ...member, id: 'pending', paymentStatus: 'pending' as const },
+    { ...member, id: 'pack', studentCategory: 'temporal' as const },
+    { ...member, id: 'archived', archivedAt: '2026-01-01' }
+  ];
+  expect(countVisibleStudentsByCategory(students, '2026-10-10')).toMatchObject({ membresia: 2, temporal: 1, archivados: 1 });
 });
