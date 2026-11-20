@@ -1,7 +1,10 @@
 import { showError, showWarning } from '../context/toast';
 import React, { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Teacher, ClassSession } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { activityTypeLabel, sessionTypeLabel } from '../utils/classTypeLabels';
+import { teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
 
 interface TeachersViewProps {
   teachers: Teacher[];
@@ -35,11 +38,6 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
       return full.includes(query) || (t.specialty || '').toLowerCase().includes(query);
     });
   }, [teachers, searchQuery]);
-
-  const completedSessions = useMemo(
-    () => sessions.filter(s => !!s.completedAt),
-    [sessions]
-  );
 
   const getTeacherName = (teacherId?: string) => {
     if (!teacherId) return 'Sin profesor';
@@ -121,7 +119,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
             <div>
               <p className="eyebrow mb-1">Equipo del estudio</p>
                <h1 className="ui-page-title text-neutral-textMain">Profesores</h1>
-               <p className="ui-secondary mt-1">Especialidades, contacto e historial de clases.</p>
+               <p className="ui-secondary mt-1">Especialidades, contacto, clases programadas e historial.</p>
             </div>
             <button onClick={handleOpenNew} className="min-h-[40px] px-4 py-2 bg-brand text-white rounded-[10px] text-[13px] font-semibold inline-flex items-center justify-center gap-2 hover:bg-brand-hover active:scale-[0.98] transition-all shrink-0"><span className="text-lg leading-none">+</span><span className="hidden sm:inline">Nuevo profesor</span><span className="sm:hidden">Nuevo</span></button>
           </div>
@@ -135,7 +133,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
         </header>
 
         <section className="bg-white border border-neutral-border rounded-2xl overflow-hidden animate-fade-in">
-           <div className="hidden md:grid grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_110px_180px] gap-4 px-4 py-3 bg-neutral-sec border-b border-neutral-border text-[12px] font-semibold text-neutral-textHelper uppercase tracking-[0.1em]">
+           <div className="hidden md:grid grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-4 px-4 py-3 bg-neutral-sec border-b border-neutral-border text-[12px] font-semibold text-neutral-textHelper uppercase tracking-[0.1em]">
             <span>Profesor</span><span>Especialidad</span><span>Contacto</span><span>Clases</span><span>Acciones</span>
           </div>
           {filteredTeachers.length === 0 ? (
@@ -145,38 +143,69 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
             </div>
           ) : filteredTeachers.map(teacher => {
             const fullName = `${teacher.name} ${teacher.surname || ''}`.trim();
-            const teacherSessions = completedSessions.filter(s => s.teacherId === teacher.id || s.teacherSubstituteId === teacher.id);
-            const completedCount = teacherSessions.length;
+            const scheduledSessions = teacherSessions(sessions, teacher.id, false);
+            const concludedSessions = teacherSessions(sessions, teacher.id, true);
             const isExpanded = expandedTeacherId === teacher.id;
+            const calendarHref = `/calendar?teacher=${encodeURIComponent(teacher.id)}`;
+            const countLabel = (count: number, singular: string, plural: string) => `${count} ${count === 1 ? singular : plural}`;
+            const studentLabel = (count: number) => countLabel(count, 'alumno', 'alumnos');
             return (
               <React.Fragment key={teacher.id}>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_110px_180px] gap-3 md:gap-4 items-center px-3 md:px-4 py-3 border-b border-neutral-border hover:bg-neutral-base transition-colors">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-3 md:gap-4 items-center px-3 md:px-4 py-3 border-b border-neutral-border hover:bg-neutral-base transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-brand-soft text-brand flex items-center justify-center font-bold text-[12px] shrink-0">{teacher.name.charAt(0)}</div>
                      <div className="min-w-0"><h3 className="ui-card-title text-neutral-textMain truncate">{fullName}</h3><p className="ui-meta truncate mt-0.5">{teacher.specialty || 'Sin especialidad'}{(teacher.phone || teacher.email) ? ` · ${teacher.phone || teacher.email}` : ''}</p></div>
                   </div>
                   <span className="hidden md:inline-flex justify-self-start px-2 py-1 rounded-md bg-neutral-sec text-neutral-textSec text-[12px] font-semibold truncate max-w-full">{teacher.specialty || 'Sin especialidad'}</span>
                    <div className="hidden md:block min-w-0 ui-data text-neutral-textSec truncate">{teacher.email || teacher.phone || 'Sin contacto'}</div>
-                  <span className="justify-self-end md:justify-self-start text-[13px] font-semibold text-neutral-textMain">{completedCount} <span className="text-[12px] text-neutral-textHelper">clases</span></span>
-                  <div className="col-span-2 md:col-span-1 flex items-center justify-end gap-2 pt-2 md:pt-0 border-t border-neutral-border md:border-0">
-                     <button onClick={() => setExpandedTeacherId(isExpanded ? null : teacher.id)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-neutral-textSec border border-neutral-border hover:border-arena hover:text-brand transition-colors">Historial</button>
+                  <span className="justify-self-end md:justify-self-start text-[13px] font-semibold text-neutral-textMain leading-tight">
+                    <span className="block">{countLabel(scheduledSessions.length, 'programada', 'programadas')}</span>
+                    <span className="block text-[12px] font-medium text-neutral-textHelper">{countLabel(concludedSessions.length, 'concluida', 'concluidas')}</span>
+                  </span>
+                  <div className="col-span-2 md:col-span-1 flex flex-wrap items-center justify-end gap-2 pt-2 md:pt-0 border-t border-neutral-border md:border-0">
+                     <Link to={calendarHref} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-brand border border-brand/20 hover:bg-brand-soft transition-colors" aria-label={`Calendario de ${fullName}`}>Calendario</Link>
+                     <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedTeacherId(isExpanded ? null : teacher.id)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-neutral-textSec border border-neutral-border hover:border-arena hover:text-brand transition-colors">Historial</button>
                      <button onClick={() => handleOpenEdit(teacher)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-brand border border-brand/20 hover:bg-brand-soft transition-colors">Editar</button>
                      <button onClick={() => setTeacherToDelete(teacher.id)} className="hidden sm:inline-flex min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-[#9E3B2B] border border-[#EFC9BE] hover:bg-[#F8E1DA] transition-colors">Eliminar</button>
                   </div>
                 </div>
                 {isExpanded && (
-                  <div className="px-4 md:px-6 py-3 bg-neutral-sec border-b border-neutral-border animate-fade-in">
-                    <p className="text-[12px] font-semibold text-neutral-textSec mb-2">Historial de clases concluidas</p>
-                    {teacherSessions.length === 0 ? (
-                      <p className="text-[12px] text-neutral-textHelper italic">Sin clases concluidas</p>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                        {teacherSessions.sort((a, b) => `${b.date} ${b.startTime}`.localeCompare(`${a.date} ${a.startTime}`)).slice(0, 3).map(s => {
-                          const isSub = s.teacherSubstituteId === teacher.id;
-                          return <div key={s.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[12px] font-semibold text-neutral-textMain">{formatSessionDate(s.date)} · {s.startTime} - {s.endTime}</p><p className="text-[11px] text-neutral-textHelper mt-1">{s.classType} · {s.students.length} alumnos</p>{isSub && <p className="text-[11px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(s.teacherId)}</p>}</div>;
-                        })}
-                      </div>
-                    )}
+                  <div className="px-4 md:px-6 py-3 bg-neutral-sec border-b border-neutral-border animate-fade-in space-y-4">
+                    <div>
+                      <p className="text-[12px] font-semibold text-neutral-textSec mb-2">Clases programadas</p>
+                      {scheduledSessions.length === 0 ? (
+                        <p className="text-[12px] text-neutral-textHelper italic">Sin clases programadas</p>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          {scheduledSessions.slice(0, 6).map(session => {
+                            const blocks = teacherBlockActivities(session, teacher.id);
+                            const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
+                            return (
+                              <Link key={session.id} to={`${calendarHref}&date=${session.date}&sessionId=${encodeURIComponent(session.id)}`} className="p-3 bg-white rounded-xl border border-neutral-border hover:border-brand/40">
+                                <p className="text-[12px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p>
+                                <p className="text-[11px] text-neutral-textHelper mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>
+                                {isSub && <p className="text-[11px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {scheduledSessions.length > 6 && <Link to={calendarHref} className="mt-2 inline-block text-[12px] font-semibold text-brand">Ver las {scheduledSessions.length} en el calendario</Link>}
+                    </div>
+                    <div>
+                      <p className="text-[12px] font-semibold text-neutral-textSec mb-2">Historial de clases concluidas</p>
+                      {concludedSessions.length === 0 ? (
+                        <p className="text-[12px] text-neutral-textHelper italic">Sin clases concluidas</p>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          {concludedSessions.slice(0, 3).map(session => {
+                            const blocks = teacherBlockActivities(session, teacher.id);
+                            const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
+                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[12px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p><p className="text-[11px] text-neutral-textHelper mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>{isSub && <p className="text-[11px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </React.Fragment>

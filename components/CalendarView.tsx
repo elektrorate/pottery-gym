@@ -2,7 +2,8 @@ import SessionDetailsDialog from './SessionDetailsDialog';
 import { sessionBusinessErrorMessage } from '../utils/recordPresentation';
 import { showError } from '../context/toast';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { sessionAssignedToTeacher } from '../utils/teacherCalendar';
 import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, SessionActivityBlock, SessionBusinessIntent, PendingSessionOperation, Teacher, WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, getDefaultSessionCapacity } from '../types';
 import { getStudentLifecycle, isStudentArchived, isNonMembershipCategory } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
@@ -65,6 +66,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     ? getDefaultSessionCapacity('mesa', capacityMap) + getDefaultSessionCapacity('torno', capacityMap)
     : getDefaultSessionCapacity(classType, capacityMap);
   const location = useLocation();
+  const navigate = useNavigate();
+  const teacherFilterId = useMemo(() => new URLSearchParams(location.search).get('teacher') || '', [location.search]);
+  const filteredTeacher = teachers.find(teacher => teacher.id === teacherFilterId);
+  const displaySessions = useMemo(
+    () => teacherFilterId ? sessions.filter(session => sessionAssignedToTeacher(session, teacherFilterId)) : sessions,
+    [sessions, teacherFilterId]
+  );
   const deepLinkHandledRef = useRef('');
   const submittingRef = useRef(false);
   const [viewMode, setViewMode] = useState<CalendarMode>('day');
@@ -689,12 +697,12 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
   const sessionsByDate = useMemo(() => {
     const map: Record<string, ClassSession[]> = {};
-    sessions.forEach(session => {
+    displaySessions.forEach(session => {
       if (!map[session.date]) map[session.date] = [];
       map[session.date].push(session);
     });
     return map;
-  }, [sessions]);
+  }, [displaySessions]);
 
   const getMonthlyCalendarClass = (daySessions: ClassSession[]) => {
     // A day without a scheduled session is neutral; occupancy colors only
@@ -709,9 +717,25 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     return 'mesa' as const;
   };
 
+  const clearTeacherFilter = () => {
+    const params = new URLSearchParams(location.search);
+    params.delete('teacher');
+    const search = params.toString();
+    navigate({ pathname: '/calendar', search: search ? `?${search}` : '' });
+  };
+  const teacherFilterBanner = teacherFilterId ? (
+    <div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-neutral-border bg-white px-4 py-3 text-[13px] text-neutral-textSec md:mx-10">
+      <p>
+        <span className="font-semibold text-neutral-textMain">Calendario de {filteredTeacher ? `${filteredTeacher.name} ${filteredTeacher.surname || ''}`.trim() : 'este profesor'}</span>
+        <span className="block text-[12px] text-neutral-textHelper">Clases en las que figura como titular, reemplazo o profesor de un bloque.</span>
+      </p>
+      <button type="button" onClick={clearTeacherFilter} className="min-h-[36px] rounded-[8px] border border-neutral-border px-3 text-[12px] font-semibold text-brand">Ver todas las clases</button>
+    </div>
+  ) : null;
+
   const renderDayView = () => {
     const dateKey = formatDateKey(selectedDate);
-    const daySessions = sessions.filter(s => s.date === dateKey);
+    const daySessions = displaySessions.filter(s => s.date === dateKey);
     const dayLabel = selectedDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
     const dayTitle = `${dayLabel.charAt(0).toUpperCase()}${dayLabel.slice(1)}`;
 
@@ -739,6 +763,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
     return (
       <div className="flex-1 flex flex-col h-full overflow-hidden animate-fade-in bg-neutral-base">
+        {teacherFilterBanner}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 px-4 md:px-10 pt-4 pb-3">
           <div>
             <p className="eyebrow text-brand">Agenda diaria</p>
@@ -774,7 +799,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
         </div>
 
         <div className="relative flex-1 overflow-hidden border-t border-neutral-border bg-neutral-sec">
-          <div className="h-full overflow-y-auto custom-scrollbar px-6 md:px-10 pt-4 pb-32">
+            <div className="h-full overflow-y-auto custom-scrollbar px-6 md:px-10 pt-4 pb-32">
+            {teacherFilterId && sortedSessions.length === 0 && <p className="mb-3 text-[13px] text-neutral-textHelper">Sin clases de este profesor en este día.</p>}
             <div className="relative pl-20" style={{ minHeight: `${hours.length * HOUR_HEIGHT}px` }}>
               {hours.map((hour) => (
                 <div key={hour} className="relative flex h-[140px] items-start border-t border-neutral-border/60">
@@ -890,6 +916,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     <div className="flex h-full flex-col overflow-hidden bg-neutral-base">
       {viewMode === 'day' ? renderDayView() : (
         <div className="flex-1 overflow-y-auto px-3 pb-16 pt-3 custom-scrollbar md:px-6 md:pb-10 md:pt-5">
+          {teacherFilterBanner}
           <div className="calendar-month-stage mx-auto w-full max-w-5xl p-2 md:p-4">
             <div className="calendar-month-surface p-3 md:p-5 lg:p-7">
               <header className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
