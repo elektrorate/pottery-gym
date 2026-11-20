@@ -10,7 +10,7 @@ import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapa
 import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
-import { studentEffectiveRemainingClasses, studentGiftCardBalance } from '../utils/studentPresentation';
+import { studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 interface CalendarViewProps {
   readOnly?: boolean;
   sessions: ClassSession[];
@@ -1069,7 +1069,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   const studentObj = students.find(s => s.id === studentId);
                   const isBonusStudent = !!studentObj;
                   const bonos = studentObj ? studentEffectiveRemainingClasses(studentObj, giftCards) : 0;
-                  const balanceFromGiftCard = !!studentObj && isNonMembershipCategory(studentObj.studentCategory) && studentGiftCardBalance(studentObj.id, giftCards).cards.length > 0;
                   const bonosTotal = studentObj?.bonosAsignados ?? 4;
                   const business = policy2 ? attendanceSession.businessStateByStudentId?.[studentId] : undefined;
                   const cancelled = isCancelled(attendanceSession, studentId);
@@ -1087,7 +1086,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                               : bonos <= Math.ceil(bonosTotal * 0.25) ? 'bg-[#F5E8D4] text-[#916438]'
                                 : 'bg-[#E7F0E8] text-[#47704D]'
                               }`}>
-                              {balanceFromGiftCard ? 'Bono regalo' : 'Bono de clases'} {bonos}/{bonosTotal}
+                              Clases {bonos}/{bonosTotal}
                             </span>
                           )}
                         </div>

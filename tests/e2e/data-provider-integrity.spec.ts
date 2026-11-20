@@ -297,7 +297,7 @@ test('bounded calendar paints before held financial and inventory reads; financi
   await expect(page.locator('[data-session-id="recent"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Abrir control de asistencia' })).toBeDisabled();
-  await expect(page.getByTestId('students').getByRole('status')).toContainText('Cargando bonos de clases y detalles');
+  await expect(page.getByTestId('students').getByRole('status')).toContainText('Cargando clases y detalles');
   expect((await snapshot(page))).toMatchObject({ loading: false, ready: false, owner: false });
   await page.locator('[data-session-id="recent"]').dispatchEvent('click');
   await expect(page.getByRole('button', { name: 'Crear sesión', exact: true })).toHaveCount(0);

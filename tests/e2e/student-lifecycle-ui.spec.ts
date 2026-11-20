@@ -96,20 +96,20 @@ test('new temporary can raise the contracted class count above 1', async ({ page
   await page.getByRole('button', { name: 'Crear nuevo alumno' }).click();
   await page.getByLabel('Categoría del alumno').selectOption('temporal');
   await page.getByRole('button', { name: 'Cambiar categoría', exact: true }).click();
-  await expect(page.getByLabel('Bonos de clases contratados', { exact: true })).toHaveValue('4');
-  await page.getByRole('button', { name: 'Aumentar bonos de clases' }).click();
-  await expect(page.getByLabel('Bonos de clases contratados', { exact: true })).toHaveValue('5');
-  await page.getByRole('button', { name: 'Aumentar bonos de clases' }).click();
-  await expect(page.getByLabel('Bonos de clases contratados', { exact: true })).toHaveValue('6');
-  await expect(page.getByLabel('Bonos de clases restantes', { exact: true })).toHaveValue('6');
+  await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('4');
+  await page.getByRole('button', { name: 'Aumentar clases', exact: true }).click();
+  await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('5');
+  await page.getByRole('button', { name: 'Aumentar clases', exact: true }).click();
+  await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('6');
+  await expect(page.getByLabel('Clases restantes', { exact: true })).toHaveValue('6');
 });
 
 test('grupal profile opens and payment status can be confirmed', async ({ page }) => {
   await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
   await page.getByRole('button', { name: /GRUPAL VISIBLE/ }).click();
   await expect(page.getByRole('heading', { name: 'GRUPAL VISIBLE' })).toBeVisible();
-  await expect(page.getByLabel('Bonos de clases contratados', { exact: true })).toHaveValue('4');
-  await expect(page.getByLabel('Bonos de clases restantes', { exact: true })).toHaveValue('4');
+  await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('4');
+  await expect(page.getByLabel('Clases restantes', { exact: true })).toHaveValue('4');
   await page.getByLabel('Estado del pago').selectOption('paid');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await expect(page.getByTestId('saved')).toContainText('"paymentStatus":"paid"');
@@ -119,8 +119,8 @@ test('grupal profile opens and payment status can be confirmed', async ({ page }
 test('editing legacy temporary preserves already assigned classes', async ({ page }) => {
   await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
   await page.getByRole('button', { name: /TEMPORAL HISTORICO/ }).click();
-  await expect(page.getByLabel('Bonos de clases contratados', { exact: true })).toHaveValue('3');
-  await expect(page.getByLabel('Bonos de clases restantes', { exact: true })).toHaveValue('3');
+  await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('3');
+  await expect(page.getByLabel('Clases restantes', { exact: true })).toHaveValue('3');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await expect(page.getByTestId('saved')).toContainText('"classesRemaining":3');
   await expect(page.getByTestId('saved')).toContainText('"studentCategory":"temporal"');
@@ -172,8 +172,8 @@ test('linked gift cards show contracted classes, buyer details and type in the s
   await expect(row).toContainText('Modelado');
   await row.click();
   await expect(page.getByRole('heading', { name: 'PAULA BONO' })).toBeVisible();
-  await expect(page.getByLabel('Bonos regalo contratados')).toHaveValue('2');
-  await expect(page.getByLabel('Bonos regalo restantes')).toHaveValue('2');
+  await expect(page.getByLabel('Clases contratadas')).toHaveValue('2');
+  await expect(page.getByLabel('Clases restantes')).toHaveValue('2');
   await expect(page.getByText('CR-796024D9E0 · Modelado')).toBeVisible();
   await expect(page.getByText('100 € · Pagado')).toBeVisible();
   await expect(page.getByText('Comprador: Aina · 606 130 865')).toBeVisible();
