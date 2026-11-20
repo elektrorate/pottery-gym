@@ -36,8 +36,16 @@ const Harness = () => {
     }}>Cargar bono vinculado</button>
 
     <output data-testid="saved">{JSON.stringify(saved)}</output>
-    {dashboard ? <DashboardView students={students} sessions={sessions} giftCards={giftCards} onUpdateStudent={update} onUpdateSession={noop} onRedeemGiftCardSession={noop} onReverseGiftCardSession={noop} onNavigate={() => {}} onOpenStudentProfile={() => {}} onOpenSession={(sessionId, date) => setSaved({ sessionId, date })} /> :
-      <StudentList students={students} giftCards={giftCards} onUpdate={update} onAddStudent={async s => { setSaved(s); setStudents(current => [...current, { ...s, id: 'created' }]); }} onRenew={noop} onDeleteStudent={async id => setStudents(current => current.filter(s => s.id !== id))} />}
+    {dashboard ? <DashboardView students={students} sessions={sessions} giftCards={giftCards} onUpdateStudent={update} onUpdateSession={noop} onRedeemGiftCardSession={noop} onReverseGiftCardSession={noop} onNavigate={view => setSaved({ navigate: view })} onOpenStudentProfile={() => {}} onOpenSession={(sessionId, date) => setSaved({ sessionId, date })} /> :
+      <StudentList students={students} giftCards={giftCards} onUpdate={update} onAddStudent={async s => { setSaved(s); setStudents(current => [...current, { ...s, id: 'created' }]); }} onRenew={noop} onConfirmPayment={async (id, periodId) => {
+        setSaved({ confirmedPayment: id, periodId });
+        setStudents(current => current.map(student => {
+          if (student.id !== id) return student;
+          const periods = student.membershipPeriods?.map(period => period.id === periodId ? { ...period, paymentStatus: 'paid' as const } : period);
+          const confirmsCurrent = !student.membershipPeriods?.length || periodId === student.effectivePeriodId;
+          return { ...student, membershipPeriods: periods, paymentStatus: confirmsCurrent ? 'paid' : student.paymentStatus };
+        }));
+      }} onActivateMembership={noop} onAdjustClasses={noop} onDeleteStudent={async id => setStudents(current => current.filter(s => s.id !== id))} />}
   </>;
 };
 createRoot(document.getElementById('root')!).render(<Harness />);

@@ -8,8 +8,9 @@ import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, SessionActivity
 import { getStudentLifecycle, isStudentArchived, isNonMembershipCategory } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
-import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
+import { getScheduleConflictReason, madridDateKey, MAX_WEEKLY_SESSIONS, weeklyDatesUntil } from '../utils/workshopSchedule';
 import { formatCalendarDate, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
+import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
@@ -86,6 +87,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const [detailsDialog, setDetailsDialog] = useState<{ session: ClassSession; mode: 'teacher' | 'schedule' } | null>(null);
   const [rosterOnly, setRosterOnly] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
+  const [repeatWeekly, setRepeatWeekly] = useState(false);
+  const [repeatUntil, setRepeatUntil] = useState('');
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
 
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -302,6 +305,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       return;
     }
     setSaveError('');
+    setRepeatWeekly(false);
+    setRepeatUntil('');
     setStudentSearchQuery(''); // Limpiar búsqueda al abrir modal
     if (session) {
       setEditingSessionId(session.id);
@@ -529,7 +534,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       return;
     }
     if (!sessionForm.date) {
-      showError("Selecciona un día en el calendario antes de guardar.");
+      showError('Elige la fecha de la sesión.');
       return;
     }
     if (!rosterOnly && requiresTeacher(sessionForm.classType) && !sessionForm.teacherId) {
@@ -576,33 +581,51 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       showError(`La sesión admite como máximo ${capacity} alumnos.`);
       return;
     }
-    const persistedSession = editingSessionId ? sessions.find(session => session.id === editingSessionId) : undefined;
-    const scheduleChanged = !persistedSession
-      || persistedSession.date !== sessionForm.date
-      || persistedSession.startTime !== sessionForm.startTime
-      || persistedSession.endTime !== sessionForm.endTime
-      || (persistedSession.classType === 'feriado' && sessionForm.classType !== 'feriado');
-    if (scheduleChanged && (workshopSchedule.length > 0 || workshopScheduleExceptions.length > 0) && sessionForm.classType !== 'feriado') {
-      const conflictReason = getScheduleConflictReason(
-        { date: sessionForm.date, startTime: sessionForm.startTime, endTime: sessionForm.endTime, classType: sessionForm.classType },
-        workshopSchedule,
-        workshopScheduleExceptions
-      );
-      if (conflictReason) {
-        showError(`${conflictReason}. Ajusta la sesión o cambia la disponibilidad desde Administración del taller.`);
+    const showDate = (date: string) => formatDate(date, 'numeric', date);
+    const repeatDates = !editingSessionId && repeatWeekly ? weeklyDatesUntil(sessionForm.date, repeatUntil) : [sessionForm.date];
+    if (!editingSessionId && repeatWeekly) {
+      if (!repeatUntil) {
+        showError('Elige hasta qué día repetir la sesión.');
+        return;
+      }
+      if (repeatUntil < sessionForm.date) {
+        showError('La fecha final tiene que ser el mismo día o uno posterior.');
+        return;
+      }
+      if (repeatDates.length > MAX_WEEKLY_SESSIONS) {
+        showError(`Como máximo ${MAX_WEEKLY_SESSIONS} sesiones. Elige una fecha final más cercana.`);
         return;
       }
     }
-    const duplicate = sessions.some(s => {
-      if (editingSessionId && s.id === editingSessionId) return false;
-      return s.date === sessionForm.date
-        && s.startTime === sessionForm.startTime
-        && s.endTime === sessionForm.endTime
-        && s.classType === sessionForm.classType;
-    });
-    if (duplicate) {
-      showError("Ya existe una sesión con el mismo horario y tipo.");
-      return;
+    const persistedSession = editingSessionId ? sessions.find(session => session.id === editingSessionId) : undefined;
+    for (const date of repeatDates) {
+      const scheduleChanged = !persistedSession
+        || persistedSession.date !== date
+        || persistedSession.startTime !== sessionForm.startTime
+        || persistedSession.endTime !== sessionForm.endTime
+        || (persistedSession.classType === 'feriado' && sessionForm.classType !== 'feriado');
+      if (scheduleChanged && (workshopSchedule.length > 0 || workshopScheduleExceptions.length > 0) && sessionForm.classType !== 'feriado') {
+        const conflictReason = getScheduleConflictReason(
+          { date, startTime: sessionForm.startTime, endTime: sessionForm.endTime, classType: sessionForm.classType },
+          workshopSchedule,
+          workshopScheduleExceptions
+        );
+        if (conflictReason) {
+          showError(`${conflictReason} (${showDate(date)}). Ajusta la sesión o cambia la disponibilidad desde Administración del taller.`);
+          return;
+        }
+      }
+      const duplicate = sessions.some(s => {
+        if (editingSessionId && s.id === editingSessionId) return false;
+        return s.date === date
+          && s.startTime === sessionForm.startTime
+          && s.endTime === sessionForm.endTime
+          && s.classType === sessionForm.classType;
+      });
+      if (duplicate) {
+        showError(`Ya existe una sesión con el mismo horario y tipo el ${showDate(date)}.`);
+        return;
+      }
     }
     const current = editingSessionId ? sessions.find(session => session.id === editingSessionId) : undefined;
     if (editingSessionId && (!current || !hasPersistedRoster(current) || !Number.isSafeInteger(sessionForm.revision) || sessionForm.revision! < 0)) {
@@ -638,8 +661,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       setSaveError('La fuente seleccionada no corresponde al bloque actual. Corrige la seleccion explicitamente; no se sustituira automaticamente.');
       return;
     }
-    const payload: Omit<ClassSession, 'id'> = {
-      date: sessionForm.date,
+    const payloadFor = (date: string): Omit<ClassSession, 'id'> => ({
+      date,
       startTime: sessionForm.startTime,
       endTime: sessionForm.endTime,
       classType: sessionForm.classType,
@@ -654,8 +677,31 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       privateReason: sessionForm.privateReason.trim() || undefined,
       sessionAudience: sessionForm.sessionAudience,
       activityBlocks: sessionForm.classType === 'mixto' ? sessionForm.activityBlocks : undefined
-    };
-    await persistSave({ kind: 'reservation', id: editingSessionId, updates: payload });
+    });
+    if (editingSessionId || !repeatWeekly) {
+      await persistSave({ kind: 'reservation', id: editingSessionId, updates: payloadFor(sessionForm.date) });
+      return;
+    }
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    setSaveError('');
+    let created = 0;
+    try {
+      for (const date of repeatDates) {
+        await onAddSession(payloadFor(date));
+        created += 1;
+      }
+      setRepeatWeekly(false);
+      setRepeatUntil('');
+      setShowSessionModal(false);
+    } catch (error: any) {
+      setSaveError(created === 0
+        ? sessionBusinessErrorMessage(error)
+        : `${sessionBusinessErrorMessage(error)} Se crearon ${created} de ${repeatDates.length} sesiones. Revisa el calendario antes de volver a guardar.`);
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const weekDays = useMemo(() => {
@@ -872,6 +918,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                             <div key={studentId || idx} data-student-id={studentId} data-attendance-status={att} data-reservation-state={cancelled ? 'cancelled' : 'reserved'} className="flex items-center gap-2.5">
                               <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`}></div>
                               <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${cancelled ? 'text-neutral-textHelper line-through' : att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{studentName.toLowerCase()}</span>
+                              {att === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
                               {studentId && <span className="shrink-0 text-[11px] text-neutral-textHelper">ID {shortId(studentId)}</span>}
                               {cancelled && <span className="shrink-0 text-[11px] text-neutral-textHelper">Cancelada</span>}
                             </div>
@@ -1039,13 +1086,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 )}
               </div>
 
-              <div data-testid="attendance-policy" className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-3 text-[12px] leading-relaxed text-[#6E5145]">
-                {policy2 ? <>
-                  <p>Guardar provisional no consume clases y permite alumnos pendientes. Al finalizar, completa todos los alumnos no cancelados: la asistencia consume una clase salvo excepción sin descuento. La falta consume una clase; sin crédito válido, queda una incidencia pendiente.</p>
-                  <p className="mt-2">Cancelación con al menos 8 horas: sin consumo. Con menos de 8 horas: una clase al finalizar. El servidor registra la hora y decide el plazo; este aviso no confirma la clasificación.</p>
-                  <p className="mt-2">Los saldos son informativos. El servidor valida crédito, pago y permisos. Corregir una asistencia finalizada no devuelve una penalización por falta o cancelación tardía; solo el propietario puede eximirla expresamente.</p>
-                  {attendanceDirty && <p className="mt-2 font-semibold">Guarda primero la asistencia provisional o los cambios para habilitar las operaciones por alumno.</p>}
-                </> : <p>Sesión con política anterior (versión 1). Se conserva el comportamiento original de asistencia; no se aplican nuevas penalizaciones ni recobros históricos.</p>}
+              <div data-testid="attendance-policy" className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-2.5 text-[13px] leading-snug text-[#6E5145]">
+                <p>{policy2
+                  ? 'Asistió: vino. Faltó: no vino. Al finalizar, las dos descuentan una clase; cancelar con 8 horas no descuenta.'
+                  : 'Sesión anterior: marca Asistió o Faltó. No se aplican penalizaciones nuevas.'}</p>
+                {policy2 && attendanceDirty && <p className="mt-2 font-semibold">Guarda primero la asistencia provisional o los cambios para habilitar las operaciones por alumno.</p>}
               </div>
 
               <div className="mb-5">
@@ -1095,7 +1140,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       <div className="flex min-h-[62px] items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-[14px] font-medium capitalize text-[#3F2E27]">{studentName.toLowerCase()}</p>
+                          <p className={`truncate text-[14px] font-medium capitalize text-[#3F2E27] ${status === 'absent' && !cancelled ? 'line-through decoration-[#9C4235]' : ''}`}>{studentName.toLowerCase()}</p>
+                          {status === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
                           {isBonusStudent && (
                             <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[12px] font-semibold ${bonos <= 0 ? 'bg-[#F7E3DF] text-[#9C4235]'
                               : bonos <= Math.ceil(bonosTotal * 0.25) ? 'bg-[#F5E8D4] text-[#916438]'
@@ -1108,7 +1154,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         <span className="ui-meta mt-1 block">ID {shortId(studentId)}</span>
                         {attendanceSession.giftCardIdByStudentId?.[studentId] && <span className="ui-meta mt-1 block">Bono regalo vinculado ({shortId(attendanceSession.giftCardIdByStudentId[studentId])})</span>}
                         <span className={`ui-meta mt-1 block font-medium ${status === 'present' ? 'text-[#47704D]' : status === 'absent' ? 'text-[#9C4235]' : 'text-[#9B8175]'}`}>
-                          {cancelled ? 'Reserva cancelada (solo lectura)' : status === 'present' ? 'Asiste' : status === 'absent' ? 'No asiste' : 'Pendiente'}
+                          {cancelled ? 'Reserva cancelada (solo lectura)' : status === 'present' ? 'Asistió' : status === 'absent' ? 'Faltó' : 'Pendiente'}
                         </span>
                       </div>
                       <div className="flex shrink-0 gap-1.5">
@@ -1116,21 +1162,23 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           type="button"
                           onClick={() => handleMarkAttendance(studentId, 'present')}
                            disabled={cancelled || (!!attendanceSession.completedAt && !isEditingAttendance)}
-                           className={`flex h-10 w-10 items-center justify-center rounded-[9px] border transition focus:outline-none focus:ring-2 focus:ring-[#6B876F] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'present' ? 'border-[#5F8065] bg-[#5F8065] text-white' : 'border-[#D8E4D9] bg-[#F4F8F4] text-[#5F8065] hover:bg-[#E7F0E8]'}`}
+                           className={`inline-flex h-10 items-center gap-1 rounded-[9px] border px-2.5 text-[12px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#6B876F] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'present' ? 'border-[#5F8065] bg-[#5F8065] text-white' : 'border-[#D8E4D9] bg-[#F4F8F4] text-[#5F8065] hover:bg-[#E7F0E8]'}`}
                            title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Marcar Asistencia"}
                           aria-label={`Marcar asistencia de ${studentName} (${shortId(studentId)})`}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="m5 13 4 4L19 7" /></svg>
+                          Asistió
                         </button>
                         <button
                           type="button"
                           onClick={() => handleMarkAttendance(studentId, 'absent')}
                            disabled={cancelled || (!!attendanceSession.completedAt && !isEditingAttendance)}
-                           className={`flex h-10 w-10 items-center justify-center rounded-[9px] border transition focus:outline-none focus:ring-2 focus:ring-[#9C4235] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'absent' ? 'border-[#9C4235] bg-[#9C4235] text-white' : 'border-[#EBCFC9] bg-[#FCF4F2] text-[#9C4235] hover:bg-[#F7E3DF]'}`}
+                           className={`inline-flex h-10 items-center gap-1 rounded-[9px] border px-2.5 text-[12px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#9C4235] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'absent' ? 'border-[#9C4235] bg-[#9C4235] text-white' : 'border-[#EBCFC9] bg-[#FCF4F2] text-[#9C4235] hover:bg-[#F7E3DF]'}`}
                            title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Marcar Falta"}
                           aria-label={`Marcar falta de ${studentName} (${shortId(studentId)})`}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18 18 6M6 6l12 12" /></svg>
+                          Faltó
                         </button>
                         {!cancelled && status !== 'pending' && (!attendanceSession.completedAt || isEditingAttendance) && (
                           <button
@@ -1262,19 +1310,35 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 <div className="space-y-5">
                   <fieldset disabled={mixedHistoryLocked || rosterOnly}>
                     <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#7B3F22]">Horario</legend>
+                    <p className="mb-3 text-[12px] text-[#8B6B5E]">Los campos con * son obligatorios.</p>
+                    <label className="mb-3 block">
+                      <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Fecha <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
+                      <DateField required aria-label="Fecha de la sesión" value={sessionForm.date} onChange={date => setSessionForm({ ...sessionForm, date })} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20" />
+                    </label>
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
-                        <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Inicio</span>
-                        <TimeField aria-label="Hora de inicio" value={sessionForm.startTime} onChange={(startTime) => setSessionForm({ ...sessionForm, startTime })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
+                        <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Inicio <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
+                        <TimeField required aria-label="Hora de inicio" value={sessionForm.startTime} onChange={startTime => setSessionForm({ ...sessionForm, startTime })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
                       </label>
                       <label className="block">
-                        <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Fin</span>
-                        <TimeField aria-label="Hora de fin" value={sessionForm.endTime} onChange={(endTime) => setSessionForm({ ...sessionForm, endTime })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
+                        <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Fin <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
+                        <TimeField required aria-label="Hora de fin" value={sessionForm.endTime} onChange={endTime => setSessionForm({ ...sessionForm, endTime })} disabled={sessionForm.classType === 'feriado'} className={`h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 ${sessionForm.classType === 'feriado' ? 'cursor-not-allowed opacity-55' : ''}`} />
                       </label>
                     </div>
                     {sessionForm.classType === 'feriado' && (
                       <p className="mt-2 text-[11px] leading-relaxed text-[#8B6B5E]">Día bloqueado por feriado (00:00–24:00).</p>
                     )}
+                    {!editingSessionId && <div className="mt-3 rounded-[10px] border border-[#E8D9CC] bg-white p-3">
+                      <label className="flex items-start gap-2 text-[13px] text-[#2F211B]">
+                        <input type="checkbox" className="mt-1" checked={repeatWeekly} onChange={event => { setRepeatWeekly(event.target.checked); if (!event.target.checked) setRepeatUntil(''); }} />
+                        <span>Repetir cada semana, el mismo día de la semana</span>
+                      </label>
+                      {repeatWeekly && <label className="mt-3 block">
+                        <span className="ui-label mb-1 block uppercase tracking-[0.12em] text-[#8B6B5E]">Hasta <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
+                        <DateField required aria-label="Repetir hasta" value={repeatUntil} onChange={setRepeatUntil} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[13px] text-[#2F211B] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20" />
+                        <span className="mt-1 block text-[12px] text-[#8B6B5E]">{!repeatUntil || !sessionForm.date || repeatUntil < sessionForm.date ? 'Elige el último día de la serie.' : weeklyDatesUntil(sessionForm.date, repeatUntil).length > MAX_WEEKLY_SESSIONS ? `Como máximo ${MAX_WEEKLY_SESSIONS} sesiones. Acorta la fecha final.` : `Se crearán ${weeklyDatesUntil(sessionForm.date, repeatUntil).length} sesiones, cada ${formatDate(sessionForm.date, 'weekday')}.`}</span>
+                      </label>}
+                    </div>}
                   </fieldset>
 
                   <div>
@@ -1321,7 +1385,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
                   {sessionForm.classType !== 'feriado' && (
                     <label className="block">
-                      <span className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">Cupo máximo</span>
+                      <span className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">Cupo máximo <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
                       <input
                         aria-label="Cupo máximo"
                         type="number"
@@ -1356,24 +1420,32 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     </div>
                   )}
                   {sessionForm.classType === 'workshop' && (
+                  <label className="block">
+                    <span className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">Nombre del workshop <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
                   <input
                     disabled={rosterOnly}
                     aria-label="Nombre del workshop"
+                    required
                     value={sessionForm.workshopName}
                     onChange={(e) => setSessionForm({ ...sessionForm, workshopName: e.target.value })}
                     className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] text-[#2F211B] outline-none transition placeholder:text-[#8B6B5E] focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
                     placeholder="Nombre del workshop"
                   />
+                  </label>
                   )}
                   {sessionForm.classType === 'privada' && (
+                  <label className="block">
+                    <span className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">Motivo <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
                   <input
                     disabled={rosterOnly}
                     aria-label="Motivo de la sesión privada"
+                    required
                     value={sessionForm.privateReason}
                     onChange={(e) => setSessionForm({ ...sessionForm, privateReason: e.target.value })}
                     className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] text-[#2F211B] outline-none transition placeholder:text-[#8B6B5E] focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
                     placeholder="Motivo de la sesión"
                   />
+                  </label>
                   )}
                 </div>
 
@@ -1583,7 +1655,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 <p className="w-full text-[11px] text-[#8B6B5E]">El historial se conserva. Las sesiones no se pueden eliminar.</p>
               )}
               <button type="button" onClick={() => setShowSessionModal(false)} disabled={formLocked} className={`${editingSessionId ? '' : 'ml-auto'} min-h-10 px-3 text-[12px] font-medium text-[#8B6B5E] transition hover:text-[#7B3F22] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 disabled:opacity-50`}>Cancelar</button>
-              <button type="button" onClick={handleSessionSubmit} disabled={readOnly || isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">{isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : editingSessionId ? 'Guardar cambios' : 'Crear sesión'}</button>
+              <button type="button" onClick={handleSessionSubmit} disabled={readOnly || isSubmitting || !!refreshConflict} className="h-11 rounded-[10px] bg-[#C68952] px-5 text-[12px] font-semibold text-white shadow-[0_5px_14px_rgba(123,63,34,0.16)] transition hover:bg-[#B87543] focus:outline-none focus:ring-2 focus:ring-[#C68952] focus:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 sm:px-6">{isSubmitting ? 'Guardando…' : pendingSave ? 'Reintentar guardado' : editingSessionId ? 'Guardar cambios' : repeatWeekly && sessionForm.date && repeatUntil >= sessionForm.date && weeklyDatesUntil(sessionForm.date, repeatUntil).length > 1 && weeklyDatesUntil(sessionForm.date, repeatUntil).length <= MAX_WEEKLY_SESSIONS ? `Crear ${weeklyDatesUntil(sessionForm.date, repeatUntil).length} sesiones` : 'Crear sesión'}</button>
             </footer>
           </section>
         </div>

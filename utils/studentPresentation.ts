@@ -57,6 +57,13 @@ export function studentBalanceLabel(student: Student, giftCards?: GiftCard[]): s
   return student.legacyManualBalance == null ? 'Saldo por verificar' : `Saldo importado: ${claseLabel(student.legacyManualBalance)}`;
 }
 
+/** Same rule as the «Clases agotándose» alert. Archive is checked by the caller. */
+export function isClassesRunningLow(student: Student, giftCards?: GiftCard[]): boolean {
+  const isMembership = (student.studentCategory || 'membresia') === 'membresia';
+  const remaining = studentEffectiveRemainingClasses(student, giftCards);
+  return (!isMembership || hasVerifiedMembership(student)) && remaining <= 1 && remaining >= 0;
+}
+
 /** Remaining classes for alerts/dashboard: gift cards when linked, else student balance. */
 export function studentEffectiveRemainingClasses(student: Student, giftCards?: GiftCard[]): number {
   if (isNonMembershipCategory(student.studentCategory) && giftCards) {

@@ -78,12 +78,53 @@ export const getStudentLifecycleReason = (student: Student, today = getWorkshopD
 export const isStudentArchived = (student: Student, today = getWorkshopDate()) =>
   getStudentLifecycle(student, today) === 'archived';
 
+export type VisibleStudentCategoryCounts = {
+  todos: number;
+  membresia: number;
+  temporal: number;
+  grupal: number;
+  grupo_temporal: number;
+  archivados: number;
+};
+
+/** Same non-archived category totals as the student list summary. */
+export const countVisibleStudentsByCategory = (students: Student[], today = getWorkshopDate()): VisibleStudentCategoryCounts => {
+  const counts: VisibleStudentCategoryCounts = { todos: 0, membresia: 0, temporal: 0, grupal: 0, grupo_temporal: 0, archivados: 0 };
+  students.forEach(student => {
+    const category = student.studentCategory || 'membresia';
+    if (isStudentArchived(student, today)) {
+      counts.archivados += 1;
+      return;
+    }
+    counts.todos += 1;
+    if (category === 'temporal' || category === 'grupal' || category === 'grupo_temporal') counts[category] += 1;
+    else counts.membresia += 1;
+  });
+  return counts;
+};
+
 export const getPendingMembershipPayments = (student: Student) => {
   if (!isManagedMembership(student)) return [];
   const periods = student.membershipPeriods || [];
   if (periods.length) return periods.filter(period => period.paymentStatus === 'pending');
   return student.paymentStatus === 'pending' ? [{ id: 'legacy', studentId: student.id,
     startsOn: student.membershipActivatedAt, endsOn: student.expiryDate, paymentStatus: 'pending' as const }] : [];
+};
+
+export const studentHasPendingPayment = (student: Student) =>
+  getPendingMembershipPayments(student).length > 0
+  || (!isManagedMembership(student) && getStudentPaymentStatus(student) === 'pending');
+
+/** Period id the profile can confirm with the existing payment RPC. Legacy rows have no id. */
+export const selectConfirmablePaymentPeriodId = (student: Student): string | null => {
+  const real = getPendingMembershipPayments(student).filter(period => period.id && period.id !== 'legacy');
+  const effective = real.find(period => period.id === student.effectivePeriodId);
+  if (effective?.id) return effective.id;
+  if (real[0]?.id) return real[0].id;
+  if (isManagedMembership(student) && getStudentPaymentStatus(student) === 'pending' && student.effectivePeriodId) {
+    return student.effectivePeriodId;
+  }
+  return null;
 };
 
 export const DEFAULT_STUDENT_PAYMENT_STATUS = 'pending' as const;

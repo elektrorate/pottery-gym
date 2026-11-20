@@ -1,5 +1,5 @@
 import type { ClassSession, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
-import { madridDateKey } from './dateFormat';
+import { addDaysToDateKey, madridDateKey, parseDateOnly } from './dateFormat';
 
 export { madridDateKey };
 
@@ -11,6 +11,23 @@ export const getWeekMonday = (dateKey: string) => {
   const day = date.getUTCDay();
   date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
   return date.toISOString().slice(0, 10);
+};
+
+export const MAX_WEEKLY_SESSIONS = 26;
+
+/** Inclusive weekly dates on the same weekday, capped one past the maximum so callers can reject the overflow. */
+export const weeklyDatesUntil = (start: string, until: string) => {
+  const dates: string[] = [];
+  const first = parseDateOnly(start);
+  const last = parseDateOnly(until);
+  if (!first || !last || last < first) return dates;
+  let cursor = first;
+  while (cursor <= last) {
+    dates.push(cursor);
+    if (dates.length > MAX_WEEKLY_SESSIONS) break;
+    cursor = addDaysToDateKey(cursor, 7);
+  }
+  return dates;
 };
 
 export const addDays = (dateKey: string, amount: number) => {

@@ -61,6 +61,15 @@ export interface ClassAdjustmentIntent {
   readonly delta: number;
 }
 
+/** Manual +/- on a non-membership class balance. Membership attendance debits stay on their own path. */
+export interface ScalarClassAdjustment {
+  readonly studentId: string;
+  readonly expectedBalance: number;
+  readonly delta: number;
+  readonly resultingBalance: number;
+  readonly reason: string;
+}
+
 export interface ManualCreditIntent {
   readonly studentId: string;
   readonly requestKey: string;

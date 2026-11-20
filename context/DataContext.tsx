@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient';
 import { useAuth } from './AuthContext';
 import {
     Student, ClassSession, CeramicPiece, GiftCard, GiftCardMovement,
-    InventoryItem, InventoryMovement, Teacher, MembershipTier, RenewalIntent, ClassAdjustmentIntent, SessionBusinessIntent, PendingSessionOperation,
+    InventoryItem, InventoryMovement, Teacher, MembershipTier, RenewalIntent, ClassAdjustmentIntent, ScalarClassAdjustment, SessionBusinessIntent, PendingSessionOperation,
     ManualCreditIntent, PenaltySettlementIntent, PendingStudentCreditOperation,
     WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, CapacityActivity,
     DEFAULT_CAPACITY_BY_ACTIVITY, getDefaultSessionCapacity
@@ -22,9 +22,10 @@ import * as pieceOps from './data/pieceOps';
 import * as giftCardOps from './data/giftCardOps';
 import * as inventoryOps from './data/inventoryOps';
 import { attachAttendanceHistory } from '../utils/attendanceHistory';
+import { isMissingScalarAdjustmentRpc } from '../utils/classAdjustmentAudit';
 import { attachSessionBusinessState } from '../utils/sessionBusiness';
 import { attachStudentCreditProfiles } from '../utils/studentCredits';
-import { getWorkshopDate } from '../utils/studentLifecycle';
+import { getWorkshopDate, isManagedMembership } from '../utils/studentLifecycle';
 import { secondarySections, nextSectionState, describeLoadError, type SecondarySection, type SectionLoads } from '../utils/sectionLoading';
 
 const normalizeAttendanceStatus = (value: unknown): 'present' | 'absent' | undefined => {
@@ -61,6 +62,7 @@ interface DataContextType {
     confirmMembershipPayment: (studentId: string, periodId: string) => Promise<void>;
     activateMembership: (studentId: string) => Promise<void>;
     adjustMembershipClasses: (intent: ClassAdjustmentIntent) => Promise<void>;
+    adjustRemainingClasses: (adjustment: ScalarClassAdjustment) => Promise<void>;
     approveStudentManualCredit: (intent: ManualCreditIntent) => Promise<void>;
     settlePendingStudentPenalty: (intent: PenaltySettlementIntent) => Promise<void>;
     waiveStudentPenalty: (intent: SessionBusinessIntent) => Promise<void>;
@@ -588,6 +590,37 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const adjustMembershipClasses = async (_intent: ClassAdjustmentIntent) => {
         throw new Error('Los ajustes genericos estan bloqueados para no eludir penalizaciones. Usa la exencion del propietario para una penalizacion registrada.');
     };
+    const adjustRemainingClasses = async (adjustment: ScalarClassAdjustment) => {
+        requireBusinessData();
+        const student = studentsRef.current.find(item => item.id === adjustment.studentId);
+        if (!student) throw new Error('Alumno no encontrado.');
+        if (isManagedMembership(student)) throw new Error('El saldo de una membresía no se cambia desde aquí.');
+        const reason = adjustment.reason.trim();
+        if (!reason || reason.length > 200) throw new Error('Indica un motivo breve para el ajuste.');
+        if (!Number.isInteger(adjustment.expectedBalance) || adjustment.expectedBalance < 0
+            || !Number.isInteger(adjustment.delta) || adjustment.delta === 0
+            || adjustment.expectedBalance + adjustment.delta !== adjustment.resultingBalance) {
+            throw new Error('El ajuste de clases no es válido.');
+        }
+        const result = await withTimeout('adjust_student_scalar_classes', supabase.rpc('adjust_student_scalar_classes', {
+            p_student_id: adjustment.studentId, p_expected: adjustment.expectedBalance,
+            p_delta: adjustment.delta, p_reason: reason
+        }));
+        if (!result.error) {
+            await safeReload();
+            return;
+        }
+        // Migration not applied: keep the existing balance write and skip the reason row.
+        if (isMissingScalarAdjustmentRpc(result.error)) {
+            await studentOps.updateStudent(getOpsContext(), adjustment.studentId, { classesRemaining: adjustment.resultingBalance });
+            return;
+        }
+        if (result.error.code === '40001') {
+            await safeReload();
+            throw new Error('El saldo cambió. Revisa las clases restantes y vuelve a confirmar.');
+        }
+        throw new Error(result.error.message || 'No se pudo ajustar las clases.');
+    };
 
     const studentCreditOperations = () => {
         requireScope();
@@ -799,7 +832,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         workshopScheduleExceptions: loadedScope === scope ? workshopScheduleExceptions : [],
         capacityDefaults: loadedScope === scope ? capacityDefaults : Object.entries(DEFAULT_CAPACITY_BY_ACTIVITY).map(([classType, capacity]) => ({ classType: classType as CapacityActivity, capacity })),
         isLoadingData: loadedScope !== scope || isLoadingData, businessDataReady: loadedScope === scope && businessDataReady, loadError: loadedScope === scope ? loadError : null,
-        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses,
+        addStudent, updateStudent, deleteStudent, renewStudent, confirmMembershipPayment, activateMembership, adjustMembershipClasses, adjustRemainingClasses,
         approveStudentManualCredit, settlePendingStudentPenalty, waiveStudentPenalty, canManageStudentCredits,
         getPendingStudentCreditOperation, retryPendingStudentCreditOperation,
         addSession, updateSession, deleteSession,

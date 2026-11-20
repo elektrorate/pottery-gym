@@ -1,11 +1,11 @@
-import { hasVerifiedMembership, needsStudentReview, studentEffectiveRemainingClasses } from '../utils/studentPresentation';
+import { isClassesRunningLow, needsStudentReview, studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
-import { getStudentLifecycle, getPendingMembershipPayments, isStudentArchived } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getPendingMembershipPayments, isStudentArchived } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
-import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
+import { capacityDefaultsToMap, enrollmentOnDate, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
 import { studentCategoryLabel, sessionTypeLabel } from '../utils/classTypeLabels';
 import { formatDate, formatTime } from '../utils/dateFormat';
@@ -91,31 +91,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
     sessions.filter(s => s.date === todayStr).sort((a, b) => a.startTime.localeCompare(b.startTime)),
     [sessions, todayStr]);
 
-  const uniqueStudentsToday = useMemo(() => {
-    const ids = new Set<string>();
-    todaySessions.forEach(s => s.students.forEach((_name, index) => {
-      const id = s.studentIds?.[index];
-      if (id && s.attendancePolicyVersion === 2 && s.businessStateByStudentId?.[id]?.reservationState === 'cancelled') return;
-      ids.add(id || `${s.id}:${index}`);
-    }));
-    return Array.from(ids);
-  }, [todaySessions]);
+  const uniqueStudentsToday = useMemo(() => enrollmentOnDate(sessions, todayStr).count, [sessions, todayStr]);
 
   // ─── GLOBAL stats ───
   const globalStats = useMemo(() => {
     const totalStudents = students.length;
-     const activeStudents = students.filter(s => getStudentLifecycle(s, todayStr) === 'active').length;
      const pendingStudents = students.filter(s => getPendingMembershipPayments(s).length > 0).length;
      const totalSessions = sessions.length;
+     const byCategory = countVisibleStudentsByCategory(students, todayStr);
 
-    // Students by category
-    const byCategory: Record<string, number> = { membresia: 0, temporal: 0, grupal: 0, grupo_temporal: 0 };
-    students.forEach(s => {
-      const cat = s.studentCategory || 'membresia';
-        if (byCategory[cat] !== undefined && !isStudentArchived(s, todayStr)) byCategory[cat]++;
-    });
-
-     return { totalStudents, activeStudents, pendingStudents, totalSessions, byCategory, reviewStudents: students.filter(needsStudentReview).length };
+     return { totalStudents, pendingStudents, totalSessions, byCategory, reviewStudents: students.filter(needsStudentReview).length };
     }, [students, sessions, todayStr]);
 
   // ─── TODAY stats ───
@@ -139,7 +124,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
     return {
       occTornos: tornosTotales > 0 ? Math.round((tornosOcupados / tornosTotales) * 100) : 0,
       mesasLibres: mesasTotales - mesasOcupadas,
-      totalAlumnos: uniqueStudentsToday.length,
+      totalAlumnos: uniqueStudentsToday,
       totalSessions: todaySessions.length,
       globalOccupancy: totalSpots > 0 ? Math.round((occupiedSpots / totalSpots) * 100) : 0
     };
@@ -161,7 +146,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
       if (isStudentArchived(student, todayStr)) return;
 
       const remaining = studentEffectiveRemainingClasses(student, giftCards);
-      if ((!isMembership || hasVerifiedMembership(student)) && remaining <= 1 && remaining >= 0) {
+      if (isClassesRunningLow(student, giftCards)) {
         list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `Clases agotándose (${remaining} rest.)`, type: 'critical', category: 'bonuses' });
       }
       if (isExpired && isMembership) {
@@ -244,48 +229,60 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
           </div>
         </section>
 
-        {/* ─── GLOBAL STATS ROW ─── */}
+        <section className="mb-5 rounded-2xl border border-neutral-border bg-[#FBF7F2] p-4 md:p-5">
+          <div className="flex items-center justify-between gap-3 px-1">
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-6 bg-caramelo rounded-full"></div>
+              <h4 className="text-[15px] font-bold text-neutral-textMain">Alertas</h4>
+              <span className="text-[12px] font-semibold text-neutral-textHelper">({alerts.length})</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!soundEnabled) playAlertSound();
+                setSoundEnabled(enabled => !enabled);
+              }}
+              aria-pressed={soundEnabled}
+              className={`min-h-[36px] px-2.5 rounded-[9px] border text-[11px] font-semibold inline-flex items-center gap-1.5 transition-colors ${soundEnabled ? 'bg-[#DFF0E4] text-[#20663B] border-[#BFDECB]' : 'bg-white text-neutral-textHelper border-neutral-border hover:border-arena hover:text-brand'}`}
+              title={soundEnabled ? 'Desactivar sonido de alertas' : 'Activar sonido de alertas'}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={soundEnabled ? 'M11 5L6 9H3v6h3l5 4V5zm5.5 3.5a5 5 0 010 7M19 5a9 9 0 010 14' : 'M11 5L6 9H3v6h3l5 4V5zm5 7H22'} /></svg>
+              <span className="hidden sm:inline">{soundEnabled ? 'Sonido activo' : 'Activar sonido'}</span>
+            </button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <AlertGroup title="Clases agotándose" alerts={bonusAlerts} tone="danger" emptyLabel="No hay clases próximas a agotarse." onOpenStudentProfile={onOpenStudentProfile} />
+            <AlertGroup title="Pagos pendientes" alerts={paymentAlerts} tone="warning" emptyLabel={globalStats.reviewStudents ? 'No hay pagos pendientes registrados. Hay datos por verificar.' : 'No hay pagos pendientes registrados.'} onOpenStudentProfile={onOpenStudentProfile} />
+            <AlertGroup title="Membresías vencidas" alerts={expiryAlerts} tone="danger" emptyLabel="No hay membresías vencidas." onOpenStudentProfile={onOpenStudentProfile} />
+          </div>
+        </section>
+
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-5">
-           <div className="group relative flex min-h-[7rem] cursor-pointer flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-soft md:min-h-[8rem] md:rounded-[26px] md:p-4"
-             onClick={() => onNavigate(AppView.STUDENTS)}
-             style={{ cursor: 'pointer' }}>
-             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="members" /></span>
-             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Activos de membresía</p>
-              <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{detailsReady ? globalStats.activeStudents : '—'}</span>
-           </div>
-             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="payments" /></span>
-             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Pendientes de pago</p>
-               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{detailsReady ? pendingPaymentAlertCount : '—'}</span>
-            </div>
-            <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="bonuses" /></span>
-             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Clases agotándose</p>
-               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{bonusAlerts.length}</span>
-            </div>
-           {/* Today's metrics */}
-            <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="students" /></span>
-             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Alumnos Hoy</p>
-               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalAlumnos}</span>
-            </div>
-            <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
-             <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="sessions" /></span>
-             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Sesiones Hoy</p>
-               <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{todayStats.totalSessions}</span>
-           </div>
+          {([
+            ['Activos de membresía', globalStats.byCategory.membresia, 'members', 'students?category=membresia&tab=all'],
+            ['Pendientes de pago', detailsReady ? pendingPaymentAlertCount : '—', 'payments', 'students?payment=pending'],
+            ['Clases agotándose', bonusAlerts.length, 'bonuses', 'students?classes=low'],
+            ['Alumnos Hoy', todayStats.totalAlumnos, 'students', `students?enrolled=${todayStr}`],
+            ['Sesiones Hoy', todayStats.totalSessions, 'sessions', `calendar?date=${todayStr}`]
+          ] as const).map(([label, value, icon, target]) => (
+            <button key={label} type="button" onClick={() => onNavigate(target as AppView)} className="group relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 text-left transition-all hover:-translate-y-0.5 hover:shadow-soft focus:outline-none focus:ring-2 focus:ring-brand md:min-h-[8rem] md:rounded-[26px] md:p-4">
+              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type={icon} /></span>
+              <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">{label}</p>
+              <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{value}</span>
+            </button>
+          ))}
         </div>
 
         {/* ─── STUDENT CATEGORIES ROW ─── */}
         {globalStats.totalStudents > 0 && (
            <div className="mb-4 flex flex-wrap gap-2">
-            {Object.entries(globalStats.byCategory).filter(([, count]) => (count as number) > 0).map(([cat, count]) => (
+            {(['membresia', 'temporal', 'grupal', 'grupo_temporal'] as const).filter(cat => globalStats.byCategory[cat] > 0).map(cat => { const count = globalStats.byCategory[cat]; return (
               <div key={cat} className="flex items-center gap-2 rounded-full border border-neutral-border bg-white px-2.5 py-1">
                 <div className={`w-2.5 h-2.5 rounded-full ${CATEGORY_COLORS[cat] || 'bg-neutral-border'}`}></div>
                 <span className="text-[14px] font-semibold text-neutral-textMain md:text-[11px]">{studentCategoryLabel(cat)}</span>
                 <span className="text-[14px] font-semibold text-neutral-textHelper md:text-[11px]">{count}</span>
               </div>
-            ))}
+            ); })}
           </div>
         )}
 
@@ -312,54 +309,22 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
                   <button type="button" onClick={() => onOpenSession(session.id, session.date)} className="min-h-[36px] rounded-lg border border-neutral-border px-3 py-2 text-[12px] font-semibold text-brand hover:text-brand-hover">Control de asistencia</button>
                 </div>
               ))}
-              {todayActivities.length === 0 ? (
+              {todayActivities.map(activity => <div key={activity.id} className="flex items-start gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
+                <time className="min-w-[46px] pt-0.5 text-[13px] font-semibold text-neutral-textMain">{formatTime(activity.time)}</time>
+                <div className="min-w-0 flex-1"><p className="text-[18px] font-semibold leading-tight text-brand">{activity.title}</p><p className="mt-1 text-[14px] leading-snug text-neutral-textHelper">{activity.description || 'Sin descripción'}</p></div>
+                <button type="button" aria-label={`Eliminar ${activity.title}`} onClick={() => onNavigate('agenda')} className="text-[12px] text-neutral-textHelper hover:text-brand">Eliminar</button>
+              </div>)}
+              {todayActivities.length === 0 && !todaySessions.some(session => session.classType !== 'feriado') && (
                 <div className="bg-white/60 border border-dashed border-neutral-border p-8 md:p-10 rounded-2xl text-center">
                   <p className="text-neutral-textHelper text-[13px]">{activitiesReady ? 'No hay actividades programadas para hoy' : 'Actividades pendientes de cargar'}</p>
                   <button onClick={() => onNavigate('agenda')} className="mt-4 min-h-[44px] px-4 py-2.5 bg-brand text-white text-[14px] font-semibold rounded-[10px] hover:bg-brand-hover transition-all">
                     Añadir actividad
                   </button>
                 </div>
-              ) : (
-                 <>
-                 {todayActivities.map(activity => <div key={activity.id} className="flex items-start gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
-                   <time className="min-w-[46px] pt-0.5 text-[13px] font-semibold text-neutral-textMain">{formatTime(activity.time)}</time>
-                   <div className="min-w-0 flex-1"><p className="text-[18px] font-semibold leading-tight text-brand">{activity.title}</p><p className="mt-1 text-[14px] leading-snug text-neutral-textHelper">{activity.description || 'Sin descripción'}</p></div>
-                   <button type="button" aria-label={`Eliminar ${activity.title}`} onClick={() => onNavigate('agenda')} className="text-[12px] text-neutral-textHelper hover:text-brand">Eliminar</button>
-                 </div>)}
-                </>
               )}
             </div>
 
           </div>
-
-          {/* ─── ALERTS ─── */}
-          <section className="mt-1 rounded-2xl border border-neutral-border bg-[#FBF7F2] p-4 md:p-5 lg:col-span-12">
-                <div className="flex items-center justify-between gap-3 px-1">
-                  <div className="flex items-center gap-3">
-                    <div className="w-1.5 h-6 bg-caramelo rounded-full"></div>
-                    <h4 className="text-[15px] font-bold text-neutral-textMain">Alertas</h4>
-                    <span className="text-[12px] font-semibold text-neutral-textHelper">({alerts.length})</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!soundEnabled) playAlertSound();
-                      setSoundEnabled(enabled => !enabled);
-                    }}
-                    aria-pressed={soundEnabled}
-                    className={`min-h-[36px] px-2.5 rounded-[9px] border text-[11px] font-semibold inline-flex items-center gap-1.5 transition-colors ${soundEnabled ? 'bg-[#DFF0E4] text-[#20663B] border-[#BFDECB]' : 'bg-white text-neutral-textHelper border-neutral-border hover:border-arena hover:text-brand'}`}
-                    title={soundEnabled ? 'Desactivar sonido de alertas' : 'Activar sonido de alertas'}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={soundEnabled ? 'M11 5L6 9H3v6h3l5 4V5zm5.5 3.5a5 5 0 010 7M19 5a9 9 0 010 14' : 'M11 5L6 9H3v6h3l5 4V5zm5 7H22'} /></svg>
-                    <span className="hidden sm:inline">{soundEnabled ? 'Sonido activo' : 'Activar sonido'}</span>
-                  </button>
-                </div>
-                 <div className="grid gap-3 md:grid-cols-3">
-                   <AlertGroup title="Clases agotándose" alerts={bonusAlerts} tone="danger" emptyLabel="No hay clases próximas a agotarse." onOpenStudentProfile={onOpenStudentProfile} />
-                   <AlertGroup title="Pagos pendientes" alerts={paymentAlerts} tone="warning" emptyLabel={globalStats.reviewStudents ? 'No hay pagos pendientes registrados. Hay datos por verificar.' : 'No hay pagos pendientes registrados.'} onOpenStudentProfile={onOpenStudentProfile} />
-                   <AlertGroup title="Membresías vencidas" alerts={expiryAlerts} tone="danger" emptyLabel="No hay membresías vencidas." onOpenStudentProfile={onOpenStudentProfile} />
-                 </div>
-              </section>
 
       </div>
     </div>
