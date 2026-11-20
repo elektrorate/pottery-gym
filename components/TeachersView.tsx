@@ -120,7 +120,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
           <div className="flex items-end justify-between gap-4 mb-4">
             <div>
               <p className="eyebrow mb-1">Equipo del estudio</p>
-               <h1 className="ui-page-title text-neutral-textMain">Gestión de <span className="text-brand italic">profesores</span></h1>
+               <h1 className="ui-page-title text-neutral-textMain">Profesores</h1>
                <p className="ui-secondary mt-1">Especialidades, contacto e historial de clases.</p>
             </div>
             <button onClick={handleOpenNew} className="min-h-[40px] px-4 py-2 bg-brand text-white rounded-[10px] text-[13px] font-semibold inline-flex items-center justify-center gap-2 hover:bg-brand-hover active:scale-[0.98] transition-all shrink-0"><span className="text-lg leading-none">+</span><span className="hidden sm:inline">Nuevo profesor</span><span className="sm:hidden">Nuevo</span></button>

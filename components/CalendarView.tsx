@@ -749,7 +749,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
               <button onClick={() => setViewMode('day')} className={`flex-1 rounded-[10px] px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest transition-all md:flex-none ${viewMode === 'day' ? 'bg-brand text-white shadow-sm' : 'text-neutral-textHelper hover:text-brand'}`}>Día</button>
               <button onClick={() => setViewMode('month')} className={`flex-1 rounded-[10px] px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest transition-all md:flex-none ${viewMode === 'month' ? 'bg-brand text-white shadow-sm' : 'text-neutral-textHelper hover:text-brand'}`}>Mes</button>
             </div>
-            <button disabled={readOnly} onClick={() => handleOpenSessionModal()} className="whitespace-nowrap rounded-[12px] bg-brand px-4 py-2.5 text-[12px] font-bold uppercase tracking-widest text-white shadow-sm transition-all hover:bg-brand-hover active:scale-95 md:px-6">Nueva sesión</button>
+            <button disabled={readOnly} onClick={() => handleOpenSessionModal()} className="inline-flex min-h-[40px] shrink-0 items-center justify-center whitespace-nowrap rounded-[10px] bg-brand px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-brand-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50">Nueva clase</button>
           </div>
         </div>
 
@@ -903,7 +903,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end md:self-auto">
-                  <button type="button" disabled={readOnly} onClick={() => handleOpenSessionModal()} className="inline-flex h-[38px] min-h-0 items-center justify-center whitespace-nowrap rounded-full bg-brand px-4 text-[11px] font-semibold leading-none text-white transition hover:bg-brand-hover sm:px-5">Nueva sesión</button>
+                  <button type="button" disabled={readOnly} onClick={() => handleOpenSessionModal()} className="inline-flex min-h-[40px] shrink-0 items-center justify-center whitespace-nowrap rounded-[10px] bg-brand px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-brand-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50">Nueva clase</button>
                   <button type="button" onClick={() => setViewMode('day')} className="inline-flex h-[38px] min-h-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-neutral-sec px-4 text-[12px] font-semibold leading-none text-neutral-textMain transition hover:bg-brand-soft hover:text-brand" aria-label="Volver a la vista diaria">
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 12H5m6-6-6 6 6 6" /></svg>
                     <span className="hidden sm:inline">Vista diaria</span><span className="sm:hidden">Día</span>

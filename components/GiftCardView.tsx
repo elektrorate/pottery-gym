@@ -394,7 +394,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-20 pt-4 custom-scrollbar md:px-8 md:pt-6 lg:px-10">
         <header className="relative mb-4 flex flex-col gap-3 overflow-hidden rounded-[20px] bg-brand-soft px-5 py-4 md:flex-row md:items-center md:justify-between md:px-6">
           <DiagonalPattern />
-          <div className="relative z-10"><h1 className="ui-page-title text-neutral-textMain">Tarjetas de Regalo</h1><p className="mt-0.5 text-[13px] font-semibold text-brand">Gift Card Casa Rosier</p><p className="ui-meta mt-1">Bonos independientes de las membresías, con saldo y vigencia propios.</p></div>
+          <div className="relative z-10"><h1 className="ui-page-title text-neutral-textMain">Bonos regalo</h1><p className="mt-0.5 text-[13px] font-semibold text-brand">Gift Card Casa Rosier</p><p className="ui-meta mt-1">Bonos independientes de las membresías, con saldo y vigencia propios.</p></div>
           <button type="button" onClick={handleCreateClick} className="relative z-10 inline-flex min-h-[40px] shrink-0 items-center justify-center gap-2 self-start rounded-[10px] bg-brand px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-brand-hover md:self-center"><span className="text-lg leading-none">+</span><span className="hidden sm:inline">Nueva tarjeta</span><span className="sm:hidden">Nueva</span></button>
         </header>
          <section className="mb-4 space-y-3" aria-label="Filtros de tarjetas de regalo">

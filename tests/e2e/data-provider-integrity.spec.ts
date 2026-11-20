@@ -295,7 +295,7 @@ test('bounded calendar paints before held financial and inventory reads; financi
   backend.holds.set('inventory_items', gate());
   await open(page);
   await expect(page.locator('[data-session-id="recent"]')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Abrir control de asistencia' })).toBeDisabled();
   await expect(page.getByTestId('students').getByRole('status')).toContainText('Cargando bonos y detalles');
   expect((await snapshot(page))).toMatchObject({ loading: false, ready: false, owner: false });
@@ -316,7 +316,7 @@ test('bounded calendar paints before held financial and inventory reads; financi
   }
   expect(backend.rpcs).toEqual([]); expect((await snapshot(page)).storage).toEqual({});
   financial.release(); await ready(page);
-  await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeEnabled();
   expect((await snapshot(page)).inventory).toEqual([]);
 });
 

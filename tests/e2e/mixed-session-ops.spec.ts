@@ -248,6 +248,6 @@ test('calendar read-only mixed state never opens editable activity fields', asyn
   await page.evaluate(() => (window as any).__mixed.render(true));
   await page.locator(`[data-session-id="${ids.session}"]`).dispatchEvent('click');
   await expect(page.getByLabel('Profesor de mesa')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeDisabled();
   expect((await snapshot(page)).uiSaves).toEqual([]); expect(backends.get(page)!.calls).toEqual([]);
 });

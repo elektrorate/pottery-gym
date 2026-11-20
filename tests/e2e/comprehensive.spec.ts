@@ -67,12 +67,12 @@ test.describe('Autenticación y permisos', () => {
   test('staff puede navegar operaciones y no accede a administración', async ({ page }) => {
     await login(page, staffEmail, staffPassword, '/dashboard');
     const routes = [
-      ['/calendar', 'Gestión de'],
+      ['/calendar', 'Clases'],
       ['/students', 'Alumnos'],
-      ['/giftcards', 'Tarjetas de'],
+      ['/giftcards', 'Bonos regalo'],
       ['/history', 'Historial'],
-      ['/inventory', 'Inventario del'],
-      ['/teachers', 'Gestión de']
+      ['/inventory', 'Inventario'],
+      ['/teachers', 'Profesores']
     ] as const;
 
     for (const [route, heading] of routes) {
@@ -93,7 +93,7 @@ test.describe('Autenticación y permisos', () => {
     await login(page, staffEmail, staffPassword, '/dashboard');
     await page.getByRole('button', { name: 'Abrir menú' }).click();
     await expect(page.getByRole('button', { name: 'Cerrar menú' })).toBeVisible();
-    await page.getByRole('button', { name: 'Calendario', exact: true }).last().click();
+    await page.getByRole('button', { name: 'Clases', exact: true }).last().click();
     await expect(page).toHaveURL(/\/calendar\/?$/);
     const themeToggle = page.getByRole('button', { name: /modo oscuro|modo claro/i }).first();
     await expect(themeToggle).toBeVisible();
@@ -139,7 +139,7 @@ test.describe('Flujos operativos', () => {
   test('calendario: valida sesión, audiencia y modal de creación', async ({ page }) => {
     await login(page, staffEmail, staffPassword, '/dashboard');
     await page.goto('/calendar');
-    await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+    await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByLabel('Tipo de sesión').selectOption('workshop');
     await expect(page.getByLabel('Nombre del workshop')).toBeVisible();

@@ -43,7 +43,7 @@ test.beforeEach(async ({ page }) => {
       await import('/tests/fixtures/gift-card-ui-harness.tsx');
     </script></body></html>` }));
   await page.goto(`${origin}/gift-card-integrity-test`);
-  await expect(page.getByRole('heading', { name: 'Tarjetas de Regalo', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Bonos regalo', exact: true })).toBeVisible();
 });
 const calls = async (page: Page) => JSON.parse((await page.getByTestId('calls').textContent())!);
 const fillNew = async (page: Page) => {
