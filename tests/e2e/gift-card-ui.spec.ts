@@ -47,7 +47,7 @@ test.beforeEach(async ({ page }) => {
 });
 const calls = async (page: Page) => JSON.parse((await page.getByTestId('calls').textContent())!);
 const fillNew = async (page: Page) => {
-  await page.getByRole('button', { name: /Nueva tarjeta/ }).click();
+  await page.getByRole('button', { name: /Nuevo bono regalo/ }).click();
   await page.getByLabel('Nombre del comprador', { exact: true }).fill('Comprador nuevo');
   await page.getByLabel('Teléfono', { exact: true }).fill('600000000');
   await page.getByLabel('Email', { exact: true }).fill('buyer@example.test');
@@ -72,7 +72,7 @@ test('name/email never auto-select or auto-create a recipient, even with duplica
   await page.getByLabel('Nombre del destinatario').fill('Alex Perez');
   await page.getByLabel('Email del destinatario').fill('member@example.test');
   await expect(page.getByLabel('Alumno destinatario', { exact: true })).toHaveValue('');
-  await expect(page.getByRole('button', { name: 'Crear bono', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Crear bono regalo', exact: true })).toBeDisabled();
   await expect(page.locator('form').getByRole('status')).toContainText('Sin alumno seleccionado');
   await page.getByLabel('Buscar alumno destinatario').fill('Alex');
   const selector = page.getByLabel('Alumno destinatario', { exact: true });
@@ -80,8 +80,8 @@ test('name/email never auto-select or auto-create a recipient, even with duplica
   await selector.selectOption(temporaryId);
   await page.getByLabel('Nombre del destinatario').fill('Etiqueta para regalo');
   await expect(selector).toHaveValue(temporaryId);
-  await page.getByRole('button', { name: 'Crear bono', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Nuevo bono temporal', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Crear bono regalo', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Nuevo bono regalo', exact: true })).toHaveCount(0);
   const saved = await calls(page);
   expect(saved).toHaveLength(1);
   expect(saved[0].data.recipientStudentId).toBe(temporaryId);
@@ -97,7 +97,7 @@ test('searching by authorized email requires explicit selection and clearing it 
   await expect(selector).toHaveValue('');
   await selector.selectOption(memberId);
   await selector.selectOption('');
-  await expect(page.getByRole('button', { name: 'Crear bono', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Crear bono regalo', exact: true })).toBeDisabled();
   await page.getByLabel('Buscar alumno destinatario').fill('no autorizado');
   await expect(selector.locator('option')).toHaveCount(1);
   expect(await calls(page)).toEqual([]);
@@ -111,7 +111,7 @@ test('existing explicit selection survives label edits/search and submits no inf
   await expect(selector).toHaveValue(temporaryId);
   await expect(selector.locator('option')).toHaveCount(2);
   await expect(page.getByLabel('Estado del pago')).toBeDisabled();
-  await expect(page.getByLabel('Estado del bono')).toBeDisabled();
+  await expect(page.getByLabel('Estado del bono regalo')).toBeDisabled();
   await expect(page.getByLabel('Sesiones utilizadas')).toBeDisabled();
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   expect(await calls(page)).toEqual([{ action: 'update', id: 'linked', data: { recipient: 'Alex con otra etiqueta' } }]);
@@ -136,7 +136,7 @@ test('new/replacement identities disappearing from the authorized list cannot sa
   await fillNew(page);
   await page.getByLabel('Alumno destinatario', { exact: true }).selectOption(memberId);
   await page.evaluate(() => window.dispatchEvent(new Event('gift-card-test-remove-students')));
-  await expect(page.getByRole('button', { name: 'Crear bono', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Crear bono regalo', exact: true })).toBeDisabled();
   expect(await calls(page)).toEqual([]);
 });
 test('legacy metadata edits preserve unknown terms; recipient label edits require an explicit link', async ({ page }) => {
@@ -162,11 +162,11 @@ test('used card locks identity/terms but preserves label editing and legacy allo
 test('existing payment uses a separate confirmed callback and never an update payload', async ({ page }) => {
   await open(page, 'Pago pendiente');
   await expect(page.getByLabel('Estado del pago')).toBeDisabled();
-  await page.getByRole('button', { name: 'Confirmar pago del bono', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '¿Confirmar pago del bono?' });
+  await page.getByRole('button', { name: 'Confirmar pago del bono regalo', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '¿Confirmar pago del bono regalo?' });
   await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
   expect(await calls(page)).toEqual([]);
-  await page.getByRole('button', { name: 'Confirmar pago del bono', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar pago del bono regalo', exact: true }).click();
   await dialog.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(await calls(page)).toEqual([{ action: 'confirm_gift_card_payment', id: 'pending' }]);
@@ -174,27 +174,27 @@ test('existing payment uses a separate confirmed callback and never an update pa
 test('missing payment callback fails closed rather than directly editing payment', async ({ page }) => {
   await page.getByRole('button', { name: 'Desconectar pago', exact: true }).click();
   await open(page, 'Pago pendiente');
-  await expect(page.getByRole('button', { name: 'Confirmar pago del bono', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Confirmar pago del bono regalo', exact: true })).toBeDisabled();
   await expect(page.getByText('Confirmación de pago no disponible hasta conectar la operación autorizada.')).toBeVisible();
   expect(await calls(page)).toEqual([]);
 });
 test('consume keeps confirmation and uses server date; cancel retains history instead of deletion', async ({ page }) => {
   await open(page, 'Etiqueta conservada');
-  await page.getByRole('button', { name: 'Bono consumido', exact: true }).click();
-  const consume = page.getByRole('dialog', { name: '¿Marcar bono como consumido?' });
-  await consume.getByRole('button', { name: 'Bono consumido', exact: true }).click();
+  await page.getByRole('button', { name: 'Bono regalo consumido', exact: true }).click();
+  const consume = page.getByRole('dialog', { name: '¿Marcar el bono regalo como consumido?' });
+  await consume.getByRole('button', { name: 'Bono regalo consumido', exact: true }).click();
   await expect(consume).toHaveCount(0);
   expect(await calls(page)).toEqual([{ action: 'consume_gift_card', id: 'linked' }]);
   await open(page, 'Pago pendiente');
   await page.getByRole('button', { name: 'Anular / eliminar', exact: true }).click();
-  const cancel = page.getByRole('dialog', { name: '¿Anular este bono?' });
+  const cancel = page.getByRole('dialog', { name: '¿Anular este bono regalo?' });
   await expect(cancel).toContainText('movimientos históricos se conservarán');
-  await cancel.getByRole('button', { name: 'Anular bono', exact: true }).click();
+  await cancel.getByRole('button', { name: 'Anular bono regalo', exact: true }).click();
   await expect(cancel).toHaveCount(0);
   expect((await calls(page))[1]).toEqual({ action: 'cancel_gift_card', id: 'pending' });
 });
 test('buyer/duration/archive filters retain existing selection behavior', async ({ page }) => {
-  const search = page.getByLabel('Buscar tarjeta por comprador, destinatario o código');
+  const search = page.getByLabel('Buscar bono regalo por comprador, destinatario o código');
   await search.fill('archivado');
   await expect(page.getByRole('button').filter({ hasText: 'Bono archivado' })).toHaveCount(0);
   await page.getByRole('tab', { name: /Archivados/ }).click();
@@ -202,7 +202,7 @@ test('buyer/duration/archive filters retain existing selection behavior', async 
   await page.getByLabel('Filtrar por duración y caducidad').selectOption('6');
   await open(page, 'Bono archivado');
   await expect(page.getByLabel('Alumno destinatario', { exact: true })).toHaveValue(temporaryId);
-  await expect(page.getByRole('button', { name: 'Bono consumido', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Bono regalo consumido', exact: true })).toHaveCount(0);
 });
 test('redeem/reverse/redeem retains the net active balance and historical snapshot', async ({ page }) => {
   const snapshot = JSON.parse((await page.getByTestId('gift-card-snapshots').textContent())!).find(card => card.id === 'cycle');
@@ -218,9 +218,9 @@ test('redeem/reverse/redeem retains the net active balance and historical snapsh
   await expect(row).toHaveCount(0);
   await page.getByRole('tab', { name: /Activos/ }).click();
   await open(page, 'Bono con ciclo');
-  await expect(page.getByLabel('Estado del bono')).toHaveValue('active');
+  await expect(page.getByLabel('Estado del bono regalo')).toHaveValue('active');
   await expect(page.getByLabel('Sesiones utilizadas')).toHaveValue('1');
-  await expect(page.getByRole('button', { name: 'Bono consumido', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Bono regalo consumido', exact: true })).toBeVisible();
   await page.getByLabel('Dedicatoria personalizada').fill('Ciclo conservado');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   expect(await calls(page)).toEqual([{ action: 'update', id: 'cycle', data: { dedication: 'Ciclo conservado' } }]);
@@ -261,7 +261,7 @@ test('manual consumption, legacy archive markers and cancelled/expired status re
     await page.getByRole('tab', { name: /Archivados/ }).click();
     await expect(row).toContainText(label);
     await open(page, recipient);
-    await expect(page.getByRole('button', { name: 'Bono consumido', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Bono regalo consumido', exact: true })).toHaveCount(0);
     await page.getByLabel('Dedicatoria personalizada').fill('Archivo conservado');
     await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
     expect((await calls(page)).at(-1)).toEqual({ action: 'update', id, data: { dedication: 'Archivo conservado' } });
@@ -274,17 +274,17 @@ test('failed callback keeps the form and selected ID with no automatic retry', a
   await page.getByRole('button', { name: 'Simular fallo', exact: true }).click();
   await fillNew(page);
   await page.getByLabel('Alumno destinatario', { exact: true }).selectOption(temporaryId);
-  await page.getByRole('button', { name: 'Crear bono', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear bono regalo', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Fallo sintetico');
   await expect(page.getByLabel('Alumno destinatario', { exact: true })).toHaveValue(temporaryId);
-  await expect(page.getByRole('button', { name: 'Crear bono', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Crear bono regalo', exact: true })).toBeEnabled();
   expect(await calls(page)).toHaveLength(1);
 });
 test('pending save disables duplicate submission until the callback settles', async ({ page }) => {
   await page.getByRole('button', { name: 'Simular espera', exact: true }).click();
   await fillNew(page);
   await page.getByLabel('Alumno destinatario', { exact: true }).selectOption(memberId);
-  await page.getByRole('button', { name: 'Crear bono', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear bono regalo', exact: true }).click();
   await expect(page.getByRole('button', { name: /Guardando/ })).toBeDisabled();
   await page.locator('form').evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   expect(await calls(page)).toHaveLength(1);
@@ -295,12 +295,12 @@ test('mobile identity flow remains accessible without selecting or creating by n
   await page.setViewportSize({ width: 390, height: 844 });
   await fillNew(page);
   await page.getByLabel('Nombre del destinatario').fill('Alex Perez');
-  await expect(page.getByRole('button', { name: 'Crear bono', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Crear bono regalo', exact: true })).toBeDisabled();
   await page.getByLabel('Buscar alumno destinatario').fill('temporary@example.test');
   await page.getByLabel('Alumno destinatario', { exact: true }).selectOption(temporaryId);
   await expect(page.getByLabel('Alumno destinatario', { exact: true })).toHaveValue(temporaryId);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByRole('button', { name: 'Crear bono', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear bono regalo', exact: true }).click();
   expect((await calls(page))[0].data.recipientStudentId).toBe(temporaryId);
 });
 
@@ -309,7 +309,7 @@ test('search matches recipient and code, and the list shows amount and payment',
   await expect(linked).toBeVisible();
   await expect(linked).toContainText('100 €');
   await expect(linked).toContainText('Pagado');
-  const search = page.getByLabel('Buscar tarjeta por comprador, destinatario o código');
+  const search = page.getByLabel('Buscar bono regalo por comprador, destinatario o código');
   await search.fill('Etiqueta conservada');
   await expect(linked).toBeVisible();
   await expect(page.getByRole('button').filter({ hasText: 'Bono con ciclo' })).toHaveCount(0);

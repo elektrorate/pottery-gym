@@ -21,7 +21,7 @@ export const ACTIVITY_TYPE_LABELS: Record<CapacityActivity, string> = {
 
 export const STUDENT_CATEGORY_LABELS: Record<NonNullable<Student['studentCategory']>, string> = {
   membresia: 'Membresía',
-  temporal: 'Bonos temporales',
+  temporal: 'Bonos de clases',
   grupal: 'Grupal',
   grupo_temporal: 'Grupo temporal'
 };

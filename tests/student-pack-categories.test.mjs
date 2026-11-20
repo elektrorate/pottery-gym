@@ -66,7 +66,7 @@ test('dashboard remaining classes prefer linked gift cards over zeroed student c
 test('canonical Spanish labels for categories and session types', async () => {
   const { dir, mod } = await bundle('utils/classTypeLabels.ts');
   try {
-    assert.equal(mod.STUDENT_CATEGORY_LABELS.temporal, 'Bonos temporales');
+    assert.equal(mod.STUDENT_CATEGORY_LABELS.temporal, 'Bonos de clases');
     assert.equal(mod.STUDENT_CATEGORY_LABELS.grupal, 'Grupal');
     assert.equal(mod.STUDENT_CATEGORY_LABELS.grupo_temporal, 'Grupo temporal');
     assert.equal(mod.studentCategoryLabel('grupal'), 'Grupal');

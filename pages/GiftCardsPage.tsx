@@ -37,7 +37,7 @@ const GiftCardsPage: React.FC = () => {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <div role="tablist" aria-label="Bonos regalo" className="mb-3 flex shrink-0 gap-1 border-b border-neutral-border">
-                {([['list', 'Bonos'], ['designer', 'Diseñar bono (Casa Rosier)']] as [GiftCardsTab, string][]).map(([key, label]) => (
+                {([['list', 'Bonos regalo'], ['designer', 'Diseñar bono regalo']] as [GiftCardsTab, string][]).map(([key, label]) => (
                     <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => openTab(key)}
                         className={`min-h-10 border-b-2 px-3 text-[12px] font-bold uppercase tracking-[0.12em] transition-colors ${tab === key ? 'border-brand text-brand' : 'border-transparent text-neutral-textHelper hover:text-brand'}`}>
                         {label}
@@ -47,7 +47,7 @@ const GiftCardsPage: React.FC = () => {
             {/* Kept mounted once opened, so the design in progress is not lost when switching tabs. */}
             {designerOpened && (
                 <iframe
-                    title="Diseñador de bonos Casa Rosier"
+                    title="Diseñador de bonos regalo"
                     src={designerSrc}
                     allow="web-share; clipboard-write"
                     className={`min-h-[80vh] w-full flex-1 rounded-xl border border-neutral-border bg-white ${tab === 'designer' ? '' : 'hidden'}`}

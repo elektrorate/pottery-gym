@@ -82,7 +82,7 @@ const open = async (page: Page, id = studentId) => {
   const student = (await output(page, 'students')).find((person: { id: string }) => person.id === id);
   expect(student).toBeDefined();
   const category = student.archivedAt ? /^Archivados\s+\d+$/i
-    : (student.studentCategory ?? 'membresia') === 'membresia' ? /^Membresía\s+\d+$/i : /^Bonos temporales\s+\d+$/i;
+    : (student.studentCategory ?? 'membresia') === 'membresia' ? /^Membresía\s+\d+$/i : /^Bonos de clases\s+\d+$/i;
   await page.getByRole('tablist', { name: 'Categoría de alumnos', exact: true }).getByRole('button', { name: category }).click();
   await page.locator(`button.ui-list[data-student-id="${id}"]`).click();
 };

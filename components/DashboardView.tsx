@@ -1,4 +1,4 @@
-import { hasVerifiedMembership, needsStudentReview, studentEffectiveRemainingClasses } from '../utils/studentPresentation';
+import { hasVerifiedMembership, needsStudentReview, studentEffectiveRemainingClasses, studentGiftCardBalance } from '../utils/studentPresentation';
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
@@ -7,7 +7,7 @@ import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
-import { studentCategoryLabel, sessionTypeLabel } from '../utils/classTypeLabels';
+import { studentCategoryLabel, sessionTypeLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
 
 
 interface DashboardViewProps {
@@ -161,7 +161,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
 
       const remaining = studentEffectiveRemainingClasses(student, giftCards);
       if ((!isMembership || hasVerifiedMembership(student)) && remaining <= 1 && remaining >= 0) {
-        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `Bono agotándose (${remaining} rest.)`, type: 'critical', category: 'bonuses' });
+        const fromGiftCard = isNonMembershipCategory(student.studentCategory) && !!giftCards && studentGiftCardBalance(student.id, giftCards).cards.length > 0;
+        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `${fromGiftCard ? 'Bono regalo' : 'Bono de clases'} agotándose (${remaining} rest.)`, type: 'critical', category: 'bonuses' });
       }
       if (isExpired && isMembership) {
         list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:expiry`, name: fullName, reason: `Membresía vencida · ${student.expiryDate}`,  type: 'critical', category: 'expiry' });
@@ -259,7 +260,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
             </div>
             <div className="relative flex min-h-[7rem] flex-col justify-between rounded-[22px] border-0 bg-white p-3.5 md:min-h-[8rem] md:rounded-[26px] md:p-4">
              <span className="absolute right-3.5 top-3.5 md:right-4 md:top-4"><MetricIcon type="bonuses" /></span>
-             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Bonos agotándose</p>
+             <p className="pr-8 text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-neutral-textSec">Bonos de clases agotándose</p>
                <span className="text-[2rem] font-semibold leading-none text-neutral-textMain">{bonusAlerts.length}</span>
             </div>
            {/* Today's metrics */}
@@ -354,7 +355,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
                   </button>
                 </div>
                  <div className="grid gap-3 md:grid-cols-3">
-                   <AlertGroup title="Bonos agotándose" alerts={bonusAlerts} tone="danger" emptyLabel="No hay bonos próximos a agotarse." onOpenStudentProfile={onOpenStudentProfile} />
+                   <AlertGroup title="Bonos de clases agotándose" alerts={bonusAlerts} tone="danger" emptyLabel="No hay bonos de clases ni bonos regalo próximos a agotarse." onOpenStudentProfile={onOpenStudentProfile} />
                    <AlertGroup title="Pagos pendientes" alerts={paymentAlerts} tone="warning" emptyLabel={globalStats.reviewStudents ? 'No hay pagos pendientes registrados. Hay datos por verificar.' : 'No hay pagos pendientes registrados.'} onOpenStudentProfile={onOpenStudentProfile} />
                    <AlertGroup title="Membresías vencidas" alerts={expiryAlerts} tone="danger" emptyLabel="No hay membresías vencidas." onOpenStudentProfile={onOpenStudentProfile} />
                  </div>

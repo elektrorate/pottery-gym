@@ -272,7 +272,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                     : 'bg-white text-neutral-textHelper border-neutral-border hover:border-arena'
                     }`}
                 >
-                  {cat === 'todos' ? 'Todos' : cat === 'bonos_especiales' ? 'Bonos especiales' : CATEGORY_LABELS[cat]}
+                  {cat === 'todos' ? 'Todos' : cat === 'bonos_especiales' ? 'Bonos regalo' : CATEGORY_LABELS[cat]}
                 </button>
               ))}
             </div>
@@ -407,7 +407,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                     {isTemporary && studentDetails.student.price && (
                       <div className="pt-4 border-t border-neutral-border flex flex-wrap gap-6">
                         <div>
-                          <span className="text-[12px] font-semibold text-neutral-textSec">Precio Bono</span>
+                          <span className="text-[12px] font-semibold text-neutral-textSec">Precio del bono de clases</span>
                           <p className="text-[16px] font-bold text-neutral-textMain">{studentDetails.student.price}€</p>
                         </div>
                         {studentDetails.student.paymentMethod && (
@@ -426,11 +426,11 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                 <section className="space-y-4">
                   <div className="flex items-center gap-3 px-1">
                     <div className="w-1.5 h-5 bg-caramelo rounded-full"></div>
-                    <h4 className="text-[16px] font-bold text-neutral-textMain">Bonos de Regalo</h4>
+                    <h4 className="text-[16px] font-bold text-neutral-textMain">Bonos regalo</h4>
                   </div>
                   {studentDetails.giftCards.length === 0 ? (
                     <div className="bg-neutral-sec/60 p-6 rounded-2xl border border-dashed border-neutral-border text-center">
-                      <p className="text-neutral-textHelper text-[14px]">Sin bonos asociados a este perfil</p>
+                      <p className="text-neutral-textHelper text-[14px]">Sin bonos regalo asociados a este perfil</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

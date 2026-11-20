@@ -297,7 +297,7 @@ test('bounded calendar paints before held financial and inventory reads; financi
   await expect(page.locator('[data-session-id="recent"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Abrir control de asistencia' })).toBeDisabled();
-  await expect(page.getByTestId('students').getByRole('status')).toContainText('Cargando bonos y detalles');
+  await expect(page.getByTestId('students').getByRole('status')).toContainText('Cargando bonos de clases y detalles');
   expect((await snapshot(page))).toMatchObject({ loading: false, ready: false, owner: false });
   await page.locator('[data-session-id="recent"]').dispatchEvent('click');
   await expect(page.getByRole('button', { name: 'Crear sesión', exact: true })).toHaveCount(0);
@@ -363,7 +363,7 @@ test('known legacy NULL gift payment loads as unknown without changing raw state
   expect(penalties.filter((penalty: any) => penalty.id !== 'penalty-gift').every((penalty: any) => penalty.canSettle === true)).toBe(true);
   expect(backend.rows).toEqual(originalRows); expect(backend.rpcs).toEqual([]);
 
-  await page.getByTestId('students').getByRole('button', { name: /^Bonos temporales/ }).click();
+  await page.getByTestId('students').getByRole('button', { name: /^Bonos de clases/ }).click();
   await page.getByTestId('students').locator('button[data-student-id="student-a"]').click();
   const giftPenalty = page.locator('[data-penalty-id="penalty-gift"]');
   await giftPenalty.getByLabel('Motivo de resolución penalty-gift', { exact: true }).fill('Review of the unknown original payment');

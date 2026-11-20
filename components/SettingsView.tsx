@@ -325,7 +325,7 @@ const SettingsView: React.FC = () => {
         })));
       }
       if (mode === 'all' || mode === 'giftcards') {
-        addSheet('Bonos Regalo', giftCards.map(g => ({
+        addSheet('Bonos regalo', giftCards.map(g => ({
           ID: g.id, Código: g.code || '',
           Comprador: g.buyer || '', Destinatario: g.recipient || '',
           'Nº Clases': g.numClasses ?? '', Tipo: g.type || '',
@@ -334,9 +334,9 @@ const SettingsView: React.FC = () => {
           'Fecha caducidad': g.expiryDate || '', Comentarios: g.extraCommentary || ''
         })));
         if (mode === 'all') {
-          addSheet('Mov. Bonos', giftCards.flatMap(card => (card.movements || []).map(movement => ({
+          addSheet('Mov. bonos regalo', giftCards.flatMap(card => (card.movements || []).map(movement => ({
             ID: movement.id,
-            'Bono ID': movement.giftCardId,
+            'Bono regalo ID': movement.giftCardId,
             'Sesión ID': movement.sessionId || '',
             'Alumno ID': movement.studentId || '',
             Tipo: movement.type,
@@ -743,7 +743,7 @@ const SettingsView: React.FC = () => {
                 { key: 'sessions' as const, label: 'Sesiones', count: sessions.length, color: 'text-blue-600 bg-blue-50 border-blue-100' },
                 { key: 'teachers' as const, label: 'Profes', count: teachers.length, color: 'text-purple-600 bg-purple-50 border-purple-100' },
                 { key: 'pieces' as const, label: 'Piezas', count: pieces.length, color: 'text-amber-700 bg-amber-50 border-amber-100' },
-                { key: 'giftcards' as const, label: 'Bonos', count: giftCards.length, color: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
+                { key: 'giftcards' as const, label: 'Bonos regalo', count: giftCards.length, color: 'text-emerald-600 bg-emerald-50 border-emerald-100' },
                 { key: 'inventory' as const, label: 'Inventario', count: inventoryItems.length, color: 'text-neutral-textSec bg-neutral-alt border-neutral-border' }
               ].map(item => (
                 <button

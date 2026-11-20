@@ -6,7 +6,7 @@ import {
   parseValidityMonths,
   toIsoDate
 } from './bonosSync';
-import { DEFAULT_VALIDITY_TEXT } from './giftCardDefaults';
+import { DEFAULT_VALIDITY_TEXT, presentGiftCardCopy } from './giftCardDefaults';
 import type { LocalGiftCardRecord, LocalGiftCardStatus } from './localHistory';
 
 /**
@@ -153,7 +153,7 @@ export const mapGiftCardRow = (row: GiftCardRow, defaults: GiftCardData): Potter
     subtitle: String(metadata.subtitle || defaults.subtitle),
     subtitle2: String(metadata.subtitle2 || ''),
     mainQuote: row.dedication || defaults.mainQuote,
-    validityText: row.validity_months ? `Validez de la tarjeta: ${row.validity_months} meses` : DEFAULT_VALIDITY_TEXT,
+    validityText: row.validity_months ? `Validez del bono regalo: ${row.validity_months} meses` : DEFAULT_VALIDITY_TEXT,
     internalContactPhone: row.buyer_phone || '',
     voucherCode: voucherCode || ''
   };
@@ -170,9 +170,9 @@ export const mapGiftCardRow = (row: GiftCardRow, defaults: GiftCardData): Potter
     potteryStatus: row.status || undefined,
     paymentStatus: row.payment_status || undefined,
     metadata,
-    data: stored
+    data: presentGiftCardCopy(stored
       ? { ...derived, ...stored, logoUrl: defaults.logoUrl, voucherCode: voucherCode || stored.voucherCode || '' }
-      : derived
+      : derived)
   };
 };
 

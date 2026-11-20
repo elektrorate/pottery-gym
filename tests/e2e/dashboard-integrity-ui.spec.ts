@@ -33,7 +33,7 @@ test('Dashboard category chips use Spanish labels, not raw codes', async ({ page
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
   await expect(page.getByText('Grupal', { exact: true })).toBeVisible();
   await expect(page.getByText('Grupo temporal', { exact: true })).toBeVisible();
-  await expect(page.getByText('Bonos temporales', { exact: true })).toBeVisible();
+  await expect(page.getByText('Bonos de clases', { exact: true })).toBeVisible();
   await expect(page.getByText('grupal', { exact: true })).toHaveCount(0);
   await expect(page.getByText('grupo_temporal', { exact: true })).toHaveCount(0);
   // Alert header total equals the sum of the three alert group badges.

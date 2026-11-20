@@ -49,7 +49,7 @@ test('studentCategoryLabel never returns raw grupal / grupo_temporal codes', asy
   try {
     assert.equal(mod.studentCategoryLabel('grupal'), 'Grupal');
     assert.equal(mod.studentCategoryLabel('grupo_temporal'), 'Grupo temporal');
-    assert.equal(mod.studentCategoryLabel('temporal'), 'Bonos temporales');
+    assert.equal(mod.studentCategoryLabel('temporal'), 'Bonos de clases');
     assert.equal(mod.studentCategoryLabel('membresia'), 'Membresía');
     assert.equal(mod.studentCategoryLabel('weird_code_x'), 'Weird Code X');
   } finally {

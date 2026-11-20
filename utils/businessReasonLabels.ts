@@ -24,14 +24,14 @@ const BILLING_STATE_LABELS: Record<string, string> = {
 const FUNDING_REASON_LABELS: Record<string, string> = {
   'One class: no_show': 'Una clase consumida · Falta sin aviso',
   'One class: late_cancellation': 'Una clase consumida · Cancelación tardía',
-  'Original scalar pack is not usable': 'Bono escalar no utilizable en esta sesión',
-  'Original scalar pack has no known positive balance': 'El bono no tiene saldo positivo conocido',
-  'Original scalar pack student is archived': 'El alumno del bono está archivado',
-  'Original scalar pack is expired for the session': 'El bono está vencido para esta sesión',
-  'Original scalar pack payment is unpaid or unknown': 'El pago del bono está pendiente o es desconocido',
+  'Original scalar pack is not usable': 'El bono de clases no se puede usar en esta sesión',
+  'Original scalar pack has no known positive balance': 'El bono de clases no tiene saldo positivo conocido',
+  'Original scalar pack student is archived': 'El alumno del bono de clases está archivado',
+  'Original scalar pack is expired for the session': 'El bono de clases está vencido para esta sesión',
+  'Original scalar pack payment is unpaid or unknown': 'El pago del bono de clases está pendiente o es desconocido',
   'Unsupported temporal/manual funding: legacy balance requires attributable funding or reconciliation':
     'Saldo legado sin derecho atribuible; requiere regularización',
-  'Explicit gift card has no valid available credit': 'La gift card no tiene crédito disponible válido',
+  'Explicit gift card has no valid available credit': 'El bono regalo no tiene crédito disponible válido',
   'Original membership source is unknown': 'La membresía original es desconocida',
   'Original membership balance is no longer current': 'El saldo de membresía ya no es el actual',
   'Queued successor is not an authorized funding source': 'El período sucesor en cola no autoriza el consumo',
@@ -89,7 +89,7 @@ export const businessReasonLabel = (reason: string | null | undefined): string =
     // Cosmetic: server else-branch used to say "is not usable" even when usable=true.
     // Prefer a neutral Spanish phrase; never show the English "not usable" code.
     if (rest === 'is not usable' || rest.includes('not usable')) {
-      return 'Estado del bono: revisar condiciones de uso';
+      return 'Estado del bono de clases: revisar condiciones de uso';
     }
     if (rest.includes('no known positive')) return FUNDING_REASON_LABELS['Original scalar pack has no known positive balance'];
     if (rest.includes('archived')) return FUNDING_REASON_LABELS['Original scalar pack student is archived'];
@@ -97,7 +97,7 @@ export const businessReasonLabel = (reason: string | null | undefined): string =
     if (rest.includes('unpaid') || rest.includes('unknown')) {
       return FUNDING_REASON_LABELS['Original scalar pack payment is unpaid or unknown'];
     }
-    return `Bono escalar: ${humanizeToken(scalar[1])}`;
+    return `Bono de clases: ${humanizeToken(scalar[1])}`;
   }
 
   const membership = trimmed.match(ORIGINAL_MEMBERSHIP_PREFIX);
