@@ -79,7 +79,6 @@ test.describe('Alumnos', () => {
     await login(page);
     await page.goto('/students');
     await page.getByRole('button', { name: 'Crear nuevo alumno' }).click();
-    await page.getByRole('button', { name: /Información personal/ }).click();
     await page.getByRole('button', { name: 'Guardar alumno' }).click();
     await expect(page.getByRole('alert')).toContainText('El nombre es obligatorio');
 
@@ -95,7 +94,6 @@ test.describe('Alumnos', () => {
     const created = await findRows(request, 'students', `select=id,name,phone&email=eq.${encodeURIComponent(email)}`);
     expect(created).toHaveLength(1);
     await page.getByRole('button').filter({ hasText: name }).first().click();
-    await page.getByRole('button', { name: /Información personal/ }).click();
     await page.getByRole('textbox', { name: 'Teléfono', exact: true }).fill('600000003');
     await page.getByRole('button', { name: 'Guardar cambios' }).click();
 

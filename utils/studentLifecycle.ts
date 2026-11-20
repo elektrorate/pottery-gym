@@ -78,6 +78,31 @@ export const getStudentLifecycleReason = (student: Student, today = getWorkshopD
 export const isStudentArchived = (student: Student, today = getWorkshopDate()) =>
   getStudentLifecycle(student, today) === 'archived';
 
+export type VisibleStudentCategoryCounts = {
+  todos: number;
+  membresia: number;
+  temporal: number;
+  grupal: number;
+  grupo_temporal: number;
+  archivados: number;
+};
+
+/** Same non-archived category totals as the student list summary. */
+export const countVisibleStudentsByCategory = (students: Student[], today = getWorkshopDate()): VisibleStudentCategoryCounts => {
+  const counts: VisibleStudentCategoryCounts = { todos: 0, membresia: 0, temporal: 0, grupal: 0, grupo_temporal: 0, archivados: 0 };
+  students.forEach(student => {
+    const category = student.studentCategory || 'membresia';
+    if (isStudentArchived(student, today)) {
+      counts.archivados += 1;
+      return;
+    }
+    counts.todos += 1;
+    if (category === 'temporal' || category === 'grupal' || category === 'grupo_temporal') counts[category] += 1;
+    else counts.membresia += 1;
+  });
+  return counts;
+};
+
 export const getPendingMembershipPayments = (student: Student) => {
   if (!isManagedMembership(student)) return [];
   const periods = student.membershipPeriods || [];

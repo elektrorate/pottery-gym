@@ -118,7 +118,6 @@ test.describe('Flujos operativos', () => {
     await login(page, staffEmail, staffPassword, '/dashboard');
     await page.goto('/students');
     await page.getByRole('button', { name: 'Crear nuevo alumno' }).click();
-    await page.getByRole('button', { name: /Información personal/ }).click();
     await page.getByRole('textbox', { name: 'Nombre', exact: true }).fill(name);
     await page.getByRole('textbox', { name: 'Apellidos', exact: true }).fill('Automatizado');
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(`${name.toLowerCase()}@barro.test`);

@@ -685,7 +685,7 @@ test('stale business rejection reloads current attendance and revision before an
 test('ordinary finalized attendance corrections do NOT refund a charged absence or clear its penalty', async ({ page }) => {
   await configure(page, { fixture: 'completed' });
   await open(page);
-  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('no devuelve una penalización');
+  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('Faltó: no vino');
   await expect(row(page, memberId).getByRole('button', { name: /Eximir penalización/ })).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Editar asistencia', exact: true }).click();
   await mark(page, memberId, 'present');
@@ -755,7 +755,7 @@ test('unauthorized approval is rejected despite an authorization-looking reason'
 test('policy 1 keeps the previous UI, pending validation and absent semantics without historical rebilling', async ({ page }) => {
   await configure(page, { fixture: 'legacy' });
   await open(page);
-  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('no se aplican nuevas penalizaciones ni recobros históricos');
+  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('No se aplican penalizaciones nuevas');
   await expect(dialog(page).getByRole('button', { name: /Guardar provisional|Aprobar excepción|Cancelar reserva|Eximir penalización/ })).toHaveCount(0);
   await mark(page, memberId, 'absent');
   await finalize(page);
@@ -883,4 +883,29 @@ for (const viewport of [{ width: 1024, height: 480 }, { width: 390, height: 568 
   await expect(settings.getByTestId('reservation-roster-count')).toHaveText('1 seleccionados');
   await expect(settings.getByRole('button', { name: 'Guardar cambios', exact: true })).toBeVisible();
   expect(await output(page, 'calls')).toEqual([]);
+});
+
+test('weekly repeat creates one session per weekday and stops before a duplicate', async ({ page }) => {
+  await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Nueva sesión', exact: true });
+  await dialog.getByLabel('Fecha de la sesión').fill('11/10/2026');
+  await dialog.getByLabel('Profesor', { exact: false }).selectOption('teacher');
+  await dialog.getByLabel('Repetir cada semana, el mismo día de la semana').check();
+  await dialog.getByLabel('Repetir hasta').fill('25/10/2026');
+  await dialog.getByRole('button', { name: 'Crear 3 sesiones', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const added = (await output(page, 'calls')).filter((call: { operation: string }) => call.operation === 'add');
+  expect(added.map((call: { input: { date: string } }) => call.input.date)).toEqual(['2026-10-11', '2026-10-18', '2026-10-25']);
+  expect(added.every((call: { input: { attendancePolicyVersion?: number } }) => call.input.attendancePolicyVersion === 2)).toBe(true);
+
+  await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
+  await dialog.getByLabel('Fecha de la sesión').fill('11/10/2026');
+  await dialog.getByLabel('Hora de inicio').fill('18:00');
+  await dialog.getByLabel('Hora de fin').fill('20:00');
+  await dialog.getByLabel('Profesor', { exact: false }).selectOption('teacher');
+  await dialog.getByLabel('Repetir cada semana, el mismo día de la semana').check();
+  await dialog.getByLabel('Repetir hasta').fill('18/10/2026');
+  await dialog.getByRole('button', { name: 'Crear 2 sesiones', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Ya existe una sesión');
+  expect((await output(page, 'calls')).filter((call: { operation: string }) => call.operation === 'add')).toHaveLength(3);
 });

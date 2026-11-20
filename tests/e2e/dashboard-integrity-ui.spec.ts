@@ -12,7 +12,10 @@ test('Dashboard counts homonyms by ID, does not count unknown payments, and open
     </script></body></html>` }));
   await page.goto('/dashboard-integrity-test');
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
+  await expect(page.getByText('No hay actividades programadas para hoy')).toHaveCount(0);
   await expect(page.getByText('Alumnos Hoy', { exact: true }).locator('..')).toContainText('2');
+  await page.getByRole('button', { name: /Activos de membresía/ }).click();
+  await expect(page.getByTestId('saved')).toContainText('students?category=membresia&tab=all');
   await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
   await page.getByRole('button', { name: 'Control de asistencia', exact: true }).click();
   await expect(page.getByTestId('saved')).toContainText('"sessionId":"homonym-session"');
