@@ -141,13 +141,63 @@ test('sixth-day transition updates an already open screen', async ({ page }) => 
 test('deleting still requires confirmation and does not archive', async ({ page }) => {
   await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
   await page.getByRole('button', { name: /TEMPORAL HISTORICO/ }).click();
+  const dangerZone = page.getByRole('region', { name: 'Zona de peligro' });
+  await expect(dangerZone).toBeVisible();
+  await expect(dangerZone.getByRole('button', { name: 'Archivar alumno manualmente' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Eliminar alumno', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '¿Eliminar alumno?' });
+  await expect(dialog).toContainText('TEMPORAL HISTORICO');
   await expect(dialog).toContainText('Esta acción no se puede deshacer');
+  await expect(dialog).toContainText('Archivar');
   await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await page.getByRole('button', { name: 'Eliminar alumno', exact: true }).click();
   await dialog.getByRole('button', { name: 'Eliminar', exact: true }).click();
   await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toHaveCount(0);
+});
+
+test('pending payment can be confirmed from the profile and the dashboard counter follows', async ({ page }) => {
+  await page.getByRole('tab', { name: /Pendientes/ }).click();
+  await page.getByRole('button', { name: /PENDIENTE DIA CINCO/ }).click();
+  await expect(page.getByRole('button', { name: 'Confirmar pago', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
+  await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
+  await expect(page.getByRole('button', { name: 'Confirmar pago', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
+  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('0');
+});
+
+test('manual class balance changes wait for a reason and confirmation', async ({ page }) => {
+  await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
+  await page.getByRole('button', { name: /GRUPAL VISIBLE/ }).click();
+  await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
+  await expect(page.getByRole('button', { name: 'Archivar alumno manualmente' })).toBeVisible();
+  const dangerZone = page.getByRole('region', { name: 'Zona de peligro' });
+  await expect(dangerZone.getByRole('button', { name: 'Eliminar alumno' })).toBeVisible();
+  await expect(dangerZone.getByRole('button', { name: 'Archivar alumno manualmente' })).toHaveCount(0);
+  const remaining = page.getByLabel('Clases restantes', { exact: true });
+  await expect(remaining).toHaveValue('4');
+  await page.getByRole('button', { name: 'Reducir clases restantes' }).click();
+  await expect(remaining).toHaveValue('4');
+  const dialog = page.getByRole('dialog', { name: '¿Ajustar clases?' });
+  await expect(dialog).toContainText('4');
+  await expect(dialog).toContainText('3');
+  await expect(dialog.getByRole('button', { name: 'Confirmar', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await expect(remaining).toHaveValue('4');
+  await page.getByRole('button', { name: 'Reducir clases restantes' }).click();
+  await dialog.getByRole('button', { name: 'Corrección', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Confirmar', exact: true }).click();
+  await expect(remaining).toHaveValue('3');
+  await expect(page.getByTestId('saved')).toContainText('"classesRemaining":3');
+});
+
+test('scalar pending payment confirms without a membership period', async ({ page }) => {
+  await page.getByRole('button', { name: /^Grupo temporal\s+1$/i }).click();
+  await page.getByRole('button', { name: /GRUPO TEMPORAL VISIBLE/ }).click();
+  await page.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
+  await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
+  await expect(page.getByTestId('saved')).toContainText('"paymentStatus":"paid"');
 });
 
 test('period payment fields are protected and expired member can be reactivated explicitly', async ({ page }) => {

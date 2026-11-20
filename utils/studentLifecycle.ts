@@ -111,6 +111,22 @@ export const getPendingMembershipPayments = (student: Student) => {
     startsOn: student.membershipActivatedAt, endsOn: student.expiryDate, paymentStatus: 'pending' as const }] : [];
 };
 
+export const studentHasPendingPayment = (student: Student) =>
+  getPendingMembershipPayments(student).length > 0
+  || (!isManagedMembership(student) && getStudentPaymentStatus(student) === 'pending');
+
+/** Period id the profile can confirm with the existing payment RPC. Legacy rows have no id. */
+export const selectConfirmablePaymentPeriodId = (student: Student): string | null => {
+  const real = getPendingMembershipPayments(student).filter(period => period.id && period.id !== 'legacy');
+  const effective = real.find(period => period.id === student.effectivePeriodId);
+  if (effective?.id) return effective.id;
+  if (real[0]?.id) return real[0].id;
+  if (isManagedMembership(student) && getStudentPaymentStatus(student) === 'pending' && student.effectivePeriodId) {
+    return student.effectivePeriodId;
+  }
+  return null;
+};
+
 export const DEFAULT_STUDENT_PAYMENT_STATUS = 'pending' as const;
 
 export const withStudentCreationDefaults = (student: Omit<Student, 'id'>): Omit<Student, 'id'> => ({

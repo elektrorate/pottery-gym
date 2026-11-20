@@ -60,7 +60,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                     {title}
                 </h3>
 
-                <p className="text-[14px] text-neutral-textSec mb-6 px-2 max-w-[280px] mx-auto leading-relaxed">
+                <p className="text-[14px] text-neutral-textSec mb-6 px-1 leading-relaxed">
                     {message}
                 </p>
 
