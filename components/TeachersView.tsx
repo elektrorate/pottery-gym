@@ -3,7 +3,10 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Teacher, ClassSession } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { DangerZone } from './shared/DangerZone';
+import { EmptyState } from './shared/EmptyState';
 import { activityTypeLabel, sessionTypeLabel } from '../utils/classTypeLabels';
+import { pluralize } from '../utils/pluralize';
 import { teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
 
 interface TeachersViewProps {
@@ -111,6 +114,11 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
     }
   };
 
+  const teacherPendingName = (() => {
+    const teacher = teachers.find(item => item.id === teacherToDelete);
+    return teacher ? `${teacher.name} ${teacher.surname || ''}`.trim() : 'este profesor';
+  })();
+
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden bg-neutral-base">
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-4 md:px-8 lg:px-10 pt-4 md:pt-6 pb-20">
@@ -133,22 +141,23 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
         </header>
 
         <section className="bg-white border border-neutral-border rounded-2xl overflow-hidden animate-fade-in">
-           <div className="hidden md:grid grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-4 px-4 py-3 bg-neutral-sec border-b border-neutral-border text-[12px] font-semibold text-neutral-textHelper uppercase tracking-[0.1em]">
+           <div className="hidden md:grid grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-4 px-4 py-3 bg-neutral-sec border-b border-neutral-border text-[13px] font-semibold text-neutral-textSec">
             <span>Profesor</span><span>Especialidad</span><span>Contacto</span><span>Clases</span><span>Acciones</span>
           </div>
           {filteredTeachers.length === 0 ? (
-            <div className="py-12 text-center">
-              <p className="text-[14px] font-semibold text-neutral-textMain">No hay profesores</p>
-              <p className="text-[13px] text-neutral-textHelper mt-1">Prueba con otro nombre o especialidad.</p>
-            </div>
+            <EmptyState
+              title={searchQuery.trim() ? 'Ningún profesor coincide con la búsqueda' : 'Todavía no hay profesores'}
+              body={searchQuery.trim() ? 'Prueba con otro nombre o especialidad, o limpia la búsqueda.' : 'Añade quien da clase para asignarlo en el calendario.'}
+              actionLabel={searchQuery.trim() ? undefined : 'Añadir el primer profesor'}
+              onAction={searchQuery.trim() ? undefined : handleOpenNew}
+            />
           ) : filteredTeachers.map(teacher => {
             const fullName = `${teacher.name} ${teacher.surname || ''}`.trim();
             const scheduledSessions = teacherSessions(sessions, teacher.id, false);
             const concludedSessions = teacherSessions(sessions, teacher.id, true);
             const isExpanded = expandedTeacherId === teacher.id;
             const calendarHref = `/calendar?teacher=${encodeURIComponent(teacher.id)}`;
-            const countLabel = (count: number, singular: string, plural: string) => `${count} ${count === 1 ? singular : plural}`;
-            const studentLabel = (count: number) => countLabel(count, 'alumno', 'alumnos');
+            const studentLabel = (count: number) => pluralize(count, 'alumno', 'alumnos');
             return (
               <React.Fragment key={teacher.id}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-3 md:gap-4 items-center px-3 md:px-4 py-3 border-b border-neutral-border hover:bg-neutral-base transition-colors">
@@ -158,23 +167,22 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                   </div>
                   <span className="hidden md:inline-flex justify-self-start px-2 py-1 rounded-md bg-neutral-sec text-neutral-textSec text-[12px] font-semibold truncate max-w-full">{teacher.specialty || 'Sin especialidad'}</span>
                    <div className="hidden md:block min-w-0 ui-data text-neutral-textSec truncate">{teacher.email || teacher.phone || 'Sin contacto'}</div>
-                  <span className="justify-self-end md:justify-self-start text-[13px] font-semibold text-neutral-textMain leading-tight">
-                    <span className="block">{countLabel(scheduledSessions.length, 'programada', 'programadas')}</span>
-                    <span className="block text-[12px] font-medium text-neutral-textHelper">{countLabel(concludedSessions.length, 'concluida', 'concluidas')}</span>
+                  <span className="justify-self-end md:justify-self-start text-[14px] font-semibold text-neutral-textMain leading-tight">
+                    <span className="block">{pluralize(scheduledSessions.length, 'programada', 'programadas')}</span>
+                    <span className="block text-[14px] font-medium text-neutral-textSec">{pluralize(concludedSessions.length, 'concluida', 'concluidas')}</span>
                   </span>
                   <div className="col-span-2 md:col-span-1 flex flex-wrap items-center justify-end gap-2 pt-2 md:pt-0 border-t border-neutral-border md:border-0">
                      <Link to={calendarHref} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-brand border border-brand/20 hover:bg-brand-soft transition-colors" aria-label={`Calendario de ${fullName}`}>Calendario</Link>
                      <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedTeacherId(isExpanded ? null : teacher.id)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-neutral-textSec border border-neutral-border hover:border-arena hover:text-brand transition-colors">Historial</button>
                      <button onClick={() => handleOpenEdit(teacher)} className="min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-brand border border-brand/20 hover:bg-brand-soft transition-colors">Editar</button>
-                     <button onClick={() => setTeacherToDelete(teacher.id)} className="hidden sm:inline-flex min-h-[32px] px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold text-[#9E3B2B] border border-[#EFC9BE] hover:bg-[#F8E1DA] transition-colors">Eliminar</button>
                   </div>
                 </div>
                 {isExpanded && (
                   <div className="px-4 md:px-6 py-3 bg-neutral-sec border-b border-neutral-border animate-fade-in space-y-4">
                     <div>
-                      <p className="text-[12px] font-semibold text-neutral-textSec mb-2">Clases programadas</p>
+                      <p className="text-[14px] font-semibold text-neutral-textSec mb-2">Clases programadas</p>
                       {scheduledSessions.length === 0 ? (
-                        <p className="text-[12px] text-neutral-textHelper italic">Sin clases programadas</p>
+                        <p className="text-[14px] text-neutral-textSec">Sin clases programadas</p>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                           {scheduledSessions.slice(0, 6).map(session => {
@@ -182,26 +190,26 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                             const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
                             return (
                               <Link key={session.id} to={`${calendarHref}&date=${session.date}&sessionId=${encodeURIComponent(session.id)}`} className="p-3 bg-white rounded-xl border border-neutral-border hover:border-brand/40">
-                                <p className="text-[12px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p>
-                                <p className="text-[11px] text-neutral-textHelper mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>
-                                {isSub && <p className="text-[11px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}
+                                <p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p>
+                                <p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>
+                                {isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}
                               </Link>
                             );
                           })}
                         </div>
                       )}
-                      {scheduledSessions.length > 6 && <Link to={calendarHref} className="mt-2 inline-block text-[12px] font-semibold text-brand">Ver las {scheduledSessions.length} en el calendario</Link>}
+                      {scheduledSessions.length > 6 && <Link to={calendarHref} className="mt-2 inline-block text-[13px] font-semibold text-brand">Ver las {scheduledSessions.length} en el calendario</Link>}
                     </div>
                     <div>
-                      <p className="text-[12px] font-semibold text-neutral-textSec mb-2">Historial de clases concluidas</p>
+                      <p className="text-[14px] font-semibold text-neutral-textSec mb-2">Historial de clases concluidas</p>
                       {concludedSessions.length === 0 ? (
-                        <p className="text-[12px] text-neutral-textHelper italic">Sin clases concluidas</p>
+                        <p className="text-[14px] text-neutral-textSec">Sin clases concluidas</p>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                           {concludedSessions.slice(0, 3).map(session => {
                             const blocks = teacherBlockActivities(session, teacher.id);
                             const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
-                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[12px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p><p className="text-[11px] text-neutral-textHelper mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>{isSub && <p className="text-[11px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
+                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {session.startTime} - {session.endTime}</p><p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>{isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
                           })}
                         </div>
                       )}
@@ -216,8 +224,8 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
 
       {showModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[120] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl rounded-2xl p-4 md:p-6 soft-shadow relative animate-fade-in border border-neutral-border max-h-[85dvh] overflow-y-auto custom-scrollbar">
-             <h3 className="ui-section-title text-neutral-textMain mb-5">
+          <div role="dialog" aria-modal="true" aria-labelledby="teacher-dialog-title" className="bg-white w-full max-w-2xl rounded-2xl p-4 md:p-6 soft-shadow relative animate-fade-in border border-neutral-border max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
+             <h3 id="teacher-dialog-title" className="ui-section-title text-neutral-textMain mb-5">
               {editingTeacher ? 'Editar profesor' : 'Nuevo profesor'}
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -279,15 +287,21 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                 </button>
               </div>
             </form>
-
+            {editingTeacher && (
+              <DangerZone
+                description={`Eliminar a ${`${editingTeacher.name} ${editingTeacher.surname || ''}`.trim()} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}
+                actionLabel="Eliminar profesor"
+                onAction={() => setTeacherToDelete(editingTeacher.id)}
+              />
+            )}
           </div>
         </div>
       )}
 
       <ConfirmModal
         isOpen={!!teacherToDelete}
-        title="¿Eliminar profesor?"
-        message="Esta acción no se puede deshacer. Las clases concluidas seguirán mostrando su nombre pero se desvincularán de su perfil."
+        title={`¿Eliminar a ${teacherPendingName}?`}
+        message="Esta acción no se puede deshacer. Las clases concluidas seguirán mostrando su nombre, pero se desvincularán de su perfil."
         isDestructive={true}
         onConfirm={() => {
           if (teacherToDelete) {

@@ -133,8 +133,8 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
   return <section aria-label="Créditos manuales e incidencias" data-testid="student-credit-panel" data-student-id={student.id}
     className="min-w-0 space-y-4 border-t border-[#E6D8CB] py-6 text-[12px] text-[#8B6B5E]">
     <div><h4 className="text-[14px] font-bold text-[#7B3F22]">Créditos manuales e incidencias</h4>
-      <p className="mt-1">Aprobar un crédito no confirma pagos, no cambia categorías, no reactiva fichas y no renueva membresías. Solo el propietario de esta sede puede gestionar estos derechos; el servidor verifica su identidad y permiso.</p>
-      <p className="break-all">Alumno: <code>{student.id}</code> · Sede: <code>{student.sedeId || 'Sin sede verificada'}</code></p></div>
+      <p className="mt-1">Aprobar un crédito no confirma pagos, no cambia categorías, no reactiva fichas y no renueva membresías. Solo el propietario de este taller puede gestionar estos derechos; el servidor verifica su identidad y permiso.</p>
+      <p className="break-all">Alumno: <code>{student.id}</code> · Taller: <code>{student.sedeId || 'Sin taller verificado'}</code></p></div>
     {error && <p role="alert" className="rounded-md border border-[#E8CABB] bg-[#FBF1EC] p-3 text-[#A85D3B]">{error}</p>}
     {pending && <div role="status" data-testid="pending-student-credit-operation" data-operation={pending.operation}
       className="space-y-2 rounded-md border border-[#DDBFA4] bg-[#F7F1EB] p-3">
@@ -157,7 +157,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         data-manual-credit-id={credit.id} className="min-w-0 space-y-1 rounded-md border border-[#E6D8CB] bg-white p-3 break-words">
         <p className="font-bold text-[#7B3F22]">{credit.mode === 'reconcile_legacy' ? 'Conciliación de saldo legado' : 'Nuevo crédito manual'} · {CREDIT_ACTIVITY_LABELS[credit.activity]}</p>
         <p>{credit.remainingClasses} restantes / {credit.allocatedClasses} aprobadas · {credit.startsOn} a {credit.endsOn}</p>
-        <p className="break-all">Derecho: <code>{credit.id}</code> · Alumno: <code>{credit.studentId}</code> · Sede: <code>{credit.sedeId}</code></p>
+        <p className="break-all">Derecho: <code>{credit.id}</code> · Alumno: <code>{credit.studentId}</code> · Taller: <code>{credit.sedeId}</code></p>
         <p>Motivo: {credit.reason}</p><p>Evidencia / origen: {credit.evidence}</p>
         <p className="break-all">Aprobado por (ID de actor): <code>{credit.approvedBy}</code> · {credit.approvedAt}</p>
       </article>)}
@@ -181,7 +181,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
       <label>Evidencia / origen del crédito manual<textarea aria-label="Evidencia / origen del crédito manual" maxLength={10000} className={`${controlClass} min-h-20 py-2`} value={draft.evidence} onChange={event => setDraft({ ...draft, evidence: event.target.value })} /></label>
       <p>Motivo: máximo 2000 caracteres. Evidencia / origen: máximo 10000 caracteres.</p>
       <button type="button" disabled={!validDraft} className={`${buttonClass} bg-[#7B3F22] text-white hover:bg-[#63321C]`} onClick={() => void runOperation('approve_manual')}>Aprobar crédito manual</button>
-    </fieldset> : <p>Solo lectura. La gestión corresponde al propietario de esta sede, no al rol de administrador ni al de superadministrador.</p>}
+    </fieldset> : <p>Solo lectura. La gestión corresponde al propietario de este taller, no al rol de administrador ni al de superadministrador.</p>}
     <div className="space-y-2" data-testid="student-penalty-list"><h5 className="font-bold text-[#7B3F22]">Incidencias y derecho original</h5>
       <p>Solo se descuenta el derecho original. No se elige otro bono de clases ni otro bono regalo, y no se usa el período actual como sustituto. Si no es utilizable, la incidencia permanece pendiente o el propietario puede eximirla. Eximir un cargo ya aplicado revierte únicamente su derecho original, con validación del servidor.</p>
       {(student.pendingPenalties || []).length === 0 ? <p>Sin incidencias registradas.</p> : student.pendingPenalties!.map(penalty => {
@@ -192,7 +192,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         return <article key={penalty.id} data-penalty-id={penalty.id} data-penalty-state={penalty.state} className="min-w-0 space-y-2 rounded-md border border-[#E6D8CB] bg-white p-3 break-words">
           <p className="font-bold text-[#7B3F22]">{penaltyKindLabel(penalty.kind)} · {penalty.state === 'pending' ? 'Pendiente de resolución' : penalty.state === 'charged' ? 'Descuento aplicado' : 'Eximida'}</p>
           <p>{penalty.sessionDate} · {penalty.sessionStart} · Revisión de sesión: {penalty.sessionRevision ?? 'Sin revisión'}</p>
-          <p className="break-all">Incidencia: <code>{penalty.id}</code> · Sesión: <code>{penalty.sessionId}</code> · Alumno: <code>{penalty.studentId}</code> · Sede: <code>{penalty.sedeId}</code></p>
+          <p className="break-all">Incidencia: <code>{penalty.id}</code> · Sesión: <code>{penalty.sessionId}</code> · Alumno: <code>{penalty.studentId}</code> · Taller: <code>{penalty.sedeId}</code></p>
           <div data-testid="penalty-original-source">{sources.length ? sources.map(([label, id]) => <p key={label} className="break-all">{label}: <code>{id}</code></p>) : <p>Sin derecho original atribuible. No se sustituye por el saldo actual.</p>}</div>
           <p>Motivo registrado: {businessReasonLabel(penalty.reason)}</p>
           {(penalty.settlementId || penalty.settlementReason || penalty.settledBy || penalty.settledAt) && <div data-testid="penalty-settlement-audit" className="space-y-1 border-t border-[#E6D8CB] pt-2">
@@ -618,7 +618,7 @@ const StudentList: React.FC<StudentListProps> = ({
            <div className="bg-white border border-[#DDBFA4] rounded-xl overflow-hidden">
              <div className="hidden md:grid grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-4 px-5 py-3 border-b border-[#EDE2D8] text-[12px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E]"><span>Alumno</span><span>Actividad</span><span>Clases</span><span>Estado</span></div>
             {detailsLoading && <div className="flex items-center gap-2 border-b border-[#EDE2D8] bg-[#FFF9F4] px-5 py-2.5 text-[12px] text-[#8B6B5E]" role="status"><span className="h-2 w-2 animate-pulse rounded-full bg-[#C68952]" />Cargando clases y detalles en segundo plano…</div>}
-            {filteredStudents.length === 0 ? <div className="px-6 py-16 text-center"><p className="text-[15px] text-[#7B3F22]" style={{ fontFamily: "'Outfit', sans-serif" }}>No hay alumnos que mostrar</p><p className="text-[12px] text-[#8B6B5E] mt-1">Prueba a cambiar la búsqueda o los filtros.</p></div> : visibleStudents.map(s => {
+            {filteredStudents.length === 0 ? <div className="px-6 py-16 text-center"><p className="text-[16px] font-semibold text-neutral-textMain">{students.length === 0 ? 'Todavía no hay alumnos' : (searchQuery.trim() || activeTab !== 'all' || membershipTierFilter !== 'todos' || reviewOnly ? 'Ningún alumno coincide con estos filtros' : `No hay alumnos en ${CATEGORY_LABELS[categoryFilter].toLowerCase()}`)}</p><p className="mt-2 text-[15px] text-neutral-textSec">{students.length === 0 ? 'Crea la primera ficha para llevar sus clases y su pago.' : (searchQuery.trim() || activeTab !== 'all' || membershipTierFilter !== 'todos' || reviewOnly ? 'Prueba con otro nombre, otro estado o limpia la búsqueda.' : 'Puedes cambiar de categoría o crear una ficha nueva.')}</p>{students.length === 0 && <button type="button" onClick={handleCreateClick} className="mt-5 inline-flex min-h-11 items-center rounded-[10px] bg-brand px-4 text-[14px] font-semibold text-white">Añadir el primer alumno</button>}</div> : visibleStudents.map(s => {
               const isArchived = isStudentArchived(s, today);
               const lifecycle = getStudentLifecycle(s, today);
               const isPending = lifecycle === 'pending';

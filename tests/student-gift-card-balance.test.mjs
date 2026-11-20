@@ -18,6 +18,7 @@ test('temporal student ficha counts come from non-cancelled gift cards, not stud
   assert.equal(paulaBalance.allCards.length, 2);
   assert.equal(studentBalanceLabel(paula, cards), '2 clases');
   assert.equal(studentBalanceLabel(paula), '0 clases');
+  assert.equal(studentBalanceLabel({ ...paula, classesRemaining: 1 }), '1 clase');
   assert.equal(studentClassTypeFromGiftCards(paula, cards), 'Modelado');
   assert.equal(studentActivityLabel({ ...paula, classType: undefined }, cards), 'Modelado');
   assert.equal(studentActivityLabel({ ...lola, classType: undefined }, cards), 'Torno');

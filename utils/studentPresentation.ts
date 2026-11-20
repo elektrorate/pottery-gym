@@ -1,5 +1,6 @@
 import type { GiftCard, Student } from '../types';
 import { isNonMembershipCategory } from './classTypeLabels.ts';
+import { claseLabel, pluralWord } from './pluralize.ts';
 
 export function hasVerifiedMembership(student: Student): boolean {
   return !!student.effectivePeriodId && !!student.membershipTier && Number.isSafeInteger(student.bonosAsignados) && student.bonosAsignados! > 0;
@@ -48,12 +49,12 @@ export function studentBalanceLabel(student: Student, giftCards?: GiftCard[]): s
   if ((student.studentCategory ?? 'membresia') !== 'membresia') {
     if (giftCards) {
       const { cards, remaining, contracted } = studentGiftCardBalance(student.id, giftCards);
-      if (cards.length) return remaining === contracted ? `${remaining} clases` : `${remaining} / ${contracted} clases`;
+      if (cards.length) return remaining === contracted ? claseLabel(remaining) : `${remaining} / ${contracted} ${pluralWord(contracted, 'clase', 'clases')}`;
     }
-    return `${student.classesRemaining} clases`;
+    return claseLabel(student.classesRemaining ?? 0);
   }
   if (hasVerifiedMembership(student)) return `${student.classesRemaining} / ${student.bonosAsignados}`;
-  return student.legacyManualBalance == null ? 'Saldo por verificar' : `Saldo importado: ${student.legacyManualBalance} clases`;
+  return student.legacyManualBalance == null ? 'Saldo por verificar' : `Saldo importado: ${claseLabel(student.legacyManualBalance)}`;
 }
 
 /** Remaining classes for alerts/dashboard: gift cards when linked, else student balance. */

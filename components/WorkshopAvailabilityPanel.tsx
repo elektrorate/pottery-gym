@@ -1,10 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { showError } from '../context/toast';
 import { useData } from '../context/DataContext';
 import type { CapacityActivity, CapacityDefaults, ClassSession, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
 import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel, sessionAvailabilityTone } from '../utils/sessionCapacity';
+import { pluralize, sesionLabel } from '../utils/pluralize';
 import { addDays, getScheduleConflictReason, getWeekMonday, madridDateKey } from '../utils/workshopSchedule';
+
+export type WorkshopAvailabilityHandle = { savePending: () => Promise<boolean> };
 
 const dayLabels: Record<number, string> = { 0: 'Domingo', 1: 'Lunes', 2: 'Martes', 3: 'Miércoles', 4: 'Jueves', 5: 'Viernes', 6: 'Sábado' };
 const dayOrder = [1, 2, 3, 4, 5, 6, 0];
@@ -27,9 +30,9 @@ const dateLabel = (dateKey: string) => {
 };
 
 type Conflict = { session: ClassSession; reason: string };
-type Confirmation = { title: string; message: string; conflicts: Conflict[]; onConfirm: () => Promise<void> };
+type Confirmation = { title: string; message: string; conflicts: Conflict[]; confirmLabel?: string; onConfirm: () => Promise<void> };
 
-const WorkshopAvailabilityPanel: React.FC = () => {
+const WorkshopAvailabilityPanel = React.forwardRef<WorkshopAvailabilityHandle>(function WorkshopAvailabilityPanel(_props, ref) {
   const navigate = useNavigate();
   const {
     sessions, workshopSchedule, workshopScheduleExceptions, capacityDefaults,
@@ -62,6 +65,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
   const [exceptionOpen, setExceptionOpen] = useState(false);
   const [exceptionReason, setExceptionReason] = useState('');
   const [exceptionSlots, setExceptionSlots] = useState([{ slotIndex: 0, isOpen: true, opensAt: '10:00', closesAt: '14:00' }]);
+  const [exceptionDirty, setExceptionDirty] = useState(false);
   const [savingException, setSavingException] = useState(false);
 
   useEffect(() => {
@@ -197,6 +201,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
     setExceptionReason(rows.find(item => item.reason)?.reason || '');
     const openSlots = rows.filter(item => item.isOpen).map(item => ({ slotIndex: item.slotIndex, isOpen: true, opensAt: item.opensAt, closesAt: item.closesAt }));
     setExceptionSlots(openSlots.length ? openSlots : [{ slotIndex: 0, isOpen: true, opensAt: '10:00', closesAt: '14:00' }]);
+    setExceptionDirty(false);
   };
 
   const exceptionRows = () => exceptionOpen
@@ -210,7 +215,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
     const overlap = openRows.some((row, index) => index > 0 && row.opensAt < openRows[index - 1].closesAt);
     if (invalid || overlap) {
       showError('La excepción debe tener franjas válidas y sin solapamientos.');
-      return;
+      return false;
     }
     const nextExceptions = [...workshopScheduleExceptions.filter(item => item.exceptionDate !== exceptionDate), ...rows.map(row => ({ ...row, exceptionDate }))];
     const conflicts = getConflicts(scheduleDraft, nextExceptions);
@@ -218,7 +223,11 @@ const WorkshopAvailabilityPanel: React.FC = () => {
       setSavingException(true);
       const saved = await updateWorkshopScheduleException(exceptionDate, rows);
       setSavingException(false);
-      if (saved) setScheduleNotice(`Excepción del ${dateLabel(exceptionDate)} guardada`);
+      if (saved) {
+        setExceptionDirty(false);
+        setScheduleNotice(`Excepción del ${dateLabel(exceptionDate)} guardada`);
+      }
+      return Boolean(saved);
     };
     if (conflicts.length) {
       setConfirmation({
@@ -227,9 +236,9 @@ const WorkshopAvailabilityPanel: React.FC = () => {
         conflicts,
         onConfirm: async () => { setConfirmation(null); await save(); }
       });
-      return;
+      return false;
     }
-    await save();
+    return save();
   };
 
   const removeException = async () => {
@@ -259,6 +268,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
     .sort((a, b) => `${a.date}${a.startTime}${a.id}`.localeCompare(`${b.date}${b.startTime}${b.id}`)),
   [activityFilter, defaults, rangeBounds.from, rangeBounds.to, sessions, statusFilter, today, workshopSchedule, workshopScheduleExceptions]);
 
+  const sessionsInRange = useMemo(() => sessions.filter(session => session.date >= rangeBounds.from && session.date <= rangeBounds.to && session.classType !== 'feriado').length, [rangeBounds.from, rangeBounds.to, sessions]);
   const visibleSessions = filteredSessions.slice(0, visibleCount);
   const groupedSessions = visibleSessions.reduce<Record<string, ClassSession[]>>((groups, session) => {
     (groups[session.date] ||= []).push(session);
@@ -280,7 +290,76 @@ const WorkshopAvailabilityPanel: React.FC = () => {
     const saved = await updateSession(session.id, { capacity: value });
     setSavingSessionId(null);
     if (saved) setSessionCapacityDrafts(previous => ({ ...previous, [session.id]: String(value) }));
+    return Boolean(saved);
   };
+
+  const persistRest = useCallback(async () => {
+    let ok = true;
+    for (const classType of activityTypes) {
+      const value = Number(capacityDrafts[classType] ?? defaults[classType] ?? 8);
+      if (String(value) === String(defaults[classType] ?? 8)) continue;
+      if (!Number.isInteger(value) || value < 1 || value > 100) {
+        showError('La capacidad predeterminada debe ser un entero entre 1 y 100.');
+        return false;
+      }
+      const saved = await updateCapacityDefault(classType, value);
+      if (!saved) ok = false;
+      else setCapacityDrafts(previous => ({ ...previous, [classType]: String(value) }));
+    }
+    for (const session of sessions) {
+      const occupancy = getSessionOccupancy(session, defaults);
+      const draft = sessionCapacityDrafts[session.id];
+      if (draft == null || Number(draft) === occupancy.capacity) continue;
+      const saved = await saveSessionCapacity(session);
+      if (!saved) ok = false;
+    }
+    if (exceptionDirty) {
+      const saved = await saveException();
+      if (!saved) ok = false;
+    }
+    return ok;
+  }, [capacityDrafts, defaults, exceptionDate, exceptionDirty, exceptionOpen, exceptionReason, exceptionSlots, sessionCapacityDrafts, sessions, workshopSchedule, workshopScheduleExceptions]);
+
+  const savePending = useCallback(async () => {
+    if (dirtyScheduleDays.size === 0) return persistRest();
+    for (const dayOfWeek of dirtyScheduleDays) {
+      const daySlots = scheduleDraft.filter(item => item.dayOfWeek === dayOfWeek && item.isOpen).sort((a, b) => a.opensAt.localeCompare(b.opensAt));
+      const invalid = daySlots.find(slot => !slot.opensAt || !slot.closesAt || slot.opensAt >= slot.closesAt);
+      const duplicated = new Set(daySlots.map(slot => `${slot.opensAt}-${slot.closesAt}`)).size !== daySlots.length;
+      const overlaps = daySlots.some((slot, index) => index > 0 && slot.opensAt < daySlots[index - 1].closesAt);
+      if (invalid || duplicated || overlaps) {
+        showError(duplicated ? `Hay franjas duplicadas el ${dayLabels[dayOfWeek].toLowerCase()}.` : `Las franjas del ${dayLabels[dayOfWeek].toLowerCase()} deben ser válidas y no solaparse.`);
+        return false;
+      }
+    }
+    const schedule = mergedSchedule();
+    const persistSchedule = async () => {
+      const saved = await updateWorkshopSchedule(schedule);
+      if (!saved) return false;
+      setDirtyScheduleDays(new Set());
+      setExternalScheduleChange(false);
+      setScheduleNotice('Horario guardado');
+      setExpandedDay(null);
+      return true;
+    };
+    const conflicts = getConflicts(schedule);
+    if (conflicts.length) {
+      setConfirmation({
+        title: 'Hay sesiones fuera del nuevo horario',
+        message: 'Puedes conservarlas sin mover ni borrar reservas. Quedarán marcadas como conflictos pendientes.',
+        conflicts,
+        onConfirm: async () => {
+          setConfirmation(null);
+          if (await persistSchedule()) await persistRest();
+        }
+      });
+      return false;
+    }
+    if (!await persistSchedule()) return false;
+    return persistRest();
+  }, [dirtyScheduleDays, persistRest, scheduleDraft, workshopSchedule]);
+
+  useImperativeHandle(ref, () => ({ savePending }), [savePending]);
 
   const capacityMap = defaults;
 
@@ -295,7 +374,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
 
       <section className="rounded-2xl border border-neutral-border bg-neutral-sec/50 p-4 md:p-5">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div><p className="eyebrow text-brand">A · Horario habitual de apertura</p><h3 className="ui-section-title mt-1 text-neutral-textMain">Días y franjas</h3><p className="ui-secondary mt-1">Define un día maestro y replícalo; después puedes editar cualquier día por separado.</p></div>
+          <div><p className="eyebrow text-brand">A · Horario habitual de apertura</p><h3 className="ui-section-title mt-1 text-neutral-textMain">Días y franjas</h3><p className="ui-secondary mt-1">Define un día maestro y replícalo. El horario se guarda con el botón Guardar cambios de esta página, sin cambiar las franjas que no edites.</p></div>
           {scheduleNotice && <span className="rounded-lg bg-[#E7F0E8] px-3 py-2 text-[12px] font-semibold text-[#47704D]">✓ {scheduleNotice}</span>}
         </div>
         <div className="mb-4 flex flex-wrap items-end gap-2 rounded-xl border border-brand/20 bg-brand-soft/50 p-3">
@@ -325,7 +404,6 @@ const WorkshopAvailabilityPanel: React.FC = () => {
                 </div>)}
                 {slots.length === 0 && <p className="text-[12px] text-neutral-textHelper">Día cerrado. Puedes volver a abrirlo con el interruptor.</p>}
                 {slots.length > 0 && <button type="button" onClick={() => addSlot(dayOfWeek)} className="min-h-9 rounded-lg border border-brand/30 bg-brand-soft px-3 text-[12px] font-semibold text-brand">+ Añadir franja</button>}
-                <div><button type="button" onClick={() => void saveDay(dayOfWeek)} disabled={savingDay === dayOfWeek} className="min-h-10 rounded-lg bg-brand px-4 text-[12px] font-semibold text-white hover:bg-brand-hover disabled:opacity-60">{savingDay === dayOfWeek ? 'Guardando…' : `Guardar ${dayLabels[dayOfWeek].toLowerCase()}`}</button></div>
               </div>}
             </div>;
           })}
@@ -338,7 +416,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
           {activityTypes.map(classType => {
             const value = capacityDrafts[classType] ?? String(capacityMap[classType] ?? 8);
             const changed = value !== String(capacityMap[classType] ?? 8);
-            return <div key={classType} className="rounded-xl border border-neutral-border bg-white p-3"><p className="text-[13px] font-semibold text-neutral-textMain">{activityLabels[classType]}</p><div className="mt-2 flex gap-2"><input aria-label={`Capacidad predeterminada de ${activityLabels[classType]}`} type="number" min="1" max="100" value={value} onChange={event => setCapacityDrafts(previous => ({ ...previous, [classType]: event.target.value }))} className={`${inputClass} min-w-0 flex-1`} /><button type="button" disabled={!changed || savingDefault === classType} onClick={() => void saveDefault(classType)} className="min-h-10 rounded-lg bg-brand px-3 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{savingDefault === classType ? '…' : 'Guardar'}</button></div></div>;
+            return <div key={classType} className="rounded-xl border border-neutral-border bg-white p-3"><p className="text-[13px] font-semibold text-neutral-textMain">{activityLabels[classType]}</p><div className="mt-2"><input aria-label={`Capacidad predeterminada de ${activityLabels[classType]}`} type="number" min="1" max="100" value={value} onChange={event => setCapacityDrafts(previous => ({ ...previous, [classType]: event.target.value }))} className={`${inputClass} w-full`} /></div>{changed && <p className="mt-2 text-[13px] text-neutral-textSec">Pendiente de guardar</p>}</div>;
           })}
         </div>
       </section>
@@ -356,7 +434,7 @@ const WorkshopAvailabilityPanel: React.FC = () => {
             <span className="ui-section-title mt-1 block text-neutral-textMain">Sesiones programadas</span>
           </span>
           <span className="flex items-center gap-3">
-            <span className="rounded-full bg-brand-soft px-3 py-1.5 text-[12px] font-bold text-brand">{filteredSessions.length} sesiones</span>
+            <span className="rounded-full bg-brand-soft px-3 py-1.5 text-[13px] font-semibold text-brand">{sesionLabel(filteredSessions.length)}</span>
             <span className="flex items-center gap-2 text-[12px] font-semibold text-brand">
               {availabilityExpanded ? 'Ver menos' : 'Ver más'}
               <svg aria-hidden="true" className={`h-4 w-4 transition-transform ${availabilityExpanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" /></svg>
@@ -372,13 +450,13 @@ const WorkshopAvailabilityPanel: React.FC = () => {
           <select aria-label="Filtrar disponibilidad" value={statusFilter} onChange={event => { setStatusFilter(event.target.value as typeof statusFilter); setVisibleCount(12); }} className={inputClass}><option value="all">Todas</option><option value="places">Con plazas</option><option value="full">Completas</option><option value="conflicts">Con conflictos</option></select>
         </div>
         <div className="mt-4 space-y-5">
-          {Object.keys(groupedSessions).length === 0 && <p className="rounded-xl border border-dashed border-neutral-border bg-white px-4 py-8 text-center text-[13px] text-neutral-textHelper">No hay sesiones con este filtro.</p>}
+          {Object.keys(groupedSessions).length === 0 && <p className="rounded-xl border border-dashed border-neutral-border bg-white px-4 py-8 text-center text-[15px] text-neutral-textSec">{sessionsInRange === 0 ? 'No hay sesiones programadas en este periodo. Crea una clase desde Clases.' : 'Ninguna sesión coincide con la actividad o la disponibilidad elegidas.'}</p>}
           {(Object.entries(groupedSessions) as [string, ClassSession[]][]).map(([date, dateSessions]) => <div key={date}><h4 className="mb-2 text-[13px] font-bold text-neutral-textMain">{dateLabel(date)}</h4><div className="space-y-2">{dateSessions.map(session => {
             const occupancy = getSessionOccupancy(session, defaults);
             const conflict = getScheduleConflictReason(session, workshopSchedule, workshopScheduleExceptions);
             const draft = sessionCapacityDrafts[session.id] ?? String(occupancy.capacity);
             const changed = draft !== String(occupancy.capacity);
-            return <article key={session.id} className="rounded-xl border border-neutral-border bg-white p-3 md:p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-[13px] font-semibold text-neutral-textMain">{session.startTime}–{session.endTime} · {activityLabels[session.classType as CapacityActivity] || session.classType}</p>{session.workshopName && <p className="mt-0.5 text-[12px] text-neutral-textHelper">{session.workshopName}</p>}<div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-neutral-textSec"><span>{occupancy.enrolled} inscritos / {occupancy.capacity} plazas</span><span>·</span><strong className={occupancy.remaining < 0 ? 'text-[#9E3B2B]' : 'text-neutral-textMain'}>{occupancy.remaining < 0 ? `${Math.abs(occupancy.remaining)} de exceso` : `${occupancy.remaining} libres`}</strong></div></div><span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sessionAvailabilityTone[occupancy.availability]}`}>{sessionAvailabilityLabel[occupancy.availability]}</span></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-neutral-sec"><div className={`h-full ${occupancy.availability === 'over_capacity' ? 'bg-[#9E3B2B]' : occupancy.availability === 'full' ? 'bg-brand' : 'bg-[#5F8065]'}`} style={{ width: `${occupancy.visualPercentage}%` }} /></div>{conflict && <p className="mt-2 rounded-lg border border-[#EBD5AC] bg-[#FFF8EC] px-3 py-2 text-[12px] font-semibold text-[#916438]">Conflicto pendiente: {conflict}</p>}<div className="mt-3 flex flex-wrap items-end gap-2"><label className="text-[11px] font-semibold text-neutral-textHelper">Cupo máximo<input aria-label={`Cupo máximo de ${session.date} ${session.startTime}`} type="number" min="1" max="100" value={draft} onChange={event => setSessionCapacityDrafts(previous => ({ ...previous, [session.id]: event.target.value }))} className={`${inputClass} mt-1 w-28`} /></label><button type="button" disabled={!changed || savingSessionId === session.id} onClick={() => void saveSessionCapacity(session)} className="min-h-10 rounded-lg bg-brand px-3 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{savingSessionId === session.id ? 'Guardando…' : 'Guardar'}</button><button type="button" onClick={() => setEnrolledSession(session)} className="min-h-10 rounded-lg border border-neutral-border px-3 text-[12px] font-semibold text-neutral-textMain hover:bg-neutral-sec">Ver inscritos</button><button type="button" onClick={() => navigate(`/calendar?sessionId=${encodeURIComponent(session.id)}&date=${session.date}`)} className="min-h-10 rounded-lg border border-brand/30 bg-brand-soft px-3 text-[12px] font-semibold text-brand hover:bg-brand/15">Ver en calendario</button></div></article>;
+            return <article key={session.id} className="rounded-xl border border-neutral-border bg-white p-3 md:p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-[13px] font-semibold text-neutral-textMain">{session.startTime}–{session.endTime} · {activityLabels[session.classType as CapacityActivity] || session.classType}</p>{session.workshopName && <p className="mt-0.5 text-[12px] text-neutral-textHelper">{session.workshopName}</p>}<div className="mt-2 flex flex-wrap items-center gap-2 text-[14px] text-neutral-textSec"><span>{pluralize(occupancy.enrolled, 'inscrito', 'inscritos')} / {occupancy.capacity} plazas</span><span>·</span><strong className={occupancy.remaining < 0 ? 'text-[#9E3B2B]' : 'text-neutral-textMain'}>{occupancy.remaining < 0 ? `${Math.abs(occupancy.remaining)} de exceso` : `${occupancy.remaining} libres`}</strong></div></div><span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sessionAvailabilityTone[occupancy.availability]}`}>{sessionAvailabilityLabel[occupancy.availability]}</span></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-neutral-sec"><div className={`h-full ${occupancy.availability === 'over_capacity' ? 'bg-[#9E3B2B]' : occupancy.availability === 'full' ? 'bg-brand' : 'bg-[#5F8065]'}`} style={{ width: `${occupancy.visualPercentage}%` }} /></div>{conflict && <p className="mt-2 rounded-lg border border-[#EBD5AC] bg-[#FFF8EC] px-3 py-2 text-[12px] font-semibold text-[#916438]">Conflicto pendiente: {conflict}</p>}<div className="mt-3 flex flex-wrap items-end gap-2"><label className="text-[11px] font-semibold text-neutral-textHelper">Cupo máximo<input aria-label={`Cupo máximo de ${session.date} ${session.startTime}`} type="number" min="1" max="100" value={draft} onChange={event => setSessionCapacityDrafts(previous => ({ ...previous, [session.id]: event.target.value }))} className={`${inputClass} mt-1 w-28`} /></label>{changed && <span className="text-[14px] text-neutral-textSec">Cupo pendiente de guardar</span>}<button type="button" onClick={() => setEnrolledSession(session)} className="min-h-10 rounded-lg border border-neutral-border px-3 text-[12px] font-semibold text-neutral-textMain hover:bg-neutral-sec">Ver inscritos</button><button type="button" onClick={() => navigate(`/calendar?sessionId=${encodeURIComponent(session.id)}&date=${session.date}`)} className="min-h-10 rounded-lg border border-brand/30 bg-brand-soft px-3 text-[12px] font-semibold text-brand hover:bg-brand/15">Ver en calendario</button></div></article>;
           })}</div></div>)}
         </div>
         {visibleCount < filteredSessions.length && <button type="button" onClick={() => setVisibleCount(value => value + 12)} className="mt-4 min-h-10 w-full rounded-lg border border-brand/30 bg-white text-[12px] font-semibold text-brand hover:bg-brand-soft">Cargar más sesiones ({filteredSessions.length - visibleCount} restantes)</button>}
@@ -387,16 +465,16 @@ const WorkshopAvailabilityPanel: React.FC = () => {
 
       <section className="rounded-2xl border border-neutral-border bg-neutral-sec/50 p-4 md:p-5">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-brand">D · Excepciones por fecha</p><h3 className="ui-section-title mt-1 text-neutral-textMain">Festivos, vacaciones y cierres puntuales</h3><p className="ui-secondary mt-1">La excepción tiene prioridad sobre el horario semanal.</p></div><div className="flex flex-wrap gap-2">{existingExceptionDates.slice(0, 5).map(date => <button type="button" key={date} onClick={() => loadException(date)} className="rounded-full border border-neutral-border bg-white px-3 py-1.5 text-[11px] font-semibold text-neutral-textSec hover:border-brand hover:text-brand">{date}</button>)}</div></div>
-        <div className="grid gap-3 md:grid-cols-[auto_auto_1fr] md:items-end"><label className="text-[11px] font-semibold text-neutral-textHelper">Fecha<input aria-label="Fecha de excepción" type="date" value={exceptionDate} onChange={event => { setExceptionDate(event.target.value); loadException(event.target.value); }} className={`${inputClass} mt-1`} /></label><label className="flex min-h-10 items-center gap-2 text-[12px] font-semibold text-neutral-textMain"><input type="checkbox" checked={exceptionOpen} onChange={event => setExceptionOpen(event.target.checked)} className="h-4 w-4 accent-brand" /> Abrir con horario excepcional</label><input aria-label="Motivo de excepción" value={exceptionReason} onChange={event => setExceptionReason(event.target.value)} placeholder="Motivo: festivo, mantenimiento..." className={inputClass} /></div>
-        {exceptionOpen && <div className="mt-3 space-y-2 rounded-xl border border-neutral-border bg-white p-3">{exceptionSlots.map((slot, index) => <div key={index} className="flex flex-wrap items-center gap-2"><span className="w-16 text-[11px] font-semibold text-neutral-textHelper">Franja {index + 1}</span><input aria-label={`Excepción franja ${index + 1} inicio`} type="time" value={slot.opensAt} onChange={event => setExceptionSlots(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, opensAt: event.target.value } : item))} className={inputClass} /><span className="text-neutral-textHelper">a</span><input aria-label={`Excepción franja ${index + 1} fin`} type="time" value={slot.closesAt} onChange={event => setExceptionSlots(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, closesAt: event.target.value } : item))} className={inputClass} />{exceptionSlots.length > 1 && <button type="button" onClick={() => setExceptionSlots(previous => previous.filter((_, itemIndex) => itemIndex !== index))} className="text-[12px] font-semibold text-[#9E3B2B]">Eliminar</button>}</div>)}<button type="button" onClick={() => setExceptionSlots(previous => [...previous, { slotIndex: previous.length, isOpen: true, opensAt: '16:00', closesAt: '20:00' }])} className="min-h-9 rounded-lg border border-brand/30 bg-brand-soft px-3 text-[12px] font-semibold text-brand">+ Añadir franja</button></div>}
+        <div className="grid gap-3 md:grid-cols-[auto_auto_1fr] md:items-end"><label className="text-[11px] font-semibold text-neutral-textHelper">Fecha<input aria-label="Fecha de excepción" type="date" value={exceptionDate} onChange={event => { setExceptionDate(event.target.value); loadException(event.target.value); }} className={`${inputClass} mt-1`} /></label><label className="flex min-h-10 items-center gap-2 text-[14px] font-semibold text-neutral-textMain"><input type="checkbox" checked={exceptionOpen} onChange={event => { setExceptionDirty(true); setExceptionOpen(event.target.checked); }} className="h-4 w-4 accent-brand" /> Abrir con horario excepcional</label><input aria-label="Motivo de excepción" value={exceptionReason} onChange={event => { setExceptionDirty(true); setExceptionReason(event.target.value); }} placeholder="Motivo: festivo, mantenimiento..." className={inputClass} /></div>
+        {exceptionOpen && <div className="mt-3 space-y-2 rounded-xl border border-neutral-border bg-white p-3">{exceptionSlots.map((slot, index) => <div key={index} className="flex flex-wrap items-center gap-2"><span className="w-16 text-[11px] font-semibold text-neutral-textHelper">Franja {index + 1}</span><input aria-label={`Excepción franja ${index + 1} inicio`} type="time" value={slot.opensAt} onChange={event => { setExceptionDirty(true); setExceptionSlots(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, opensAt: event.target.value } : item)); }} className={inputClass} /><span className="text-neutral-textHelper">a</span><input aria-label={`Excepción franja ${index + 1} fin`} type="time" value={slot.closesAt} onChange={event => { setExceptionDirty(true); setExceptionSlots(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, closesAt: event.target.value } : item)); }} className={inputClass} />{exceptionSlots.length > 1 && <button type="button" onClick={() => { setExceptionDirty(true); setExceptionSlots(previous => previous.filter((_, itemIndex) => itemIndex !== index)); }} className="text-[12px] font-semibold text-[#9E3B2B]">Eliminar</button>}</div>)}<button type="button" onClick={() => { setExceptionDirty(true); setExceptionSlots(previous => [...previous, { slotIndex: previous.length, isOpen: true, opensAt: '16:00', closesAt: '20:00' }]); }} className="min-h-9 rounded-lg border border-brand/30 bg-brand-soft px-3 text-[12px] font-semibold text-brand">+ Añadir franja</button></div>}
         {!exceptionOpen && <p className="mt-3 rounded-xl border border-[#EFC9BE] bg-[#FFF8F5] px-3 py-2 text-[12px] text-[#9E3B2B]">La fecha quedará completamente cerrada.</p>}
-        <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void saveException()} disabled={savingException} className="min-h-10 rounded-lg bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-60">{savingException ? 'Guardando…' : 'Guardar excepción'}</button>{existingExceptionDates.includes(exceptionDate) && <button type="button" onClick={() => void removeException()} disabled={savingException} className="min-h-10 rounded-lg border border-neutral-border bg-white px-4 text-[12px] font-semibold text-[#9E3B2B]">Quitar excepción</button>}</div>
+        <div className="mt-3 flex flex-wrap gap-2">{exceptionDirty && <p className="text-[14px] text-neutral-textSec">La excepción se guarda con Guardar cambios.</p>}{existingExceptionDates.includes(exceptionDate) && <button type="button" onClick={() => setConfirmation({ title: `¿Quitar la excepción del ${dateLabel(exceptionDate)}?`, message: 'Ese día volverá al horario habitual. Las sesiones no se borran.', conflicts: [], confirmLabel: 'Quitar excepción', onConfirm: async () => { setConfirmation(null); await removeException(); } })} disabled={savingException} className="min-h-10 rounded-lg border border-[#EFC9BE] bg-white px-4 text-[14px] font-semibold text-[#9E3B2B]">Quitar excepción</button>}</div>
       </section>
 
-      {confirmation && <div className="fixed inset-0 z-[140] flex items-center justify-center bg-[#2F1E17]/45 p-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-neutral-border bg-white p-5 shadow-2xl"><h3 className="ui-section-title text-neutral-textMain">{confirmation.title}</h3><p className="mt-2 text-[13px] leading-relaxed text-neutral-textSec">{confirmation.message}</p><div className="mt-4 space-y-2">{confirmation.conflicts.map(item => <button type="button" key={item.session.id} onClick={() => { setConfirmation(null); navigate(`/calendar?sessionId=${encodeURIComponent(item.session.id)}&date=${item.session.date}`); }} className="block w-full rounded-xl border border-[#EBD5AC] bg-[#FFF8EC] px-3 py-2 text-left hover:border-brand"><span className="block text-[12px] font-semibold text-[#7B3F22]">{dateLabel(item.session.date)} · {item.session.startTime}–{item.session.endTime}</span><span className="block text-[12px] text-[#916438]">{item.session.classType} · {item.session.students.length} inscritos · {item.reason}</span></button>)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setConfirmation(null)} className="min-h-10 rounded-lg px-4 text-[12px] font-semibold text-neutral-textHelper">Cancelar</button><button type="button" onClick={() => void confirmation.onConfirm()} className="min-h-10 rounded-lg bg-brand px-4 text-[12px] font-semibold text-white">Confirmar y conservar sesiones</button></div></section></div>}
+      {confirmation && <div className="fixed inset-0 z-[140] flex items-center justify-center bg-[#2F1E17]/45 p-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-neutral-border bg-white p-5 shadow-2xl"><h3 className="ui-section-title text-neutral-textMain">{confirmation.title}</h3><p className="mt-2 text-[13px] leading-relaxed text-neutral-textSec">{confirmation.message}</p><div className="mt-4 space-y-2">{confirmation.conflicts.map(item => <button type="button" key={item.session.id} onClick={() => { setConfirmation(null); navigate(`/calendar?sessionId=${encodeURIComponent(item.session.id)}&date=${item.session.date}`); }} className="block w-full rounded-xl border border-[#EBD5AC] bg-[#FFF8EC] px-3 py-2 text-left hover:border-brand"><span className="block text-[12px] font-semibold text-[#7B3F22]">{dateLabel(item.session.date)} · {item.session.startTime}–{item.session.endTime}</span><span className="block text-[12px] text-[#916438]">{item.session.classType} · {item.session.students.length} inscritos · {item.reason}</span></button>)}</div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setConfirmation(null)} className="min-h-10 rounded-lg px-4 text-[12px] font-semibold text-neutral-textHelper">Cancelar</button><button type="button" onClick={() => void confirmation.onConfirm()} className="min-h-10 rounded-lg bg-brand px-4 text-[14px] font-semibold text-white">{confirmation.confirmLabel || 'Confirmar y conservar sesiones'}</button></div></section></div>}
       {enrolledSession && <div className="fixed inset-0 z-[130] flex items-center justify-center bg-[#2F1E17]/45 p-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-neutral-border bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-3"><div><p className="eyebrow text-brand">Inscritos vinculados</p><h3 className="ui-section-title mt-1 text-neutral-textMain">{dateLabel(enrolledSession.date)}</h3><p className="ui-secondary">{enrolledSession.startTime}–{enrolledSession.endTime}</p></div><button type="button" onClick={() => setEnrolledSession(null)} aria-label="Cerrar inscritos" className="h-9 w-9 rounded-full text-neutral-textHelper hover:bg-neutral-sec">×</button></div><div className="mt-4 space-y-2">{enrolledSession.students.length ? enrolledSession.students.map((student, index) => <div key={`${student}-${index}`} className="rounded-lg bg-neutral-sec px-3 py-2 text-[13px] text-neutral-textMain">{student}</div>) : <p className="text-[13px] text-neutral-textHelper">No hay inscritos vinculados.</p>}</div></section></div>}
     </div>
   );
-};
+});
 
 export default WorkshopAvailabilityPanel;

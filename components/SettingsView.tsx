@@ -2,13 +2,13 @@ import { withTimeout } from '../context/data/shared';
 import WorkshopRecoveryCopy from './WorkshopRecoveryCopy';
 import { readAllRows } from '../context/data/readAllRows';
 import { showError } from '../context/toast';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 import { getDefaultSessionCapacity, type WorkshopScheduleDay } from '../types';
 import * as XLSX from 'xlsx';
-import WorkshopAvailabilityPanel from './WorkshopAvailabilityPanel';
+import WorkshopAvailabilityPanel, { type WorkshopAvailabilityHandle } from './WorkshopAvailabilityPanel';
 import GoogleDriveRepository from './GoogleDriveRepository';
 
 /* ─── Collapsible Section ─── */
@@ -103,6 +103,8 @@ const SettingsView: React.FC = () => {
   const [notifyLowClasses, setNotifyLowClasses] = useState(savedSettings.notifyLowClasses ?? true);
   const [lowClassesThreshold, setLowClassesThreshold] = useState(savedSettings.lowClassesThreshold || '2');
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [savingPage, setSavingPage] = useState(false);
+  const availabilityRef = useRef<WorkshopAvailabilityHandle>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportDone, setExportDone] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -235,8 +237,20 @@ const SettingsView: React.FC = () => {
       lowClassesThreshold
     };
     localStorage.setItem(storageKey, JSON.stringify(config));
-    setSettingsSaved(true);
-    setTimeout(() => setSettingsSaved(false), 2500);
+  };
+
+  const savePage = async () => {
+    setSavingPage(true);
+    try {
+      saveSettings();
+      const pending = await availabilityRef.current?.savePending();
+      if (pending !== false) {
+        setSettingsSaved(true);
+        setTimeout(() => setSettingsSaved(false), 2500);
+      }
+    } finally {
+      setSavingPage(false);
+    }
   };
 
   // ── Excel Export (real, functional) ──
@@ -269,7 +283,7 @@ const SettingsView: React.FC = () => {
       if (mode === 'all') {
         addSheet('Resumen', [{
           'Fecha de exportación': today,
-          'Sede ID': sedeId || 'Todas las sedes autorizadas',
+          'Taller': sedeId || 'Todos los talleres autorizados',
           Alumnos: students.length,
           Sesiones: sessions.length,
           Profesores: teachers.length,
@@ -431,7 +445,7 @@ const SettingsView: React.FC = () => {
       <div className="mb-5">
         <p className="eyebrow mb-1.5">Configuración</p>
         <h2 className="ui-page-title text-neutral-textMain">Administración del taller</h2>
-        <p className="ui-secondary mt-1">Gestiona capacidades, seguridad y respaldos de tu sede</p>
+        <p className="ui-secondary mt-1">Gestiona capacidades, seguridad y respaldos de tu taller</p>
       </div>
 
       {/* ── Sections ── */}
@@ -506,21 +520,10 @@ const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* Save */}
-          <div className="mt-4 flex items-center gap-3">
-            <button
-              onClick={saveSettings}
-              className="min-h-[44px] px-4 py-2.5 bg-brand text-white rounded-[10px] font-semibold text-[14px] hover:bg-brand-hover active:scale-[0.97] transition-all"
-            >
-              Guardar
-            </button>
-            {settingsSaved && (
-              <span className="text-[13px] font-semibold text-[#20663B] animate-pulse">✓ Guardado</span>
-            )}
-          </div>
+          <p className="mt-4 text-[14px] text-neutral-textSec">Estos datos se guardan con el botón Guardar cambios, al final de la página.</p>
         </Section>
 
-        <WorkshopAvailabilityPanel />
+        <WorkshopAvailabilityPanel ref={availabilityRef} />
 
         <Section
           icon={IconDrive}
@@ -763,9 +766,19 @@ const SettingsView: React.FC = () => {
         {/* ── Info note ── */}
         <div className="mt-1 px-4 py-3 bg-neutral-sec border border-neutral-border rounded-2xl">
           <p className="text-[13px] text-neutral-textSec leading-relaxed">
-             <strong className="text-neutral-textMain">Nota:</strong> Los datos del taller, horarios y capacidades se guardan en Supabase por sede.
-             Las preferencias generales se guardan localmente y las exportaciones Excel son de consulta. La copia JSON para recuperar datos se genera por separado.
+             <strong className="text-neutral-textMain">Nota:</strong> Los datos del taller, horarios y capacidades se guardan juntos, por taller.
+             Las preferencias generales se guardan en este navegador y las exportaciones Excel son de consulta. La copia JSON para recuperar datos se genera por separado.
           </p>
+        </div>
+
+        <div className="sticky bottom-0 z-20 -mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-border bg-white/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6">
+          <p className="max-w-xl text-[14px] leading-relaxed text-neutral-textSec">Un solo guardado para el nombre del taller, el horario, los cupos y las excepciones que hayas modificado.</p>
+          <div className="flex items-center gap-3">
+            {settingsSaved && <span className="text-[14px] font-semibold text-[#20663B]">Guardado</span>}
+            <button type="button" onClick={() => void savePage()} disabled={savingPage} className="min-h-11 rounded-[10px] bg-brand px-5 text-[15px] font-semibold text-white hover:bg-brand-hover disabled:opacity-60">
+              {savingPage ? 'Guardando…' : 'Guardar cambios'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -777,7 +790,7 @@ const SettingsView: React.FC = () => {
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
             <div className="p-5">
-              <h3 className="text-[20px] font-bold text-neutral-textMain leading-tight mb-1">Cambiar Contraseña</h3>
+              <h3 className="text-[20px] font-bold text-neutral-textMain leading-tight mb-1">Cambiar contraseña</h3>
               <p className="text-neutral-textSec text-[14px] mb-4">Actualiza tu contraseña de acceso.</p>
 
               {passwordFeedback && (

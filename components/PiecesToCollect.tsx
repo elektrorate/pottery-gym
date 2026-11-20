@@ -3,6 +3,8 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { CeramicPiece, PieceStatus, Student } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { DangerZone } from './shared/DangerZone';
+import { EmptyState } from './shared/EmptyState';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 
 // ─── Category visual helpers ───
@@ -209,10 +211,10 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   // ─── Status helpers ───
   const getStatusLabel = (status: PieceStatus) => {
     switch (status) {
-      case '1era_quema': return '1ª QUEMA';
-      case 'esmaltado': return 'ESMALTADO';
-      case 'a_recogida': return 'A RECOGIDA';
-      case 'entregado': return 'ENTREGADO';
+      case '1era_quema': return '1ª quema';
+      case 'esmaltado': return 'Esmaltado';
+      case 'a_recogida': return 'A recogida';
+      case 'entregado': return 'Entregado';
       default: return '';
     }
   };
@@ -227,9 +229,9 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   };
   const getStatusAction = (status: PieceStatus) => {
     switch (status) {
-      case '1era_quema': return { label: 'PASAR A ESMALTADO', next: 'esmaltado' as const };
-      case 'esmaltado': return { label: 'LISTA PARA RECOGER', next: 'a_recogida' as const };
-      case 'a_recogida': return { label: 'MARCAR ENTREGADO', next: 'entregado' as const };
+      case '1era_quema': return { label: 'Pasar a esmaltado', next: 'esmaltado' as const };
+      case 'esmaltado': return { label: 'Lista para recoger', next: 'a_recogida' as const };
+      case 'a_recogida': return { label: 'Marcar entregado', next: 'entregado' as const };
       default: return null;
     }
   };
@@ -381,6 +383,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
     dateFilter !== 'all',
     filterStatus !== 'all'
   ].filter(Boolean).length;
+  const pieceFiltersActive = activeFilterCount > 0 || Boolean(searchQuery.trim()) || Boolean(selectedOwner);
 
   useEffect(() => {
     setHeaderActions(document.getElementById('tallerista-header-actions'));
@@ -592,7 +595,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                 onClick={() => setFilterStatus(s)}
                 className={`px-4 md:px-6 py-2.5 rounded-[10px] text-[13px] font-semibold transition-all whitespace-nowrap ${filterStatus === s ? 'bg-brand text-white' : 'text-neutral-textSec hover:text-brand'}`}
               >
-                {s === 'all' ? 'TODAS' : getStatusLabel(s as PieceStatus)}
+                {s === 'all' ? 'Todas' : getStatusLabel(s as PieceStatus)}
               </button>
             ))}
           </div>
@@ -606,7 +609,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
               }`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            HISTORIAL ({historyPieces.length})
+            Historial ({historyPieces.length})
           </button>
         </div>
           </div>
@@ -616,13 +619,14 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
       {/* ─── PIECES GRID (Active) ─── */}
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pb-20">
         {filteredPieces.length === 0 && !showHistory ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <svg className="w-16 h-16 text-neutral-border mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
-            <p className="text-[15px] font-semibold text-neutral-textSec mb-2">Sin piezas activas</p>
-            <p className="text-[14px] text-neutral-textSec">
-              {selectedOwner ? `${selectedOwner} no tiene piezas en proceso.` : 'No hay piezas que coincidan con los filtros.'}
-            </p>
-          </div>
+          <EmptyState
+            title={pieceFiltersActive ? 'Ninguna pieza coincide con estos filtros' : 'Todavía no hay piezas en proceso'}
+            body={pieceFiltersActive
+              ? (selectedOwner ? `${selectedOwner} no tiene piezas en proceso con estos filtros.` : 'Prueba a quitar el estado, la fecha o el nombre.')
+              : 'Registra la primera obra para seguir la quema, el esmalte y la recogida.'}
+            actionLabel={pieceFiltersActive ? undefined : 'Añadir la primera pieza'}
+            onAction={pieceFiltersActive ? undefined : handleCreateClick}
+          />
         ) : (
           <div className="space-y-10">
             {(['1era_quema', 'esmaltado', 'a_recogida'] as const).map(statusKey => {
@@ -673,9 +677,10 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                   </h3>
                 </div>
                 {filteredHistoryPieces.length === 0 ? (
-                  <div className="bg-white border border-dashed border-neutral-border p-10 rounded-2xl text-center">
-                    <p className="text-[14px] text-neutral-textHelper">No hay piezas entregadas que coincidan con los filtros.</p>
-                  </div>
+                  <EmptyState
+                    title={pieceFiltersActive ? 'Ninguna pieza entregada coincide con estos filtros' : 'Todavía no hay piezas entregadas'}
+                    body={pieceFiltersActive ? 'Prueba a quitar el nombre, la fecha o el grupo.' : 'Cuando marques una pieza como entregada, aparecerá aquí.'}
+                  />
                 ) : (
                   <div className="bg-white border border-neutral-border rounded-2xl overflow-hidden">
                     {filteredHistoryPieces.map(piece => {
@@ -707,27 +712,27 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
       {/* ─── MODAL ─── */}
       {showModal && (
         <div className="fixed inset-0 bg-neutral-textMain/20 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl soft-shadow relative animate-fade-in flex flex-col border border-neutral-border overflow-hidden">
+          <div role="dialog" aria-modal="true" aria-labelledby="piece-dialog-title" className="bg-white w-full max-w-lg max-h-[calc(100dvh-2rem)] rounded-2xl soft-shadow relative animate-fade-in flex flex-col border border-neutral-border overflow-hidden">
             <button onClick={() => setShowModal(false)} aria-label="Cerrar modal" className="absolute top-5 right-5 text-neutral-textHelper hover:text-neutral-textMain transition-colors z-20">
               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
             <div className="p-6 md:p-8 lg:p-10 overflow-y-auto custom-scrollbar">
-               <h3 className="ui-section-title text-neutral-textMain mb-2">
-                {editingPiece ? 'EDITAR PIEZA' : 'REGISTRAR PIEZA'}
+               <h3 id="piece-dialog-title" className="ui-section-title text-neutral-textMain mb-2">
+                {editingPiece ? 'Editar pieza' : 'Registrar pieza'}
               </h3>
               <p className="text-neutral-textSec text-[14px] mb-6">Define los detalles para el seguimiento en el taller.</p>
 
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">PROPIETARIO</label>
+                    <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Propietario</label>
                     <select
                       required
                       value={form.owner}
                       onChange={(e) => setForm({ ...form, owner: e.target.value })}
                       className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain appearance-none cursor-pointer focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none"
                     >
-                      <option value="" disabled>Seleccionar Alumno</option>
+                      <option value="" disabled>Seleccionar alumno</option>
                       {sortedStudents.map(student => (
                         <option key={student.id} value={`${student.name} ${student.surname || ''}`.trim()}>
                           {`${student.name} ${student.surname || ''}`.trim()} — {studentCategoryLabel(student.studentCategory)}
@@ -736,54 +741,53 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">ESTADO ACTUAL</label>
+                    <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Estado actual</label>
                     <select
                       value={form.status}
                       onChange={(e) => setForm({ ...form, status: e.target.value as PieceStatus })}
                       className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain appearance-none cursor-pointer focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none"
                     >
-                      <option value="1era_quema">1ª QUEMA</option>
-                      <option value="esmaltado">ESMALTADO</option>
-                      <option value="a_recogida">A RECOGIDA</option>
-                      <option value="entregado">ENTREGADO</option>
+                      <option value="1era_quema">1ª quema</option>
+                      <option value="esmaltado">Esmaltado</option>
+                      <option value="a_recogida">A recogida</option>
+                      <option value="entregado">Entregado</option>
                     </select>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">DESCRIPCIÓN DE LA OBRA</label>
+                  <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Descripción de la obra</label>
                   <input required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" placeholder="Ej: Jarrón con textura" />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">TIPO DE ESMALTE / ACABADO</label>
+                  <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Tipo de esmalte o acabado</label>
                   <input value={form.glazeType} onChange={(e) => setForm({ ...form, glazeType: e.target.value })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" placeholder="Ej: Blanco Mate" />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">FECHA DE ENTREGA</label>
+                  <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Fecha de entrega</label>
                   <input type="date" value={form.deliveryDate} onChange={(e) => setForm({ ...form, deliveryDate: e.target.value })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">NOTAS ADICIONALES</label>
+                  <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Notas adicionales</label>
                   <textarea value={form.extraCommentary} onChange={(e) => setForm({ ...form, extraCommentary: e.target.value })} className="w-full px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper min-h-[100px] resize-none focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" placeholder="..." />
                 </div>
 
                 <div className="pt-4 flex gap-3">
-                  {editingPiece && (
-                    <button
-                      type="button"
-                      onClick={() => setPieceToDelete(editingPiece.id)}
-                      className="min-h-[44px] px-4 py-2.5 rounded-[10px] text-[14px] font-semibold text-[#9E3B2B] hover:bg-[#F8E1DA] transition-colors"
-                    >
-                      Eliminar
-                    </button>
-                  )}
                   <button type="submit" disabled={isSubmitting} className="flex-1 min-h-[44px] px-4 py-2.5 bg-brand text-white rounded-[10px] text-[14px] font-semibold hover:bg-brand-hover active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed">
-                    {isSubmitting ? 'GUARDANDO...' : 'GUARDAR CAMBIOS'}
+                    {isSubmitting ? 'Guardando…' : 'Guardar cambios'}
                   </button>
                 </div>
+                {editingPiece && (
+                  <DangerZone
+                    description={`Eliminar «${editingPiece.description}» borra el registro de ${editingPiece.owner}. No se puede deshacer.`}
+                    actionLabel="Eliminar pieza"
+                    disabled={isSubmitting}
+                    onAction={() => setPieceToDelete(editingPiece.id)}
+                  />
+                )}
               </form>
             </div>
           </div>
@@ -792,8 +796,8 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
 
       <ConfirmModal
         isOpen={!!pieceToDelete}
-        title="¿Eliminar pieza?"
-        message="¿Estás seguro de que deseas eliminar este registro? Esta acción no se puede deshacer."
+        title={editingPiece ? `¿Eliminar «${editingPiece.description}»?` : '¿Eliminar pieza?'}
+        message={editingPiece ? `Se borrará la pieza de ${editingPiece.owner}. Esta acción no se puede deshacer.` : 'Esta acción no se puede deshacer.'}
         isDestructive={true}
         onConfirm={() => {
           if (pieceToDelete) {

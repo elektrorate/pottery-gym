@@ -3,6 +3,9 @@ import { showError, showWarning } from '../context/toast';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, InventoryItemStatus, MovementType, InventoryMovement, StructuredFormula, FormulaComponent, ColorFamily, GlazeFinish } from '../types';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { DangerZone } from './shared/DangerZone';
+import { EmptyState } from './shared/EmptyState';
+import { pluralize } from '../utils/pluralize';
 
 interface InventoryViewProps {
   items: InventoryItem[];
@@ -449,7 +452,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 onClick={handleEditFromDetail}
                 className="min-h-[44px] px-4 py-2.5 border border-neutral-border bg-white text-neutral-textSec rounded-[10px] text-[14px] font-semibold hover:border-arena transition-colors"
               >
-                Editar item
+                Editar material
               </button>
               <button
                 onClick={() => setShowMovementForm(prev => !prev)}
@@ -457,13 +460,12 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
               >
                 Registrar movimiento
               </button>
-              <button
-                onClick={() => setItemToDelete({ id: selectedItem.id, name: selectedItem.name })}
-                className="min-h-[44px] px-4 py-2.5 bg-[#9E3B2B] text-white rounded-[10px] text-[14px] font-semibold hover:bg-[#8A3325] transition-colors"
-              >
-                Eliminar
-              </button>
             </div>
+            <DangerZone
+              description={`Eliminar «${selectedItem.name}» borra el material y todos sus movimientos. No se puede deshacer.`}
+              actionLabel="Eliminar material"
+              onAction={() => setItemToDelete({ id: selectedItem.id, name: selectedItem.name })}
+            />
           </div>
         </div>
 
@@ -547,7 +549,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                   disabled={isSubmittingMovement}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-brand text-white rounded-[10px] font-semibold text-[14px] hover:bg-brand-hover active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {isSubmittingMovement ? 'GUARDANDO...' : 'Guardar movimiento'}
+                  {isSubmittingMovement ? 'Guardando…' : 'Guardar movimiento'}
                 </button>
               </div>
             </form>
@@ -655,7 +657,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
         <div className="bg-white rounded-2xl border border-neutral-border soft-shadow p-4 md:p-6 max-w-3xl">
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
-              <p className="eyebrow">{editingItem ? 'Editar item' : 'Nuevo item'}</p>
+              <p className="eyebrow">{editingItem ? 'Editar material' : 'Nuevo material'}</p>
               <h3 className="ui-section-title text-neutral-textMain mt-2">Registro de inventario</h3>
             </div>
             <button
@@ -892,7 +894,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                  disabled={isSubmittingItem}
                 className="w-full min-h-[44px] px-4 py-2.5 bg-brand text-white rounded-[10px] font-semibold text-[14px] hover:bg-brand-hover active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {isSubmittingItem ? 'GUARDANDO...' : (editingItem ? 'Guardar cambios' : 'Guardar item')}
+                {isSubmittingItem ? 'Guardando…' : (editingItem ? 'Guardar cambios' : 'Guardar material')}
               </button>
             </div>
           </form>
@@ -942,7 +944,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                   <button key={cat.id} onClick={() => setFilterCategory(cat.id)} className={`min-h-[34px] px-3 md:px-4 py-2 rounded-[8px] text-[12px] font-semibold transition-all whitespace-nowrap ${filterCategory === cat.id ? 'bg-brand text-white' : 'text-neutral-textHelper hover:text-brand'}`}>{cat.label}</button>
                 ))}
               </div>
-              <span className="hidden sm:inline text-[12px] font-semibold text-neutral-textHelper">{filteredItems.length} materiales</span>
+              <span className="hidden sm:inline text-[14px] font-semibold text-neutral-textSec">{pluralize(filteredItems.length, 'material', 'materiales')}</span>
             </div>
 
             <section className="bg-white border border-neutral-border rounded-2xl overflow-hidden">
@@ -979,9 +981,12 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 );
               })}
               {filteredItems.length === 0 && (
-                <div className="py-12 text-center">
-                  <p className="text-[13px] font-semibold text-neutral-textHelper">No hay materiales registrados en esta categoría</p>
-                </div>
+                <EmptyState
+                  title={items.length === 0 ? 'Todavía no hay materiales' : (searchQuery.trim() || filterCategory !== 'all' ? 'Ningún material coincide con estos filtros' : 'No hay materiales en esta vista')}
+                  body={items.length === 0 ? 'Registra esmaltes, arcillas y el resto de existencias del taller.' : (searchQuery.trim() || filterCategory !== 'all' ? 'Prueba con otro nombre, código o categoría.' : 'Cuando haya existencias, aparecerán en esta lista.')}
+                  actionLabel={items.length === 0 ? 'Registrar un material' : undefined}
+                  onAction={items.length === 0 ? handleOpenForm : undefined}
+                />
               )}
             </section>
           </div>
@@ -992,8 +997,8 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
 
       <ConfirmModal
         isOpen={!!itemToDelete}
-        title="¿Eliminar item del inventario?"
-        message={`¿Estás seguro de que deseas eliminar "${itemToDelete?.name}"? Se borrarán también todos sus movimientos. Esta acción no se puede deshacer.`}
+        title={itemToDelete ? `¿Eliminar «${itemToDelete.name}»?` : '¿Eliminar material?'}
+        message={itemToDelete ? `Se borrará «${itemToDelete.name}» y todos sus movimientos. Esta acción no se puede deshacer.` : 'Esta acción no se puede deshacer.'}
         isDestructive={true}
         onConfirm={() => {
           if (itemToDelete) {
