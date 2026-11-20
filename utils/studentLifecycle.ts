@@ -1,12 +1,34 @@
 import { inferMembershipTier } from '../types';
 import type { Student, MembershipPeriod } from '../types';
+import { isNonMembershipCategory } from './classTypeLabels';
 
 export type StudentLifecycle = 'active' | 'pending' | 'expired' | 'temporary' | 'archived';
 export const getWorkshopDate = (now = new Date()) =>
   new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(now);
 
+/** Calendar date in Europe/Madrid from a timestamptz/ISO value (avoids UTC day-shift). */
+export const toWorkshopDateKey = (value: string | Date | null | undefined): string | undefined => {
+  if (value == null || value === '') return undefined;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(parsed.getTime())) {
+    const sliced = String(value).slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(sliced) ? sliced : undefined;
+  }
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Madrid' }).format(parsed);
+};
+
+/** Persist date-only fields at noon UTC so Europe/Madrid keeps the selected calendar day. */
+export const workshopDateToTimestamptz = (date: string | null | undefined): string | null => {
+  if (!date) return null;
+  const key = date.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(key) ? `${key}T12:00:00.000Z` : null;
+};
+
 export const isManagedMembership = (student: Pick<Student, 'studentCategory'>) =>
   (student.studentCategory ?? 'membresia') === 'membresia';
+
+export { isNonMembershipCategory };
 
 // Missing legacy observations are neither payment nor debt.
 export const getStudentPaymentStatus = (student: Pick<Student, 'paymentStatus' | 'status'>) =>
@@ -108,7 +130,7 @@ export const mapStudentRowToModel = (row: any): Student => ({
   paymentMethod: row.payment_method || undefined, notes: row.notes || undefined,
   observations: row.observations || undefined, price: row.price ?? undefined,
   classType: row.class_type || undefined,
-  expiryDate: row.expiry_date ? String(row.expiry_date).slice(0, 10) : undefined,
+  expiryDate: toWorkshopDateKey(row.expiry_date),
   studentCategory: row.student_category ?? 'membresia',
   membershipTier: isManagedMembership({ studentCategory: row.student_category }) ? (row.current_membership_period_id ? row.membership_tier : undefined) : undefined,
   membershipActivatedAt: row.membership_activated_at || undefined, archivedAt: row.archived_at || undefined,

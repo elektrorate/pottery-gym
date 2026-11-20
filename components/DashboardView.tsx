@@ -1,4 +1,4 @@
-import { hasVerifiedMembership, needsStudentReview } from '../utils/studentPresentation';
+import { hasVerifiedMembership, needsStudentReview, studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
@@ -7,6 +7,7 @@ import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
+import { sessionTypeLabel } from '../utils/classTypeLabels';
 
 
 interface DashboardViewProps {
@@ -15,7 +16,7 @@ interface DashboardViewProps {
   activitiesReady?: boolean;
   detailsReady?: boolean;
   sessions: ClassSession[];
-  giftCards: GiftCard[];
+  giftCards?: GiftCard[];
   onAdjustClasses?: (intent: ClassAdjustmentIntent) => Promise<void>;
   onUpdateStudent?: (id: string, updates: Partial<Student>) => Promise<void>;
   onUpdateSession?: (id: string, updates: Partial<ClassSession>) => Promise<void>;
@@ -74,25 +75,12 @@ const AlertGroup: React.FC<{
   );
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activities = [], activitiesReady = true, detailsReady = true, onNavigate, onOpenStudentProfile, onOpenSession, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activities = [], activitiesReady = true, detailsReady = true, giftCards = [], onNavigate, onOpenStudentProfile, onOpenSession, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const alertAudioContextRef = useRef<AudioContext | null>(null);
   const previousAlertKeysRef = useRef<Set<string> | null>(null);
 
   const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
-
-  const getSessionTypeLabel = (type: ClassSession['classType']) => {
-    const map: Record<ClassSession['classType'], string> = {
-      mesa: 'Mesa de Trabajo',
-      torno: 'Clase de Torno',
-      mixto: 'Sesión mixta',
-      coworking: 'Coworking',
-      workshop: 'Workshop',
-      privada: 'Privadas',
-      feriado: 'Feriados'
-    };
-    return map[type] || 'Sesion';
-  };
 
   const todayStr = useWorkshopDate();
 
@@ -120,7 +108,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
      const totalSessions = sessions.length;
 
     // Students by category
-    const byCategory: Record<string, number> = { membresia: 0, temporal: 0 };
+    const byCategory: Record<string, number> = { membresia: 0, temporal: 0, grupal: 0, grupo_temporal: 0 };
     students.forEach(s => {
       const cat = s.studentCategory || 'membresia';
         if (byCategory[cat] !== undefined && !isStudentArchived(s, todayStr)) byCategory[cat]++;
@@ -171,8 +159,9 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
       }));
       if (isStudentArchived(student, todayStr)) return;
 
-      if ((!isMembership || hasVerifiedMembership(student)) && student.classesRemaining <= 1 && student.classesRemaining >= 0) {
-        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `Bono agotándose (${student.classesRemaining} rest.)`, type: 'critical', category: 'bonuses' });
+      const remaining = studentEffectiveRemainingClasses(student, giftCards);
+      if ((!isMembership || hasVerifiedMembership(student)) && remaining <= 1 && remaining >= 0) {
+        list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:bonuses`, name: fullName, reason: `Bono agotándose (${remaining} rest.)`, type: 'critical', category: 'bonuses' });
       }
       if (isExpired && isMembership) {
         list.push({ id: student.id, key: `${student.id}:${student.effectivePeriodId || 'legacy'}:expiry`, name: fullName, reason: `Membresía vencida · ${student.expiryDate}`,  type: 'critical', category: 'expiry' });
@@ -180,7 +169,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
 
     });
     return list;
-  }, [students, todayStr]);
+  }, [students, giftCards, todayStr]);
 
   const bonusAlerts = useMemo(() => alerts.filter(alert => alert.category === 'bonuses'), [alerts]);
   const paymentAlerts = useMemo(() => alerts.filter(alert => alert.category === 'payment'), [alerts]);
@@ -312,7 +301,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
             <div className="space-y-3">
               {onOpenSession && todaySessions.filter(session => session.classType !== 'feriado').map(session => (
                 <div key={session.id} data-session-id={session.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-neutral-border bg-white p-3.5">
-                  <p className="text-[13px] font-semibold text-neutral-textMain">{session.startTime} · {getSessionTypeLabel(session.classType)}</p>
+                  <p className="text-[13px] font-semibold text-neutral-textMain">{session.startTime} · {sessionTypeLabel(session.classType)}</p>
                   <button type="button" onClick={() => onOpenSession(session.id, session.date)} className="min-h-[36px] rounded-lg border border-neutral-border px-3 py-2 text-[12px] font-semibold text-brand hover:text-brand-hover">Control de asistencia</button>
                 </div>
               ))}

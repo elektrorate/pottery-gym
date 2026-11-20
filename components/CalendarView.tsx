@@ -4,10 +4,12 @@ import { showError } from '../context/toast';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ClassSession, GiftCard, Student, ClassAdjustmentIntent, SessionActivityBlock, SessionBusinessIntent, PendingSessionOperation, Teacher, WorkshopScheduleDay, WorkshopScheduleException, WorkshopCapacityDefault, getDefaultSessionCapacity } from '../types';
-import { getStudentLifecycle, isStudentArchived } from '../utils/studentLifecycle';
+import { getStudentLifecycle, isStudentArchived, isNonMembershipCategory } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
 import { getScheduleConflictReason, madridDateKey } from '../utils/workshopSchedule';
+import { studentCategoryLabel } from '../utils/classTypeLabels';
+import { studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 interface CalendarViewProps {
   readOnly?: boolean;
   sessions: ClassSession[];
@@ -842,7 +844,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           const cancelled = !!studentId && isCancelled(session, studentId);
                           const studentObj = students.find(st => st.id === studentId);
                           const cat = studentObj?.studentCategory || 'membresia';
-                          const isTemporary = cat === 'temporal';
+                          const isTemporary = isNonMembershipCategory(cat);
                           // Color de bolita: presente=verde, ausente=rojo, pendiente=según categoría
                           const dotColor = cancelled ? 'bg-neutral-textHelper' : att === 'absent'
                             ? 'bg-red-500'
@@ -1064,8 +1066,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   const studentName = getStudentName(studentId, attendanceSession);
                   const status = getAttendanceStatus(attendanceSession, studentId);
                   const studentObj = students.find(s => s.id === studentId);
-                  const isBonusStudent = studentObj?.studentCategory === 'membresia' || studentObj?.studentCategory === 'temporal';
-                  const bonos = studentObj?.classesRemaining ?? 0;
+                  const isBonusStudent = !!studentObj;
+                  const bonos = studentObj ? studentEffectiveRemainingClasses(studentObj, giftCards) : 0;
                   const bonosTotal = studentObj?.bonosAsignados ?? 4;
                   const business = policy2 ? attendanceSession.businessStateByStudentId?.[studentId] : undefined;
                   const cancelled = isCancelled(attendanceSession, studentId);
@@ -1366,7 +1368,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       {sessionForm.activityBlocks.map((block, blockIndex) => <div key={block.activityType} className="rounded-[10px] border border-[#E1C9B5] bg-white p-3">
                         <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">{block.activityType === 'mesa' ? 'Mesa' : 'Torno'}</span><input aria-label={`Cupo ${block.activityType}`} type="number" min="1" max="100" value={block.capacity} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, capacity: Number(event.target.value) } : item) })} className="h-8 w-20 rounded border border-[#DDBFA4] px-2 text-[12px]" /></div>
                         <select aria-label={`Profesor de ${block.activityType}`} value={block.teacherId || ''} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, teacherId: event.target.value || undefined } : item) })} className="mb-2 h-9 w-full rounded border border-[#DDBFA4] bg-white px-2 text-[12px]"><option value="">Sin profesor</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{`${teacher.name} ${teacher.surname || ''}`.trim()}</option>)}</select>
-                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => !isStudentArchived(student, today) && (sessionForm.sessionAudience === 'ambos' || (student.studentCategory || 'membresia') === sessionForm.sessionAudience)).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{student.name} {student.surname || ''}</span><span className="ml-auto text-[10px] opacity-60">{student.studentCategory === 'temporal' ? 'Bonotemp' : 'Membresía'}</span></label>; })}</div>
+                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => { const cat = student.studentCategory || 'membresia'; const matchesAudience = sessionForm.sessionAudience === 'ambos' || (sessionForm.sessionAudience === 'membresia' ? cat === 'membresia' : isNonMembershipCategory(cat)); return !isStudentArchived(student, today) && matchesAudience; }).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{student.name} {student.surname || ''}</span><span className="ml-auto text-[10px] opacity-60">{isNonMembershipCategory(student.studentCategory) ? studentCategoryLabel(student.studentCategory) : 'Membresía'}</span></label>; })}</div>
                       </div>)}
                     </fieldset>}
                     <fieldset>
@@ -1384,7 +1386,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         onClick={() => { setSessionForm({ ...sessionForm, sessionAudience: 'temporal' }); setStudentSearchQuery(''); }}
                          className={`min-h-10 rounded-[9px] px-2 text-[12.5px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-brand ${sessionForm.sessionAudience === 'temporal' ? 'bg-white font-bold text-neutral-textMain shadow-sm' : 'text-brand opacity-70 hover:opacity-100'}`}
                       >
-                        Bonotemp
+                        Bonos temporales
                       </button>
                       <button
                         type="button"
@@ -1423,7 +1425,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                               ? true
                               : sessionForm.sessionAudience === 'membresia'
                                 ? (cat === 'membresia')
-                                : (cat === 'temporal');
+                                : isNonMembershipCategory(cat);
                             // Filtro por búsqueda
                             const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
                             const groupName = (s.groupName || '').toLowerCase();
@@ -1443,7 +1445,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           const studentKey = s.id;
                            const isSelected = selectedRoster.includes(studentKey);
                            const cat = s.studentCategory || 'membresia';
-                           const isTemporary = cat === 'temporal';
+                           const isTemporary = isNonMembershipCategory(cat);
                            const cancelled = !!editingReservation && isCancelled(editingReservation, studentKey);
                            const capacityReached = !isSelected && activeSelectedCount >= formCapacity;
                            return (
@@ -1461,7 +1463,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                               </span>
                               <span className="shrink-0 text-[11px] font-normal opacity-65">ID {shortId(s.id)}</span>
                               <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
-                                {cancelled ? 'Cancelada' : isTemporary ? 'Bonotemp' : getStudentLifecycle(s, today) === 'active' ? 'Activa' : getStudentLifecycle(s, today) === 'expired' ? 'Vencida' : 'Pendiente'}
+                                {cancelled ? 'Cancelada' : isTemporary ? studentCategoryLabel(cat) : getStudentLifecycle(s, today) === 'active' ? 'Activa' : getStudentLifecycle(s, today) === 'expired' ? 'Vencida' : 'Pendiente'}
                               </span>
                             </button>
                           );
@@ -1475,7 +1477,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           {selectedRoster.map(studentId => {
                             const studentObj = students.find(st => st.id === studentId);
                             const cat = studentObj?.studentCategory || 'membresia';
-                            const isTemporary = cat === 'temporal';
+                            const isTemporary = isNonMembershipCategory(cat);
                             const persistedSession = sessions.find(session => session.id === editingSessionId);
                             const displayName = getStudentName(studentId, persistedSession);
                              const selectedCardId = sessionForm.giftCardIdByStudentId[studentId] || '';
@@ -1496,7 +1498,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                 <span className="shrink-0 text-[11px] text-[#8B6B5E]">ID {shortId(studentId)}</span>
                                 {cancelled && <span className="text-[11px] text-[#8B6B5E]">Cancelada (historial)</span>}
                                 <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
-                                  {isTemporary ? 'Bonotemp' : 'Membresía'}
+                                  {isTemporary ? studentCategoryLabel(cat) : 'Membresía'}
                                 </span>
                                 <button
                                   type="button"
@@ -1530,7 +1532,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                     }}
                                     className="mt-1 h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-2 text-[12px] text-[#2F211B] disabled:opacity-55"
                                   >
-                                    <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin fuente de credito seleccionada'}</option>
+                                    <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin fuente de crédito seleccionada'}</option>
                                     {selectedCardId && !fundingCards.some(card => card.id === selectedCardId) && (
                                       <option value={selectedCardId} disabled>{linkedCard ? `Bono de ${displayName} (${shortId(selectedCardId)})` : `Vínculo persistido (${shortId(selectedCardId)}): recarga para verificar`}</option>
                                     )}
