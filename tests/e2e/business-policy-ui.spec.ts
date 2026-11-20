@@ -65,7 +65,7 @@ test.beforeEach(async ({ page }) => {
       await import('/tests/fixtures/business-policy-ui-harness.tsx');
     </script></body></html>` }));
   await page.goto(`${origin}/business-policy-test`);
-  await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeVisible();
 });
 test.afterEach(async ({ page }) => {
   expect(isolation.get(page)).toEqual({ requests: [], errors: [] });
@@ -104,7 +104,7 @@ const startStoredOperation = async (page: Page, operation: string, behavior: str
   await configure(page, { behavior });
   if (operation === 'reservation' || operation === 'new_reservation') {
     if (operation === 'reservation') await page.locator(`[data-session-id="${sessionId}"]`).click();
-    else await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+    else await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
     const settings = page.getByRole('dialog');
     await settings.getByLabel('Cupo máximo').fill('3');
     await settings.getByLabel('Hora de inicio').fill('14:00');
@@ -521,7 +521,7 @@ for (const operation of ['approve_exception', 'cancel_reservation', 'waive_penal
     await page.clock.setFixedTime(new Date('2031-01-01T00:00:00Z'));
     await configure(page, { fixture: 'roll-forward', now: '2031-01-01T00:00:00Z' });
     await page.getByRole('button', { name: 'Recargar datos sin repetir escrituras', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeVisible();
     expect(await output(page, 'calls')).toHaveLength(1);
     expect(await output(page, 'rpc-calls')).toHaveLength(1);
     expect(await output(page, 'retry-calls')).toEqual([]);
@@ -529,7 +529,7 @@ for (const operation of ['approve_exception', 'cancel_reservation', 'waive_penal
     if (operation === 'new_reservation' && failure === 'unmount-refresh-failure') {
       await page.locator(`[data-session-id="${descriptor.sessionId}"]`).click();
     } else if (operation === 'reservation' || operation === 'approve_exception') await open(page);
-    else await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+    else await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
     const active = page.getByRole('dialog');
     const recovery = active.getByTestId('pending-session-operation');
     await expect(recovery).toHaveAttribute('data-operation', descriptor.operation);
@@ -539,7 +539,7 @@ for (const operation of ['approve_exception', 'cancel_reservation', 'waive_penal
     await expect(active.getByRole('button', { name: 'Cerrar modal' })).toBeDisabled();
     await expect(active.locator('fieldset').first()).toHaveAttribute('disabled', '');
     expect(await active.locator('input, select').evaluateAll(controls => controls.every(control => control.matches(':disabled')))).toBe(true);
-    await page.getByRole('button', { name: 'Nueva sesión', exact: true }).evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.getByRole('button', { name: 'Nueva clase', exact: true }).evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await expect(page.getByRole('dialog')).toHaveCount(1);
     expect(await output(page, 'calls')).toHaveLength(1);
     const business = !['attendance', 'reservation', 'new_reservation'].includes(operation);
@@ -791,7 +791,7 @@ test('new sessions explicitly select policy 2, while editing legacy metadata nev
   await expect(settings).toHaveCount(0);
   expect((await output(page, 'calls'))[0].input).not.toHaveProperty('attendancePolicyVersion');
   expect((await output(page, 'sessions'))[0].attendancePolicyVersion).toBe(1);
-  await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+  await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
   await page.getByLabel('Profesor', { exact: false }).selectOption('teacher');
   await page.getByRole('dialog', { name: 'Nueva sesión', exact: true }).getByRole('button', { name: 'Crear sesión', exact: true }).click();
   expect((await output(page, 'calls'))[1]).toMatchObject({ operation: 'add', input: { attendancePolicyVersion: 2 } });

@@ -17,12 +17,12 @@ const navItems = [
         )
     },
     {
-        path: '/calendar', label: 'Calendario', section: 'GESTIÓN', icon: (
+        path: '/calendar', label: 'Clases', section: 'GESTIÓN', icon: (
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
         )
     },
     {
-        path: '/agenda', label: 'Agenda', section: 'GESTIÓN', icon: (
+        path: '/agenda', label: 'Otras actividades del taller', section: 'GESTIÓN', icon: (
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 3v3m12-3v3M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1Zm3 8h3m-3 4h3m3-4h3m-3 4h3" /></svg>
         )
     },
@@ -32,13 +32,13 @@ const navItems = [
         )
     },
     {
-        path: '/giftcards', label: 'Bonos Regalo', section: 'COMERCIAL', icon: (
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" /></svg>
+        path: '/history', label: 'Historial', section: 'GESTIÓN', icon: (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
         )
     },
     {
-        path: '/history', label: 'Historial', section: 'GESTIÓN', icon: (
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        path: '/giftcards', label: 'Bonos regalo', section: 'COMERCIAL', icon: (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" /></svg>
         )
     },
     {
@@ -47,55 +47,75 @@ const navItems = [
         )
     },
     {
+        path: '/pieces', label: 'Piezas', section: 'TALLER', icon: (
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M5 9h14l-2 11H7L5 9ZM8 9V4h8v5" strokeWidth="2" /></svg>
+        )
+    },
+    {
         path: '/team', label: 'Equipo de Trabajo', section: 'EQUIPO DE TRABAJO', icon: (
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
         )
     },
+    {
+        path: '/teachers', label: 'Profesores', section: 'EQUIPO DE TRABAJO', icon: (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6l7 4-7 4-7-4 7-4zm0 8v6m-7-2l7 4 7-4" /></svg>
+        )
+    },
 ];
-
-navItems.push({ path: '/pieces', label: 'Piezas', section: 'TALLER', icon: <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M5 9h14l-2 11H7L5 9ZM8 9V4h8v5" strokeWidth="2" /></svg> });
 
 const mobilePrimaryPaths = ['/dashboard', '/calendar', '/students', '/giftcards', '/agenda'];
 const mobilePrimaryLabels: Record<string, string> = {
-    '/dashboard': 'Dashboard',
-    '/calendar': 'Calendario',
+    '/dashboard': 'Resumen',
+    '/calendar': 'Clases',
     '/students': 'Alumnos',
     '/giftcards': 'Bonos',
-    '/agenda': 'Agenda'
+    '/agenda': 'Otras actividades del taller'
 };
 
 const menuConfig = [
-    { group: 'INICIO', items: [{ path: '/dashboard', label: 'Inicio' }] },
+    { group: 'INICIO', items: [{ path: '/dashboard', label: 'Resumen' }] },
     {
         group: 'GESTIÓN', items: [
-            { path: '/calendar', label: 'Calendario' },
-            { path: '/agenda', label: 'Agenda' },
+            { path: '/calendar', label: 'Clases' },
+            { path: '/agenda', label: 'Otras actividades del taller' },
             { path: '/students', label: 'Alumnos' },
             { path: '/history', label: 'Historial' }
         ]
     },
     { group: 'TALLER', items: [{ path: '/pieces', label: 'Piezas' }, { path: '/inventory', label: 'Inventario' }] },
-    { group: 'COMERCIAL', items: [{ path: '/giftcards', label: 'Bonos Regalo' }] },
+    { group: 'COMERCIAL', items: [{ path: '/giftcards', label: 'Bonos regalo' }] },
     { group: 'EQUIPO DE TRABAJO', items: [{ path: '/team', label: 'Equipo de Trabajo' }, { path: '/teachers', label: 'Profesores' }] },
     { group: 'SISTEMA', items: [{ path: '/settings', label: 'Administración del taller' }] }
 ];
 
+const workshopTodayLabel = () => {
+    const formatted = new Intl.DateTimeFormat('es-ES', {
+        timeZone: 'Europe/Madrid',
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+    }).format(new Date());
+    return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+};
+
 const getViewTitle = (pathname: string) => {
     switch (pathname) {
         case '/dashboard': return <>
-            <span className="eyebrow block mb-1">Centro de operaciones</span>
-            Estado del <span className="text-brand italic">taller hoy</span>
+            Resumen
+            <span className="mt-1 block text-[13px] font-medium not-italic tracking-normal text-neutral-textHelper">
+                {workshopTodayLabel()} · Estado del taller hoy
+            </span>
         </>;
-        case '/calendar': return <>Gestión de <span className="text-brand italic">agenda</span></>;
-        case '/agenda': return <>Agenda de <span className="text-brand italic">actividades</span></>;
-        case '/students': return <>Gestión de <span className="text-brand italic">alumnos</span></>;
-        case '/teachers': return <>Gestión de <span className="text-brand italic">profesores</span></>;
-        case '/pieces': return <>Control de <span className="text-brand italic">piezas</span></>;
-        case '/giftcards': return <>Tarjetas de <span className="text-brand italic">regalo</span></>;
-        case '/history': return <>Historial <span className="text-brand italic">maestro</span></>;
-        case '/inventory': return <>Inventario del <span className="text-brand italic">estudio</span></>;
+        case '/calendar': return <>Clases</>;
+        case '/agenda': return <>Otras actividades del <span className="text-brand italic">taller</span></>;
+        case '/students': return <>Alumnos</>;
+        case '/teachers': return <>Profesores</>;
+        case '/pieces': return <>Piezas</>;
+        case '/giftcards': return <>Bonos <span className="text-brand italic">regalo</span></>;
+        case '/history': return <>Historial</>;
+        case '/inventory': return <>Inventario</>;
         case '/settings': return <>Administración del <span className="text-brand italic">taller</span></>;
-        case '/team': return <>Equipo de <span className="text-brand italic">trabajo</span></>;
+        case '/team': return <>Equipo de <span className="text-brand italic">Trabajo</span></>;
         default: return <>Estudio</>;
     }
 };
@@ -116,7 +136,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
 
     // Staff cannot see team management or settings
     const staffHiddenPaths = ['/team', '/settings'];
-    const filteredNavItems = isStaff ? navItems.filter(item => !staffHiddenPaths.includes(item.path) || item.path === '/team') : navItems;
+    const filteredNavItems = isStaff ? navItems.filter(item => !staffHiddenPaths.includes(item.path)) : navItems;
     const filteredMenuConfig = isStaff
         ? menuConfig.map(g => ({ ...g, items: g.items.filter(i => !staffHiddenPaths.includes(i.path)) })).filter(g => g.items.length > 0)
         : menuConfig;
@@ -138,37 +158,24 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                             </div>
                         </div>
 
-                        <nav className="menu-typography-110 space-y-1 min-h-0 flex-1 overflow-y-auto py-2">
+                        <nav className="menu-typography-110 space-y-0.5 min-h-0 flex-1 overflow-y-auto py-1">
                             {filteredNavItems.map((item, index) => (
                                 <React.Fragment key={item.path}>
                                     {(index === 0 || filteredNavItems[index - 1]?.section !== item.section) && (
-                                        <p className="eyebrow px-3.5 pb-2 pt-4 first:pt-0">{item.section}</p>
+                                        <p className="eyebrow px-3.5 pb-1 pt-2 first:pt-0">{item.section}</p>
                                     )}
-                                    {!(isStaff && item.path === '/team') && (
-                                        <button
-                                            onClick={() => navigate(item.path)}
-                                            className={`w-full flex items-center gap-3 px-3.5 min-h-[44px] rounded-[10px] transition-colors duration-200 group ${location.pathname === item.path
-                                                ? 'bg-brand text-white'
-                                                : 'text-neutral-textSec hover:bg-neutral-alt hover:text-brand'
-                                                }`}
-                                        >
-                                            <div className="transition-transform duration-200 shrink-0 group-hover:scale-105">
-                                                {item.icon}
-                                            </div>
-                                            <span className={`text-[14px] truncate ${location.pathname === item.path ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>
-                                        </button>
-                                    )}
-                                    {item.path === '/team' && (
-                                        <div className="ml-7 border-l border-neutral-border pl-3">
-                                            <button
-                                                onClick={() => navigate('/teachers')}
-                                                className={`w-full flex items-center gap-2 px-3 min-h-[38px] rounded-[9px] text-left transition-colors ${location.pathname === '/teachers' ? 'bg-brand-soft text-brand font-semibold' : 'text-neutral-textHelper hover:bg-neutral-alt hover:text-brand'}`}
-                                            >
-                                                <span className="h-1.5 w-1.5 rounded-full bg-current shrink-0" />
-                                                <span className="text-[13px] truncate">Profesores</span>
-                                            </button>
+                                    <button
+                                        onClick={() => navigate(item.path)}
+                                        className={`w-full flex items-center gap-3 px-3.5 py-2 min-h-[44px] rounded-[10px] transition-colors duration-200 group ${location.pathname === item.path
+                                            ? 'bg-brand text-white'
+                                            : 'text-neutral-textSec hover:bg-neutral-alt hover:text-brand'
+                                            }`}
+                                    >
+                                        <div className="transition-transform duration-200 shrink-0 group-hover:scale-105">
+                                            {item.icon}
                                         </div>
-                                    )}
+                                        <span className={`text-left text-[14px] leading-snug ${location.pathname === item.path ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>
+                                    </button>
                                 </React.Fragment>
                             ))}
                         </nav>
@@ -255,7 +262,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                             <span className="mobile-nav-icon flex h-7 w-7 items-center justify-center [&>svg]:h-7 [&>svg]:w-7">
                                 {item.icon}
                             </span>
-                            <span className="max-w-full truncate text-center text-[15px] font-medium leading-tight tracking-[-0.02em]">
+                            <span className={`max-w-full text-center font-medium leading-tight tracking-[-0.02em] ${mobilePrimaryLabels[item.path].length > 14 ? 'whitespace-normal text-[11px]' : 'truncate text-[15px]'}`}>
                                 {mobilePrimaryLabels[item.path]}
                             </span>
                         </button>

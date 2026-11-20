@@ -907,7 +907,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
         <div className="flex items-end justify-between gap-4 mb-4">
           <div>
             <p className="eyebrow mb-1">Control de materiales</p>
-            <h1 className="ui-page-title text-neutral-textMain">Inventario del <span className="text-brand italic">estudio</span></h1>
+            <h1 className="ui-page-title text-neutral-textMain">Inventario</h1>
             <p className="text-[13px] text-neutral-textHelper mt-1">Materiales, existencias y movimientos del taller.</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">

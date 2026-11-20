@@ -112,7 +112,7 @@ test.describe('Calendario', () => {
 
     await login(page);
     await page.goto('/calendar');
-    await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+    await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
     await page.getByLabel('Tipo de sesión').selectOption('workshop');
     await page.getByLabel('Nombre del workshop').fill(workshopName);
     await page.getByLabel('Hora de inicio').fill('13:00');
@@ -164,7 +164,7 @@ test.describe('Calendario', () => {
     try {
       await login(page);
       await page.goto('/calendar');
-      await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+      await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
       await page.getByLabel('Tipo de sesión').selectOption('workshop');
       await page.getByLabel('Nombre del workshop').fill(qaName('CLOSED-DAY'));
       await page.getByRole('button', { name: 'Crear sesión' }).click();
@@ -181,7 +181,7 @@ test.describe('Calendario', () => {
       ]);
       await page.getByRole('button', { name: 'Cerrar modal' }).click();
       await page.reload();
-      await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+      await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
       await page.getByLabel('Tipo de sesión').selectOption('workshop');
       await page.getByLabel('Nombre del workshop').fill(qaName('OUTSIDE-HOURS'));
       await page.getByLabel('Hora de inicio').fill('09:00');
@@ -248,7 +248,7 @@ test.describe('Gift Cards', () => {
     const giftCardId = giftCardRows[0].id as string;
 
     await page.goto('/calendar');
-    await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+    await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
     await page.getByLabel('Tipo de sesión').selectOption('workshop');
     await page.getByLabel('Nombre del workshop').fill(workshopName);
     await page.getByRole('button', { name: 'Temporales' }).click();

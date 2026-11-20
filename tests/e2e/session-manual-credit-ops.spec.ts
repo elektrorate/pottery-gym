@@ -185,7 +185,7 @@ test.describe('production sessionOps wiring with isolated transport', () => {
     await page.route('**/session-manual-credit-test', route => route.fulfill({ contentType: 'text/html', body: manualCreditHarnessHtml }));
     await page.exposeFunction('assertManualCreditIsolation', () => expect(violations).toEqual([]));
     await page.goto(`${origin}/session-manual-credit-test`);
-    await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeVisible();
   });
   test.afterEach(async ({ page }) => { await page.evaluate(() => (window as any).assertManualCreditIsolation()); });
   const configure = (page: Page, value: Record<string, string>) => page.evaluate(value => window.dispatchEvent(new CustomEvent('manual-credit-configure', { detail: value })), value);

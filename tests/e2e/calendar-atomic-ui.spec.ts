@@ -61,7 +61,7 @@ test.beforeEach(async ({ page }) => {
       await import('/tests/fixtures/calendar-atomic-harness.tsx');
     </script></body></html>` }));
   await page.goto(`${origin}/calendar-atomic-test`);
-  await expect(page.getByRole('button', { name: 'Nueva sesión', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Nueva clase', exact: true })).toBeVisible();
   expect(externalRequests).toEqual([]);
   expect(errors).toEqual([]);
   // These arrays keep accumulating during the interaction, not just initial load.
@@ -84,7 +84,7 @@ const attendanceRow = (page: Page, id: string) => attendanceDialog(page).locator
 const mark = (page: Page, id: string, present: boolean) => attendanceRow(page, id).getByRole('button', { name: present ? /Marcar asistencia/ : /Marcar falta/ }).click();
 const openAttendance = (page: Page) => page.getByRole('button', { name: 'Abrir control de asistencia', exact: true }).click();
 const newReservation = async (page: Page) => {
-  await page.getByRole('button', { name: 'Nueva sesión', exact: true }).click();
+  await page.getByRole('button', { name: 'Nueva clase', exact: true }).click();
   await page.getByLabel('Hora de inicio').fill('14:00');
   await page.getByLabel('Hora de fin').fill('16:00');
   await page.getByLabel('Profesor', { exact: false }).selectOption('teacher');
