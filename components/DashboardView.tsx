@@ -2,7 +2,7 @@ import { isClassesRunningLow, needsStudentReview, studentEffectiveRemainingClass
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
-import { countVisibleStudentsByCategory, getPendingMembershipPayments, isStudentArchived, studentHasPendingPayment } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, isStudentArchived, pendingPaymentNotices, studentHasPendingPayment } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, enrollmentOnDate, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
@@ -97,7 +97,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
   // ─── GLOBAL stats ───
   const globalStats = useMemo(() => {
     const totalStudents = students.length;
-     const pendingStudents = students.filter(s => getPendingMembershipPayments(s).length > 0).length;
+     const pendingStudents = students.filter(studentHasPendingPayment).length;
      const totalSessions = sessions.length;
      const byCategory = countVisibleStudentsByCategory(students, todayStr);
      const activeMembership = students.filter(student => !isStudentArchived(student, todayStr)
@@ -142,9 +142,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
       const fullName = presentPersonName(student.name, student.surname);
       const isMembership = (student.studentCategory || 'membresia') === 'membresia';
       const isExpired = Boolean(student.expiryDate && student.expiryDate < todayStr);
-      getPendingMembershipPayments(student).forEach(period => list.push({
-        id: student.id, key: `${student.id}:${period.id}:payment`, name: fullName,
-        reason: `Pago pendiente · ${period.startsOn ? formatDate(period.startsOn) : 'Sin inicio'} — ${period.endsOn ? formatDate(period.endsOn) : 'Sin vencimiento'}`,
+      pendingPaymentNotices(student).forEach(notice => list.push({
+        id: student.id, key: notice.key, name: fullName, reason: notice.reason,
         type: 'warning', category: 'payment'
       }));
       if (isStudentArchived(student, todayStr)) return;

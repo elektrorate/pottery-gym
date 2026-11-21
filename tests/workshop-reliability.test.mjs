@@ -23,7 +23,7 @@ test('imported credits never invent a plan denominator or establish payment',()=
   assert.equal(needsStudentReview({...imported,archivedAt:'2026-11-18'}),false);
   assert.equal(studentBalanceLabel({...imported,legacyManualBalance:null}),'Clases por confirmar');
   const confirmed={...imported,effectivePeriodId:'period',membershipTier:'gold',bonosAsignados:4,classesRemaining:3,paymentStatus:'paid',expiryDate:'2026-12-18'};
-  assert.equal(studentBalanceLabel(confirmed),'3 / 4');assert.equal(needsStudentReview(confirmed),false);
+  assert.equal(studentBalanceLabel(confirmed),'Quedan 3 de 4 clases');assert.equal(needsStudentReview(confirmed),false);
 });
 test('recovery copies detect tampering, missing entities, mismatched counts and broken references',async()=>{
   const copy=makeCopy();copy.data.students=[{id:'s1',sede_id:sede,name:'Original'}];copy.manifest.students=1;

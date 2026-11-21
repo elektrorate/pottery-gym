@@ -288,6 +288,48 @@ reset role;
 select public.ux_assert(classes_remaining = 4 and current_membership_period_id is null,
   'rejected temporal finalize leaves the scalar balance untouched') from public.students where id = public.ux_id('e2', 5);
 
+-- The discounting exception (membership_override) must succeed for this unpaid pack.
+-- The enrollment has no membership period; the row is stored with every source null.
+reset role;
+update public.students set payment_status = 'pending' where id = public.ux_id('e2', 5);
+select public.ux_assert(
+  exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.session_business_exceptions'::regclass
+      and conname = 'session_business_exceptions_override_source'
+      and pg_get_constraintdef(oid) ilike '%membership_override%'
+      and pg_get_constraintdef(oid) not ilike '%period_id is not null%'
+  )
+  and not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.session_business_exceptions'::regclass
+      and contype = 'c'
+      and pg_get_constraintdef(oid) ilike '%membership_override%'
+      and pg_get_constraintdef(oid) ilike '%period_id is not null%'
+  ),
+  'discounting exception no longer requires a membership period and still rejects a gift card');
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.approve_session_exception(public.ux_id('e4', 8), public.ux_id('e2', 5), public.ux_id('e6', 32), 1,
+  'membership_override', 'Propietario: el bono está impago y esta sesión sí descuenta una clase');
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.save_session_attendance(public.ux_id('e4', 8), public.ux_id('e6', 33), 2,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 5), 'status', 'present')), true, null);
+reset role;
+select public.ux_assert(
+  kind = 'membership_override' and period_id is null and gift_card_id is null and manual_credit_id is null,
+  'class-pack discount is stored without a membership period or a gift card')
+  from public.session_business_exceptions where session_id = public.ux_id('e4', 8);
+select public.ux_assert(classes_remaining = 3 and bonos_asignados = 4 and payment_status = 'pending',
+  'owner class-pack override deducts one class and leaves the bono payment pending')
+  from public.students where id = public.ux_id('e2', 5);
+select public.ux_assert(billing_state = 'charged' and billing_kind = 'attendance' and exception_kind = 'membership_override',
+  'finalized class-pack override is a charged attendance')
+  from public.session_business_state where session_id = public.ux_id('e4', 8);
+select public.ux_assert(count(*) = 1 and bool_and(delta = -1 and disposition = 'scalar_balance' and period_id is null),
+  'class-pack override writes one scalar debit')
+  from public.session_credit_movements where session_id = public.ux_id('e4', 8);
+
 reset role;
 select public.ux_assert(f->>'overridable' = 'true' and f->>'no_credit_allowed' = 'true' and f->>'usable' = 'false',
   'open probe session still has both owner exceptions before rollback')

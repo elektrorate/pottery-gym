@@ -7,7 +7,7 @@ export const getStudentSessionStatus = (session: ClassSession, studentId: string
     ?? 'pending';
   if (status === 'pending') return 'Pendiente';
   if (!session.completedAt) return status === 'present' ? 'Asistencia provisional' : 'Falta provisional';
-  return status === 'present' ? 'Asistió' : 'Faltó';
+  return status === 'present' ? 'Asistió' : 'Faltó sin avisar';
 };
 
 export type GiftCardLifecycle = 'pending' | 'active' | 'consumed' | 'expired' | 'cancelled';
@@ -28,6 +28,9 @@ export const sessionBusinessErrorMessage = (error: unknown): string => {
   }
   if (message.startsWith('Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session')) {
     return 'Solo el propietario del taller puede aprobar esta excepción cuando la membresía está pendiente, vencida o no cubre la sesión.';
+  }
+  if (/session_business_exceptions/i.test(message) && /check constraint/i.test(message)) {
+    return 'No se pudo aprobar la excepción. El descuento tiene que corresponder a la membresía o al bono de clases, sin mezclar un bono regalo. Elige el tipo que descuenta una clase y vuelve a intentarlo.';
   }
   return message;
 };

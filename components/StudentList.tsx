@@ -1,4 +1,5 @@
 import { hasVerifiedMembership, isClassesRunningLow, needsStudentReview, studentBalanceLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining, manualCreditBreakdown } from '../utils/studentPresentation';
+import { quedanDeClases } from '../utils/pluralize';
 import { emailError, phoneError, positiveAmountError } from '../utils/contactValidation';
 import { pluralWord } from '../utils/pluralize';
 import { showError } from '../context/toast';
@@ -11,7 +12,7 @@ import { DangerZone } from './shared/DangerZone';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { capitalizeEs, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
-import { countVisibleStudentsByCategory, getPendingMembershipPayments, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, previousClassesMessage, previousClassesToRegister, cuotaDefaultForCategory } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel } from '../utils/classTypeLabels';
@@ -76,12 +77,8 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
   const locked = busy || !!pending;
   const ownerHint = canManageStudentCredits?.(student) === true;
   const recoveryAvailable = !!getPendingStudentCreditOperation && !!onRetryPendingStudentCreditOperation;
-  const legacyBalance = typeof student.legacyManualBalance === 'number' && Number.isFinite(student.legacyManualBalance)
-    ? student.legacyManualBalance : null;
-  const canReconcile = student.canReconcileLegacy !== false && !isManagedMembership(student)
-    && !student.effectivePeriodId && !student.materializedPeriodId && !student.membershipPeriods?.length
-    && Number.isSafeInteger(legacyBalance) && legacyBalance! > 0
-    && !(student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy');
+  const legacyBalance = previousClassesToRegister(student);
+  const canReconcile = legacyBalance != null;
   const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0
     && !!draft.activity && Object.hasOwn(CREDIT_ACTIVITY_LABELS, draft.activity)
     && /^\d{4}-\d{2}-\d{2}$/.test(draft.startsOn) && /^\d{4}-\d{2}-\d{2}$/.test(draft.endsOn)
@@ -153,12 +150,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
     }
   };
 
-  const reconciled = (student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy');
-  const legacySummary = reconciled
-    ? 'Esas clases anteriores ya están registradas.'
-    : canReconcile
-      ? `Le ${legacyBalance === 1 ? 'queda' : 'quedan'} ${legacyBalance} ${legacyBalance === 1 ? 'clase anterior' : 'clases anteriores'} por registrar.`
-      : 'No hay clases anteriores por registrar.';
+  const legacySummary = previousClassesMessage(student);
 
   return <section aria-label="Clases añadidas e incidencias" data-testid="student-credit-panel" data-student-id={student.id}
     className="min-w-0 space-y-4 border-t border-[#E6D8CB] py-6 text-[12px] text-[#8B6B5E]">
@@ -442,6 +434,7 @@ const StudentList: React.FC<StudentListProps> = ({
   const applyCategoryChange = (category: StudentCategoryValue) => {
     const plan = MEMBERSHIP_PLANS[form.membershipTier];
     const toPack = isNonMembershipCategory(category);
+    const cuota = cuotaDefaultForCategory(category, plan.price);
     setForm(current => ({
       ...current,
       studentCategory: category,
@@ -449,8 +442,10 @@ const StudentList: React.FC<StudentListProps> = ({
       classesRemaining: toPack
         ? Math.min(Math.max(1, current.bonosAsignados || current.classesRemaining || 1), Math.max(1, current.classesRemaining || 1))
         : Math.min(plan.bonuses, current.classesRemaining),
-      repetirMensualmente: category === 'membresia' ? current.repetirMensualmente : false
+      repetirMensualmente: category === 'membresia' ? current.repetirMensualmente : false,
+      price: cuota ?? 0
     }));
+    setPriceText(cuota == null ? '' : String(cuota));
     setPendingCategory(null);
   };
 
@@ -486,9 +481,17 @@ const StudentList: React.FC<StudentListProps> = ({
     const isMembership = form.studentCategory === 'membresia';
     if (emailError(form.email) || phoneError(form.phone)) return;
     if (!isMembership && form.classesRemaining > form.bonosAsignados) return;
-    if (!isMembership && (!priceText.trim() || positiveAmountError(Number(priceText), 'La cuota'))) {
-      if (!priceText.trim()) setPriceText('0');
-      return;
+    const packPrice = Number(priceText);
+    if (!isMembership) {
+      if (!priceText.trim()) {
+        showError('Indica la cuota del bono. No hay un precio configurado para esta categoría.');
+        return;
+      }
+      const amountError = positiveAmountError(packPrice, 'La cuota');
+      if (amountError) {
+        showError(amountError);
+        return;
+      }
     }
     const plan = MEMBERSHIP_PLANS[form.membershipTier];
     const membershipActivatedAt = form.membershipActivatedAt || editingStudent?.membershipActivatedAt || editingStudent?.createdAt?.split('T')[0] || getWorkshopDate();
@@ -496,7 +499,7 @@ const StudentList: React.FC<StudentListProps> = ({
     const packBonos = Math.min(TEMPORAL_MAX_BONOS, Math.max(1, form.bonosAsignados));
     const data = {
       ...studentForm,
-      price: isMembership ? plan.price : form.price,
+      price: isMembership ? plan.price : packPrice,
       bonosAsignados: isMembership ? form.bonosAsignados : packBonos,
       classesRemaining: Math.max(0, form.classesRemaining),
       repetirMensualmente: isMembership ? form.repetirMensualmente : false,
@@ -647,7 +650,7 @@ const StudentList: React.FC<StudentListProps> = ({
       const lifecycle = getStudentLifecycle(s, today);
       const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
       const matchesSearch = !searchQuery.trim() || fullName.includes(searchQuery.trim().toLowerCase());
-      if (activePreset === 'payment') return matchesSearch && getPendingMembershipPayments(s).length > 0;
+      if (activePreset === 'payment') return matchesSearch && studentHasPendingPayment(s);
       if (activePreset === 'low-classes') return matchesSearch && !archived && isClassesRunningLow(s, giftCards);
       if (activePreset === 'enrolled') return matchesSearch && !!enrolledStudentIds?.includes(s.id);
       const cat = s.studentCategory || 'membresia';
@@ -744,11 +747,12 @@ const StudentList: React.FC<StudentListProps> = ({
               const cat = s.studentCategory || 'membresia';
               const membershipTier = inferMembershipTier(s.membershipTier, s.price);
               const initials = presentInitials(s.name, s.surname);
-              const percentage = hasVerifiedMembership(s) ? Math.min(100, (s.classesRemaining / s.bonosAsignados!) * 100) : 0;
+              const classTotal = hasVerifiedMembership(s) || isNonMembershipCategory(cat) ? s.bonosAsignados : undefined;
+              const percentage = classTotal && classTotal > 0 ? Math.min(100, ((s.classesRemaining ?? 0) / classTotal) * 100) : 0;
                return <button key={s.id} data-student-id={s.id} onClick={() => handleEditClick(s)} className="ui-list w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-3 md:gap-4 items-center px-4 md:px-5 py-3.5 border-b last:border-0 border-[#EDE2D8] hover:bg-[#FCF8F4] focus:outline-none focus:bg-[#FCF8F4] transition-colors group">
                   <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{presentPersonName(s.name, s.surname)}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{studentActivityLabel(s, giftCards) || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' && !hasVerifiedMembership(s) ? 'Plan por confirmar · Por verificar' : studentCategoryLabel(cat)}</span></span></div>
                   <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{studentActivityLabel(s, giftCards) || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? (hasVerifiedMembership(s) ? MEMBERSHIP_PLANS[membershipTier].label : 'Plan por confirmar') : studentCategoryLabel(cat)}</span></div>
-                  <div className="max-w-[112px] text-right md:max-w-none md:text-left"><strong className={`text-[16px] tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{hasVerifiedMembership(s) ? <>{s.classesRemaining}<span className="ui-meta font-normal">/{s.bonosAsignados}</span></> : <span className="block whitespace-normal text-[12px] leading-snug">{studentBalanceLabel(s, giftCards)}</span>}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
+                  <div className="max-w-[140px] text-right md:max-w-none md:text-left"><strong className={`block whitespace-normal text-[12px] leading-snug tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{studentBalanceLabel(s, giftCards)}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
                   <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : isNonMembershipCategory(cat) ? studentCategoryLabel(cat) : isExpired ? 'Vencida' : needsStudentReview(s) ? 'Por verificar' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
@@ -775,7 +779,7 @@ const StudentList: React.FC<StudentListProps> = ({
                   {phoneError(form.phone) && <p role="alert" className="sm:col-span-2 text-[12px] text-[#9C4235]">{phoneError(form.phone)}</p>}
                 </div>
               </section>
-               <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as StudentCategoryValue)} aria-label="Categoría del alumno" className="col-span-2 h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos de clases</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="text" inputMode="decimal" value={priceText} onChange={(e) => { const raw = e.target.value; setPriceText(raw); const parsed = Number(raw); if (raw.trim() === '') setForm({ ...form, price: 0 }); else if (Number.isFinite(parsed)) setForm({ ...form, price: parsed }); }} placeholder="Cuota" aria-label="Cuota" aria-invalid={form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') ? true : undefined} className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div>{form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">{positiveAmountError(Number(priceText), 'La cuota')}</p>}</section>
+               <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as StudentCategoryValue)} aria-label="Categoría del alumno" className="col-span-2 h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos de clases</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="text" inputMode="decimal" value={priceText} onChange={(e) => { const raw = e.target.value; setPriceText(raw); const parsed = Number(raw); if (raw.trim() === '') setForm({ ...form, price: 0 }); else if (Number.isFinite(parsed)) setForm({ ...form, price: parsed }); }} placeholder="Cuota" aria-label="Cuota" aria-invalid={form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') ? true : undefined} className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div>{form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">{positiveAmountError(Number(priceText), 'La cuota')}</p>}{form.studentCategory !== 'membresia' && <p className="mt-2 text-[12px] text-[#8B6B5E]">La cuota del bono no hereda el precio de la membresía. No hay una lista de precios de bonos en ajustes: indícala.</p>}</section>
                 {form.studentCategory === 'membresia' && (!editingStudent || hasVerifiedMembership(editingStudent)) && <div className="grid grid-cols-3 gap-1.5 mt-2">
                     {(['plata', 'gold', 'platinum'] as MembershipTier[]).map(tier => <button key={tier} type="button" disabled={managedEdit} onClick={() => requestMembershipTierChange(tier)} className={`min-h-11 rounded-lg border px-2 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors ${form.membershipTier === tier ? 'border-brand bg-brand text-white shadow-sm' : 'border-neutral-border bg-white text-neutral-textMain hover:border-brand hover:text-brand'}`}><span>{MEMBERSHIP_PLANS[tier].label}</span><span className={`block text-[11px] font-medium normal-case tracking-normal ${form.membershipTier === tier ? 'text-white/90' : 'text-neutral-textSec'}`}>{MEMBERSHIP_PLANS[tier].price}€ · {MEMBERSHIP_PLANS[tier].bonuses} clases</span></button>)}
                </div>}
@@ -794,7 +798,7 @@ const StudentList: React.FC<StudentListProps> = ({
                          </div>
                        </div>
                        <div>
-                         <div className="flex items-center justify-between mb-1"><label className="block text-[16px] font-medium text-[#7B3F22]">Clases restantes</label><span className="text-[11px] font-bold text-[#A85D3B]">{balance.remaining}/{balance.contracted}</span></div>
+                         <div className="flex items-center justify-between mb-1"><label className="block text-[16px] font-medium text-[#7B3F22]">Clases restantes</label><span className="text-[11px] font-bold text-[#A85D3B]">{quedanDeClases(balance.remaining, balance.contracted)}</span></div>
                          <div className="flex h-10 items-center justify-center rounded-md border border-[#E7B899] bg-white">
                            <input type="number" readOnly value={balance.remaining} aria-label="Clases restantes" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />
                          </div>
@@ -833,7 +837,7 @@ const StudentList: React.FC<StudentListProps> = ({
                     </div>
                   </div>
                   <div>
-                     <div className="flex items-center justify-between mb-1"><label className="block text-[16px] font-medium text-[#7B3F22]">Clases restantes</label><span className="text-[11px] font-bold text-[#A85D3B]">{form.classesRemaining}/{form.bonosAsignados}</span></div>
+                     <div className="flex items-center justify-between mb-1"><label className="block text-[16px] font-medium text-[#7B3F22]">Clases restantes</label><span className="text-[11px] font-bold text-[#A85D3B]">{quedanDeClases(form.classesRemaining, form.bonosAsignados)}</span></div>
                      <div className="flex items-center bg-white border border-[#E7B899] rounded-md overflow-hidden h-10">
                        <button type="button" onClick={() => requestRemainingClassChange(-1)} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Reducir clases restantes">-</button>
                       <input type="number" readOnly value={form.classesRemaining} aria-label="Clases restantes" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />

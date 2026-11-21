@@ -686,7 +686,8 @@ test('stale business rejection reloads current attendance and revision before an
 test('ordinary finalized attendance corrections do NOT refund a charged absence or clear its penalty', async ({ page }) => {
   await configure(page, { fixture: 'completed' });
   await open(page);
-  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('Faltó: no vino');
+  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('Faltó sin avisar');
+  await expect(dialog(page).getByTestId('attendance-policy')).toContainText('8 horas de antelación no descuenta');
   await expect(row(page, memberId).getByRole('button', { name: /Eximir penalización/ })).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Editar asistencia', exact: true }).click();
   await mark(page, memberId, 'present');

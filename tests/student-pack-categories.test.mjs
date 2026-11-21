@@ -55,11 +55,47 @@ test('dashboard remaining classes prefer linked gift cards over zeroed student c
     }];
     assert.equal(mod.studentEffectiveRemainingClasses(student, cards), 3);
     assert.equal(mod.studentEffectiveRemainingClasses(student, []), 0);
-    assert.equal(mod.studentBalanceLabel(student, cards), '3 clases');
+    assert.equal(mod.studentBalanceLabel(student, cards), 'Quedan 3 de 3 clases');
     const grupal = { ...student, id: 'g1', studentCategory: 'grupal', classesRemaining: 2, bonosAsignados: 4 };
     assert.equal(mod.studentEffectiveRemainingClasses(grupal, []), 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a new class pack is recognized and is not previous classes to register', async () => {
+  const { dir, mod } = await bundle('utils/studentLifecycle.ts');
+  const presentation = await bundle('utils/studentPresentation.ts');
+  try {
+    const fresh = {
+      id: 'nuevo', name: 'Nuevo', phone: '', status: 'new', studentCategory: 'temporal',
+      classesRemaining: 4, bonosAsignados: 4, legacyManualBalance: 4, paymentStatus: 'pending',
+      canReconcileLegacy: true, manualCredits: []
+    };
+    assert.equal(presentation.mod.assignedPackCoversBalance(fresh), true);
+    assert.equal(presentation.mod.defaultSessionFundingLabel(fresh), 'Bono de clases: quedan 4 de 4 clases');
+    assert.equal(presentation.mod.studentBalanceLabel(fresh), 'Quedan 4 de 4 clases');
+    assert.equal(mod.previousClassesToRegister(fresh), null);
+    assert.equal(mod.previousClassesMessage(fresh), 'No hay clases anteriores por registrar.');
+    const legacy = { ...fresh, bonosAsignados: null, classesRemaining: 3, legacyManualBalance: 3 };
+    assert.equal(presentation.mod.assignedPackCoversBalance(legacy), false);
+    assert.equal(mod.previousClassesToRegister(legacy), 3);
+    assert.match(mod.previousClassesMessage(legacy), /3 clases anteriores por registrar/);
+    assert.equal(mod.cuotaDefaultForCategory('membresia', 120), 120);
+    assert.equal(mod.cuotaDefaultForCategory('temporal', 120), null);
+    assert.equal(mod.cuotaDefaultForCategory('grupal', 120), null);
+    assert.equal(mod.pendingPaymentNotices(fresh).length, 1);
+    assert.equal(mod.pendingPaymentNotices(fresh)[0].reason, 'Pago pendiente');
+    assert.equal(mod.pendingPaymentNotices({ ...fresh, paymentStatus: 'paid' }).length, 0);
+    const member = {
+      id: 'ignacia', name: 'Ignacia', phone: '', studentCategory: 'membresia', paymentStatus: 'pending',
+      membershipPeriods: [{ id: 'period', studentId: 'ignacia', paymentStatus: 'pending', startsOn: '2026-11-20', endsOn: '2026-12-19' }]
+    };
+    assert.equal(mod.pendingPaymentNotices(member).length, 1);
+    assert.match(mod.pendingPaymentNotices(member)[0].reason, /Pago pendiente/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(presentation.dir, { recursive: true, force: true });
   }
 });
 
