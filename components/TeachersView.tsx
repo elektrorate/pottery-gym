@@ -307,7 +307,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
             {editingTeacher && <AdvancedDetails><p>Identificador del profesor: {editingTeacher.id}</p></AdvancedDetails>}
             {editingTeacher && (
               <DangerZone
-                description={`Eliminar a ${presentPersonName(editingTeacher.name, editingTeacher.surname)} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}
+                description={`Eliminar a ${presentPersonName(editingTeacher.name, editingTeacher.surname)} borra su ficha. Un profesor con alguna clase vinculada, incluidas las ya concluidas, no se puede eliminar: reasigne esas clases antes.`}
                 actionLabel="Eliminar profesor"
                 onAction={() => {
                   const linked = sessions.filter(session => sessionAssignedToTeacher(session, editingTeacher.id));
@@ -327,7 +327,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
       <ConfirmModal
         isOpen={!!teacherToDelete}
         title={`¿Eliminar a ${teacherPendingName}?`}
-        message="Esta acción no se puede deshacer. Las clases concluidas seguirán mostrando su nombre, pero se desvincularán de su perfil."
+        message="Esta acción no se puede deshacer. Solo se borra la ficha: un profesor con clases vinculadas, incluidas las ya concluidas, no se puede eliminar."
         isDestructive={true}
         onConfirm={() => {
           if (teacherToDelete) {

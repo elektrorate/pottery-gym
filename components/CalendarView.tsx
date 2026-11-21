@@ -139,7 +139,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || isSubmitting) return;
       if (overlapWarning || pastDateWarning || categoryWarning || cancelPrompt) return;
-      if (showAttendanceModal) { setShowAttendanceModal(false); return; }
+      if (showAttendanceModal && !formLocked) { setShowAttendanceModal(false); return; }
       if (showSessionModal && !formLocked) { clearAcknowledgements(); setShowSessionModal(false); }
     };
     document.addEventListener('keydown', onKey);
