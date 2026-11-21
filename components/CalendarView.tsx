@@ -1203,8 +1203,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         {!cancelled && !attendanceSession.completedAt && onApproveSessionException && <div className="space-y-2">
                           <label htmlFor={`exception-kind-${studentId}`} className="block">Tipo de excepción para {studentName} ({shortId(studentId)})</label>
                           <select id={`exception-kind-${studentId}`} value={businessForm.kind} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, kind: event.target.value as 'membership_override' | 'no_credit' } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]">
-                            <option value="membership_override">Usar membresía con pago pendiente/desconocido o vencida</option>
-                            <option value="no_credit">Autorizar asistencia sin crédito y sin descuento</option>
+                            <option value="membership_override">Usar esta membresía y descontar una clase (pendiente, vencida o no cubre la sesión)</option>
+                            <option value="no_credit">Autorizar asistencia sin descuento (crédito impago, vencido o que no cubre)</option>
                           </select>
                           <label htmlFor={`exception-reason-${studentId}`} className="block">Motivo de excepción para {studentName} ({shortId(studentId)})</label>
                           <input id={`exception-reason-${studentId}`} value={businessForm.reason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, reason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />

@@ -44,6 +44,22 @@ test('penalty and funding reasons never surface raw English codes in Spanish UI'
   }
 });
 
+test('attendance errors stay in Spanish, including the owner-only unusable membership exception', async () => {
+  const { dir, mod } = await bundle('utils/recordPresentation.ts');
+  try {
+    const finalized = mod.sessionBusinessErrorMessage(new Error(
+      'Presence requires valid original credit or an explicit current session exception: Original membership is unpaid, expired, archived or does not cover the session'));
+    assert.match(finalized, /No se puede finalizar la asistencia/);
+    assert.doesNotMatch(finalized, /Presence requires/);
+    assert.equal(
+      mod.sessionBusinessErrorMessage(new Error('Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session')),
+      'Solo el propietario del taller puede aprobar esta excepción cuando la membresía está pendiente, vencida o no cubre la sesión.'
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('studentCategoryLabel never returns raw grupal / grupo_temporal codes', async () => {
   const { dir, mod } = await bundle('utils/classTypeLabels.ts');
   try {

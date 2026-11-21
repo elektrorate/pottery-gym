@@ -1,0 +1,294 @@
+\set ON_ERROR_STOP on
+set client_min_messages = notice;
+set timezone = 'UTC';
+
+-- Disposable rehearsal of the 9 Nov 2026 MESA deadlock:
+-- today = 21 Nov, session = today-12 (9 Nov when today is 21 Nov), Gold period
+-- starts today-1 (20 Nov) and ends one membership month later (19 Dec), payment
+-- pending, 4/4 classes. classes_remaining is the legacy observed balance.
+-- Nothing here is production data.
+
+create function public.ux_assert(ok boolean, label text) returns void language plpgsql as $$
+begin
+  if ok is distinct from true then raise exception 'FAIL: %', label; end if;
+  raise notice 'PASS: %', label;
+end $$;
+create function public.ux_reject(statement text, expected text, code text default 'P0001')
+returns void language plpgsql security invoker as $$
+declare rejected boolean := false;
+begin
+  begin execute statement;
+  exception when others then
+    if sqlstate <> code or sqlerrm not like expected then raise; end if;
+    rejected := true;
+  end;
+  perform public.ux_assert(rejected, 'reject: ' || expected);
+end $$;
+create function public.ux_id(prefix text, n integer) returns uuid language sql immutable as $$
+  select (prefix || '000000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid;
+$$;
+create function public.ux_meta(day date, hour integer) returns jsonb language sql as $$
+  select jsonb_build_object('date', day::text,
+    'start_time', (day::timestamp at time zone 'UTC') + make_interval(hours => hour),
+    'end_time', (day::timestamp at time zone 'UTC') + make_interval(hours => hour + 1),
+    'class_type', 'mesa', 'capacity', 4);
+$$;
+
+insert into auth.users(id, email) values
+  (public.ux_id('e1', 1), 'ux-owner@example.invalid'),
+  (public.ux_id('e1', 2), 'ux-staff@example.invalid'),
+  (public.ux_id('e1', 3), 'ux-outsider@example.invalid');
+insert into public.profiles(id, email, role) values
+  (public.ux_id('e1', 1), 'ux-owner@example.invalid', 'tallerista'),
+  (public.ux_id('e1', 2), 'ux-staff@example.invalid', 'staff'),
+  (public.ux_id('e1', 3), 'ux-outsider@example.invalid', 'staff');
+insert into public.sedes(id, name, slug, owner_id) values
+  (public.ux_id('e3', 1), 'Exception workshop', 'ux-exception', public.ux_id('e1', 1));
+insert into public.sede_members(sede_id, user_id, role) values
+  (public.ux_id('e3', 1), public.ux_id('e1', 2), 'staff');
+
+set role authenticated;
+set request.jwt.claim.role = 'authenticated';
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+
+insert into public.students(id, sede_id, full_name, name, surname, student_category, membership_tier) values
+  (public.ux_id('e2', 1), public.ux_id('e3', 1), 'Gold Gap', 'Gold', 'Gap', 'membresia', 'gold'),
+  (public.ux_id('e2', 2), public.ux_id('e3', 1), 'Gold Paid', 'Gold', 'Paid', 'membresia', 'gold'),
+  (public.ux_id('e2', 3), public.ux_id('e3', 1), 'Gold Pending Cover', 'Gold', 'Cover', 'membresia', 'gold'),
+  (public.ux_id('e2', 4), public.ux_id('e3', 1), 'Gold Gift', 'Gold', 'Gift', 'membresia', 'gold');
+insert into public.students(id, sede_id, full_name, name, surname, student_category, classes_remaining, bonos_asignados) values
+  (public.ux_id('e2', 5), public.ux_id('e3', 1), 'Temporal Scalar', 'Temporal', 'Scalar', 'temporal', 4, 4);
+select public.confirm_student_membership_payment(current_membership_period_id)
+  from public.students where id = public.ux_id('e2', 2);
+
+reset role;
+-- Structural copy of Mon 9 Nov 2026 vs period 20 Nov 2026–19 Dec 2026 when today is 21 Nov 2026.
+update public.student_membership_periods
+  set starts_on = private.membership_today() - 1,
+      ends_on = private.membership_month_end(private.membership_today() - 1),
+      payment_status = 'pending'
+  where student_id in (public.ux_id('e2', 1), public.ux_id('e2', 4));
+update public.students set payment_status = 'pending'
+  where id in (public.ux_id('e2', 1), public.ux_id('e2', 4));
+
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+insert into public.gift_cards(id, sede_id, recipient, recipient_student_id, num_classes, type, activated_at, validity_months, payment_status, status)
+  values (public.ux_id('e5', 1), public.ux_id('e3', 1), 'Gold Gift', public.ux_id('e2', 4), 2, 'modelado',
+    private.membership_today() - 20, 3, 'paid', 'active');
+
+select public.save_session_reservation(public.ux_id('e4', 1), public.ux_id('e6', 1), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today() - 12, 10), array[public.ux_id('e2', 1)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 2), public.ux_id('e6', 2), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today() - 12, 16), array[public.ux_id('e2', 1)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 3), public.ux_id('e6', 3), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today() - 12, 18), array[public.ux_id('e2', 1)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 4), public.ux_id('e6', 4), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today(), 11), array[public.ux_id('e2', 2)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 5), public.ux_id('e6', 5), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today(), 15), array[public.ux_id('e2', 3)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 6), public.ux_id('e6', 6), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today(), 12), array[public.ux_id('e2', 3)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 7), public.ux_id('e6', 7), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today() - 12, 11), array[public.ux_id('e2', 4)], '{}');
+select public.save_session_reservation(public.ux_id('e4', 8), public.ux_id('e6', 8), 0, public.ux_id('e3', 1),
+  public.ux_meta(private.membership_today(), 13), array[public.ux_id('e2', 5)], '{}');
+
+reset role;
+select public.ux_assert(
+  st.classes_remaining = 4 and st.bonos_asignados = 4 and st.payment_status = 'pending'
+  and p.allocated_classes = 4 and p.payment_status = 'pending'
+  and p.starts_on = private.membership_today() - 1
+  and p.ends_on = private.membership_month_end(private.membership_today() - 1)
+  and p.starts_on > private.membership_today() - 12
+  and p.id = e.membership_period_id and p.id = st.current_membership_period_id
+  and s.class_type = 'mesa' and s.date = (private.membership_today() - 12)::text,
+  'gap student is Gold 4/4 pending, legacy balance 4, period does not cover the past MESA session')
+from public.students st
+join public.student_membership_periods p on p.id = st.current_membership_period_id
+join public.session_students e on e.student_id = st.id and e.session_id = public.ux_id('e4', 1)
+join public.sessions s on s.id = e.session_id;
+select public.ux_assert(legacy_observed_balance = 4,
+  'credit profile legacy observed balance is the same 4 classes')
+from public.student_credit_profile where student_id = public.ux_id('e2', 1);
+
+select public.ux_assert(
+  f->>'usable' = 'false' and f->>'overridable' = 'true' and f->>'no_credit_allowed' = 'true'
+  and f->>'override_requires_owner' = 'true' and f->>'courtesy_requires_owner' = 'true'
+  and f->>'reason' = 'Original membership is unpaid, expired, archived or does not cover the session',
+  'unusable pending period that misses the session is overridable and courtesy-eligible only for the owner')
+from (select private.session_business_funding(public.ux_id('e4', 1), public.ux_id('e2', 1)) f) funding;
+
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.ux_reject($q$select public.save_session_attendance(public.ux_id('e4', 1), public.ux_id('e6', 11), 1,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 1), 'status', 'present')), true, null)$q$,
+  'Presence requires valid original credit%');
+reset role;
+select public.ux_assert(completed_at is null and revision = 1, 'failed finalize does not close the session')
+  from public.sessions where id = public.ux_id('e4', 1);
+select public.ux_assert(classes_remaining = 4, 'failed finalize does not deduct the legacy or membership balance')
+  from public.students where id = public.ux_id('e2', 1);
+select public.ux_assert(count(*) = 0, 'failed finalize writes no credit movement')
+  from public.session_credit_movements where session_id = public.ux_id('e4', 1);
+
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000003';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 1), public.ux_id('e2', 1),
+  public.ux_id('e6', 12), 1, 'membership_override', 'Outsider') $q$,
+  'Session not accessible', '42501');
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 1), public.ux_id('e2', 1),
+  public.ux_id('e6', 13), 1, 'membership_override', 'Staff cannot use a period that misses the session') $q$,
+  'Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session', '42501');
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 2), public.ux_id('e2', 1),
+  public.ux_id('e6', 14), 1, 'no_credit', 'Staff cannot courtesy an unpaid non-covering balance') $q$,
+  'Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session', '42501');
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 1), public.ux_id('e2', 1),
+  public.ux_id('e6', 15), 1, 'membership_override', '   ') $q$,
+  'Student, request key, revision and auditable reason required');
+select public.approve_session_exception(public.ux_id('e4', 1), public.ux_id('e2', 1), public.ux_id('e6', 16), 1,
+  'membership_override', 'Propietario: la membresía Gold no cubre el 9 de noviembre y el pago sigue pendiente');
+select public.ux_assert((public.approve_session_exception(public.ux_id('e4', 1), public.ux_id('e2', 1), public.ux_id('e6', 16), 1,
+  'membership_override', 'Propietario: la membresía Gold no cubre el 9 de noviembre y el pago sigue pendiente')->>'replayed') = 'true',
+  'membership override replay does not approve twice');
+reset role;
+select public.ux_assert(classes_remaining = 4 and payment_status = 'pending',
+  'approval does not deduct or mark the membership paid') from public.students where id = public.ux_id('e2', 1);
+select public.ux_assert(count(*) = 0, 'staff and blank-reason denials leave no exception row on the deduct session')
+  from public.session_business_exceptions
+  where session_id = public.ux_id('e4', 1) and (reason like 'Staff%' or reason = '   ');
+select public.ux_assert(count(*) = 1 and bool_and(kind = 'membership_override' and approved_by = public.ux_id('e1', 1)),
+  'one owner membership override is stored') from public.session_business_exceptions where session_id = public.ux_id('e4', 1);
+
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.save_session_attendance(public.ux_id('e4', 1), public.ux_id('e6', 17), 2,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 1), 'status', 'present')), true, null);
+reset role;
+select public.ux_assert(classes_remaining = 3 and bonos_asignados = 4 and payment_status = 'pending',
+  'owner membership override deducts one class from the 4/4 pending balance and leaves payment pending')
+  from public.students where id = public.ux_id('e2', 1);
+select public.ux_assert(payment_status = 'pending'
+  and starts_on = private.membership_today() - 1
+  and ends_on = private.membership_month_end(private.membership_today() - 1),
+  'deduction does not move the period dates or confirm payment')
+  from public.student_membership_periods where student_id = public.ux_id('e2', 1);
+select public.ux_assert(billing_state = 'charged' and billing_kind = 'attendance' and exception_kind = 'membership_override',
+  'finalized override is a charged attendance, not a courtesy')
+  from public.session_business_state where session_id = public.ux_id('e4', 1);
+select public.ux_assert(count(*) = 1 and bool_and(delta = -1), 'exactly one membership debit')
+  from public.session_credit_movements where session_id = public.ux_id('e4', 1);
+select public.ux_assert(legacy_observed_balance = 3, 'legacy observed balance follows the deducted classes')
+  from public.student_credit_profile where student_id = public.ux_id('e2', 1);
+
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.approve_session_exception(public.ux_id('e4', 2), public.ux_id('e2', 1), public.ux_id('e6', 18), 1,
+  'no_credit', 'Propietario: autorizar esta sesión sin descontar el saldo que no cubre el día');
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.save_session_attendance(public.ux_id('e4', 2), public.ux_id('e6', 19), 2,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 1), 'status', 'present')), true, null);
+reset role;
+select public.ux_assert(classes_remaining = 3, 'no-credit exception does not deduct')
+  from public.students where id = public.ux_id('e2', 1);
+select public.ux_assert(billing_state = 'no_charge' and billing_kind = 'courtesy' and exception_kind = 'no_credit',
+  'no-credit exception finalizes as courtesy')
+  from public.session_business_state where session_id = public.ux_id('e4', 2);
+select public.ux_assert(count(*) = 0, 'courtesy writes no credit movement')
+  from public.session_credit_movements where session_id = public.ux_id('e4', 2);
+select public.ux_assert(completed_at is null, 'rollback probe session stays open')
+  from public.sessions where id = public.ux_id('e4', 3);
+
+-- Paid membership that covers the session is unchanged: no exception, ordinary deduction.
+reset role;
+select public.ux_assert(f->>'usable' = 'true' and coalesce(f->>'override_requires_owner', 'false') = 'false'
+  and f->>'no_credit_allowed' = 'false',
+  'paid covering membership stays ordinarily usable and blocks courtesy')
+from (select private.session_business_funding(public.ux_id('e4', 4), public.ux_id('e2', 2)) f) funding;
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 4), public.ux_id('e2', 2),
+  public.ux_id('e6', 20), 1, 'membership_override', 'Paid source needs no override') $q$,
+  'Membership override requires known original positive credit needing an exception');
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 4), public.ux_id('e2', 2),
+  public.ux_id('e6', 21), 1, 'no_credit', 'Cannot dodge paid covering credit') $q$,
+  'No-credit exception cannot bypass available credit%');
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.save_session_attendance(public.ux_id('e4', 4), public.ux_id('e6', 22), 1,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 2), 'status', 'present')), true, null);
+reset role;
+select public.ux_assert(classes_remaining = 3 and payment_status = 'paid',
+  'ordinary paid attendance still deducts one class without an exception')
+  from public.students where id = public.ux_id('e2', 2);
+
+-- Pending membership that DOES cover the date: staff may still override; courtesy is owner-only.
+reset role;
+select public.ux_assert(f->>'usable' = 'false' and f->>'overridable' = 'true'
+  and coalesce(f->>'override_requires_owner', 'false') = 'false'
+  and f->>'no_credit_allowed' = 'true' and f->>'courtesy_requires_owner' = 'true',
+  'pending covering membership stays staff-overridable and owner-only for courtesy')
+from (select private.session_business_funding(public.ux_id('e4', 6), public.ux_id('e2', 3)) f) funding;
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 5), public.ux_id('e2', 3),
+  public.ux_id('e6', 23), 1, 'no_credit', 'Staff courtesy of pending covering balance') $q$,
+  'Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session', '42501');
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.approve_session_exception(public.ux_id('e4', 5), public.ux_id('e2', 3), public.ux_id('e6', 24), 1,
+  'no_credit', 'Propietario: pendiente que sí cubre, sin descuento');
+select public.save_session_attendance(public.ux_id('e4', 5), public.ux_id('e6', 25), 2,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 3), 'status', 'present')), true, null);
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+select public.approve_session_exception(public.ux_id('e4', 6), public.ux_id('e2', 3), public.ux_id('e6', 26), 1,
+  'membership_override', 'Staff pending covering override');
+select public.save_session_attendance(public.ux_id('e4', 6), public.ux_id('e6', 27), 2,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 3), 'status', 'present')), true, null);
+reset role;
+select public.ux_assert(classes_remaining = 3 and payment_status = 'pending',
+  'staff pending-covering override still deducts one class and courtesy did not')
+  from public.students where id = public.ux_id('e2', 3);
+select public.ux_assert(billing_kind = 'courtesy' and billing_state = 'no_charge',
+  'owner courtesy of a pending covering membership does not charge')
+  from public.session_business_state where session_id = public.ux_id('e4', 5);
+
+-- A real paid gift still blocks courtesy. The owner may override the membership instead.
+reset role;
+select public.ux_assert(f->>'no_credit_allowed' = 'false' and f->>'overridable' = 'true'
+  and f->>'override_requires_owner' = 'true' and f->>'usable' = 'false',
+  'paid gift keeps courtesy blocked while the non-covering membership stays owner-overridable')
+from (select private.session_business_funding(public.ux_id('e4', 7), public.ux_id('e2', 4)) f) funding;
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 7), public.ux_id('e2', 4),
+  public.ux_id('e6', 28), 1, 'no_credit', 'Ignore paid gift') $q$,
+  'No-credit exception cannot bypass available credit%');
+reset role;
+select public.ux_assert(classes_remaining = 4, 'rejected gift courtesy does not deduct the membership')
+  from public.students where id = public.ux_id('e2', 4);
+
+-- Positive temporal scalar packs keep the scalar-funding contract: not usable while unpaid,
+-- not a courtesy, and not rewritten by the membership exception wrapper.
+reset role;
+select public.ux_assert(f->>'usable' = 'false' and f->>'overridable' = 'true' and f->>'no_credit_allowed' = 'false'
+  and coalesce(f->>'override_requires_owner', 'false') = 'false'
+  and f->>'reason' = 'Original scalar pack payment is unpaid or unknown',
+  'unpaid temporal scalar pack stays overridable by its own rule and is not opened as a membership courtesy')
+from (select private.session_business_funding(public.ux_id('e4', 8), public.ux_id('e2', 5)) f) funding;
+set role authenticated;
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
+select public.ux_reject($q$select public.approve_session_exception(public.ux_id('e4', 8), public.ux_id('e2', 5),
+  public.ux_id('e6', 29), 1, 'no_credit', 'Do not relabel scalar credit') $q$,
+  'No-credit exception cannot bypass available credit%');
+select public.ux_reject($q$select public.save_session_attendance(public.ux_id('e4', 8), public.ux_id('e6', 31), 1,
+  jsonb_build_array(jsonb_build_object('student_id', public.ux_id('e2', 5), 'status', 'present')), true, null)$q$,
+  'Presence requires valid original credit%');
+reset role;
+select public.ux_assert(classes_remaining = 4 and current_membership_period_id is null,
+  'rejected temporal finalize leaves the scalar balance untouched') from public.students where id = public.ux_id('e2', 5);
+
+reset role;
+select public.ux_assert(f->>'overridable' = 'true' and f->>'no_credit_allowed' = 'true' and f->>'usable' = 'false',
+  'open probe session still has both owner exceptions before rollback')
+from (select private.session_business_funding(public.ux_id('e4', 3), public.ux_id('e2', 1)) f) funding;

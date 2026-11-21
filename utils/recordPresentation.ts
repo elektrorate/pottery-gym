@@ -26,5 +26,8 @@ export const sessionBusinessErrorMessage = (error: unknown): string => {
   if (message.startsWith('Presence requires valid original credit')) {
     return 'No se puede finalizar la asistencia: la membresía, el bono de clases o el bono regalo original no está pagado, está vencido, archivado o no cubre esta sesión. Confirma el pago correspondiente o solicita al propietario una excepción explícita para esta sesión.';
   }
+  if (message.startsWith('Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session')) {
+    return 'Solo el propietario del taller puede aprobar esta excepción cuando la membresía está pendiente, vencida o no cubre la sesión.';
+  }
   return message;
 };
