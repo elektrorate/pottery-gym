@@ -13,7 +13,7 @@ import { DangerZone } from './shared/DangerZone';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { capitalizeEs, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
-import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, membershipPeriodEnd, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, previousClassesMessage, previousClassesToRegister, observedLegacyBalance, cuotaDefaultForCategory } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, membershipPeriodEnd, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, paymentConfirmMessage, previousClassesMessage, previousClassesToRegister, observedLegacyBalance, cuotaDefaultForCategory } from '../utils/studentLifecycle';
 import { isPaymentPendingToday } from '../utils/paymentPending';
 import { includesFolded } from '../utils/textSearch';
 import { parseSpanishQuantity } from '../utils/quantityInput';
@@ -359,7 +359,7 @@ const StudentList: React.FC<StudentListProps> = ({
   const [priceText, setPriceText] = useState('');
   const [fieldErrors, setFieldErrors] = useState<{ name?: string | null; surname?: string | null; notes?: string | null; price?: string | null }>({});
   const [pendingDuplicate, setPendingDuplicate] = useState<Student | null>(null);
-  const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState(false);
+  const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState<{ periodId: string | null } | null>(null);
   const skipDuplicateCheck = useRef(false);
   const skipPastExpiry = useRef(false);
   const [pendingPastExpiry, setPendingPastExpiry] = useState(false);
@@ -626,9 +626,10 @@ const StudentList: React.FC<StudentListProps> = ({
     finally { setIsSubmitting(false); }
   };
 
-  const confirmVisiblePayment = async () => {
-    if (!liveEditingStudent || isSubmitting || !studentHasPendingPayment(liveEditingStudent)) return;
-    const periodId = selectConfirmablePaymentPeriodId(liveEditingStudent);
+  const confirmVisiblePayment = async (explicitPeriodId: string | null) => {
+    if (!liveEditingStudent || isSubmitting) return;
+    if (explicitPeriodId == null && !studentHasPendingPayment(liveEditingStudent)) return;
+    const periodId = explicitPeriodId || selectConfirmablePaymentPeriodId(liveEditingStudent);
     setIsSubmitting(true);
     try {
       if (periodId) {
@@ -830,7 +831,7 @@ const StudentList: React.FC<StudentListProps> = ({
       {showModal && <div className="fixed inset-0 bg-[#4B2A1D]/45 backdrop-blur-[2px] z-[100] flex items-end md:items-center justify-center overflow-hidden">
         <div className={`bg-[#FDFBF9] w-full ${editingStudent ? 'md:max-w-5xl' : 'md:max-w-2xl'} h-[100dvh] md:h-auto md:max-h-[92dvh] md:rounded-xl shadow-[0_20px_60px_rgba(75,42,29,0.2)] relative flex flex-col overflow-hidden animate-fade-in`}>
           <div className="px-4 sm:px-7 py-4 border-b border-[#E6D8CB] flex items-center justify-between shrink-0 bg-[#FDFBF9]"><div className="flex items-center gap-3 min-w-0"><span className="hidden sm:flex w-10 h-10 rounded-full bg-[#F0E2D6] text-[#7B3F22] items-center justify-center text-[12px] font-bold">{editingStudent ? presentInitials(editingStudent.name, editingStudent.surname) : '+'}</span><div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8B6B5E]">{editingStudent ? 'Perfil del alumno' : 'Nuevo alumno'}</p><h3 className="text-[20px] text-[#7B3F22] truncate" style={{ fontFamily: "'Outfit', sans-serif" }}>{editingStudent ? presentPersonName(editingStudent.name, editingStudent.surname) : 'Crear ficha'}</h3></div></div><button onClick={() => setShowModal(false)} className="w-9 h-9 rounded-md border border-[#DDBFA4] text-[#8B6B5E] flex items-center justify-center hover:bg-[#F0E2D6] hover:text-[#7B3F22] transition-colors" aria-label="Cerrar ficha"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 6l12 12M18 6 6 18" /></svg></button></div>
-          {editingStudent && liveEditingStudent && <div className="px-4 sm:px-7 py-3 border-b border-[#E6D8CB] bg-[#FDFBF9] shrink-0" data-testid="student-payment-action">{studentHasPendingPayment(liveEditingStudent) ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[13px] font-semibold text-[#A85D3B]">Pago pendiente</p><button type="button" onClick={() => setPendingPaymentConfirm(true)} disabled={isSubmitting} className="h-11 px-5 bg-[#7B3F22] text-white rounded-md text-[14px] font-bold hover:bg-[#63321C] disabled:opacity-60">Confirmar pago</button></div> : <p data-testid="payment-state" className="inline-flex min-h-10 items-center rounded-md bg-[#F5F1E9] px-3 text-[13px] font-bold text-[#7B3F22]">{getStudentPaymentStatus(liveEditingStudent) === 'paid' ? 'Pago al día' : 'Pago desconocido'}</p>}</div>}
+          {editingStudent && liveEditingStudent && <div className="px-4 sm:px-7 py-3 border-b border-[#E6D8CB] bg-[#FDFBF9] shrink-0" data-testid="student-payment-action">{studentHasPendingPayment(liveEditingStudent) ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[13px] font-semibold text-[#A85D3B]">Pago pendiente</p><button type="button" onClick={() => setPendingPaymentConfirm({ periodId: selectConfirmablePaymentPeriodId(liveEditingStudent) })} disabled={isSubmitting} className="h-11 px-5 bg-[#7B3F22] text-white rounded-md text-[14px] font-bold hover:bg-[#63321C] disabled:opacity-60">Confirmar pago</button></div> : <p data-testid="payment-state" className="inline-flex min-h-10 items-center rounded-md bg-[#F5F1E9] px-3 text-[13px] font-bold text-[#7B3F22]">{getStudentPaymentStatus(liveEditingStudent) === 'paid' ? 'Pago al día' : 'Pago desconocido'}</p>}</div>}
 
             <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-4 pb-28 sm:px-7 md:pb-28"><form noValidate onSubmit={handleSubmit} className={`grid grid-cols-1 gap-6 py-5 md:py-6 ${editingStudent ? 'lg:grid-cols-[1.2fr_1fr] lg:gap-8' : ''}`}>
               <div className="space-y-5">
@@ -966,7 +967,7 @@ const StudentList: React.FC<StudentListProps> = ({
                  {(liveEditingStudent.membershipPeriods || []).map(period => <div key={period.id} className="border rounded p-3 text-sm">
                    <p>{period.startsOn ? formatDate(period.startsOn) : 'Sin inicio'} — {period.endsOn ? formatDate(period.endsOn) : 'Sin vencimiento'} · {presentPlanName(period.membershipTier) || 'Plan desconocido'}</p>
                    <p>{period.id === liveEditingStudent.effectivePeriodId ? 'Período actual' : period.startsOn && period.startsOn > today ? 'Renovación programada' : 'Historial'} · {period.paymentStatus === 'paid' ? 'Pagado' : period.paymentStatus === 'pending' ? 'Pago pendiente' : 'Pago desconocido'}</p>
-                   {period.paymentStatus !== 'paid' && <button type="button" disabled={isSubmitting} onClick={() => void runMembershipAction(() => onConfirmPayment(liveEditingStudent.id, period.id))}>Confirmar pago de este período</button>}
+                   {period.paymentStatus !== 'paid' && <button type="button" disabled={isSubmitting} onClick={() => setPendingPaymentConfirm({ periodId: period.id })}>Confirmar pago de este período</button>}
                  </div>)}
                  {!liveEditingStudent.effectivePeriodId && <div className="space-y-2">
                    <p>Confirme el plan y las fechas antes de crear el período.</p>
@@ -1005,16 +1006,7 @@ const StudentList: React.FC<StudentListProps> = ({
       </div>}
         <ConfirmModal isOpen={pendingPastExpiry} title="La vigencia ya pasó" message={`«Válido hasta» es ${formatDate(form.expiryDate)}. Puede guardarla si esa fecha es correcta.`} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipPastExpiry.current = true; setPendingPastExpiry(false); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingPastExpiry(false)} />
         <ConfirmModal isOpen={!!pendingDuplicate} title="Contacto ya registrado" message={pendingDuplicate ? duplicateContactMessage('alumno', personLabel(pendingDuplicate), form.email && pendingDuplicate.email && form.email.trim().toLocaleLowerCase('es-ES') === pendingDuplicate.email.trim().toLocaleLowerCase('es-ES') ? form.email : undefined, form.phone && pendingDuplicate.phone && form.phone.replace(/\s/g, '') === pendingDuplicate.phone.replace(/\s/g, '') ? form.phone : form.phone || form.email) : ''} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipDuplicateCheck.current = true; setPendingDuplicate(null); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingDuplicate(null)} />
-        <ConfirmModal isOpen={pendingPaymentConfirm} title="¿Confirmar pago?" message={(() => {
-          if (!liveEditingStudent) return 'Va a confirmar el pago.';
-          const periodId = selectConfirmablePaymentPeriodId(liveEditingStudent);
-          const period = liveEditingStudent.membershipPeriods?.find(item => item.id === periodId);
-          const amount = period?.price ?? liveEditingStudent.price;
-          const start = period?.startsOn;
-          const end = period?.endsOn;
-          const when = start || end ? ` del período ${start ? formatDate(start) : 'sin inicio'} — ${end ? formatDate(end) : 'sin vencimiento'}` : '';
-          return `Va a confirmar el pago${amount ? ` de ${amount} €` : ''}${when}.`;
-        })()} confirmText="Confirmar pago" isDestructive={false} onConfirm={() => { setPendingPaymentConfirm(false); void confirmVisiblePayment(); }} onCancel={() => setPendingPaymentConfirm(false)} />
+        <ConfirmModal isOpen={!!pendingPaymentConfirm} title="¿Confirmar pago?" message={liveEditingStudent && pendingPaymentConfirm ? paymentConfirmMessage(liveEditingStudent, pendingPaymentConfirm.periodId) : 'Va a confirmar el pago.'} confirmText="Confirmar pago" isDestructive={false} onConfirm={() => { const choice = pendingPaymentConfirm; setPendingPaymentConfirm(null); if (choice) void confirmVisiblePayment(choice.periodId); }} onCancel={() => setPendingPaymentConfirm(null)} />
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory ? studentCategoryLabel(pendingCategory) : ''}. Se ajustarán sus clases y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y las clases contratadas.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />
         <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo con la acción Reactivar alumno manualmente, sin renovar ni confirmar un pago." confirmText="Archivar" isDestructive={false} onConfirm={async () => { if (studentToArchive && !isSubmitting) { setIsSubmitting(true); try { await onUpdate(studentToArchive, { archivedAt: getWorkshopDate() }); setStudentToArchive(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo archivar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToArchive(null)} />

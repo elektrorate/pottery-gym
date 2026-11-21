@@ -174,6 +174,33 @@ export const previousClassesMessage = (student: Student): string => {
   return `Le ${balance === 1 ? 'queda' : 'quedan'} ${balance} ${balance === 1 ? 'clase anterior' : 'clases anteriores'} por registrar.`;
 };
 
+const money = (amount: number | null | undefined) =>
+  typeof amount === 'number' && Number.isFinite(amount) ? ` de ${amount} €` : '';
+
+const dated = (value?: string | null) => value ? formatDate(value) : '';
+
+/**
+ * Confirmation copy for the period that will actually be marked paid.
+ * An explicit period id wins; otherwise the profile helper picks the period.
+ * Class packs and temporary groups use the ficha validity, not a membership period.
+ */
+export const paymentConfirmMessage = (student: Student, explicitPeriodId?: string | null): string => {
+  const periodId = explicitPeriodId || selectConfirmablePaymentPeriodId(student);
+  const period = (student.membershipPeriods || []).find(item => item.id === periodId);
+  if (period || (isManagedMembership(student) && periodId)) {
+    const start = dated(period?.startsOn) || 'sin inicio';
+    const end = dated(period?.endsOn) || 'sin vencimiento';
+    return `Va a confirmar el pago${money(period?.price ?? student.price)} del período ${start} — ${end}.`;
+  }
+  const start = dated(student.membershipActivatedAt);
+  const end = dated(student.expiryDate);
+  const validity = start && end ? `, válido desde ${start} hasta ${end}.`
+    : end ? `, válido hasta ${end}.`
+    : start ? `, válido desde ${start}.`
+    : '. Esta ficha no tiene fecha de vigencia.';
+  return `Va a confirmar el pago${money(student.price)}${validity}`;
+};
+
 /** Period id the profile can confirm with the existing payment RPC. Legacy rows have no id. */
 export const selectConfirmablePaymentPeriodId = (student: Student): string | null => {
   const real = getPendingMembershipPayments(student).filter(period => period.id && period.id !== 'legacy');
