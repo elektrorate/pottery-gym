@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import { createDurableAuthStorage } from './utils/durableAuthStorage';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -8,11 +7,10 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables.');
 }
 
-// Keep the aal2 session under the SDK's default key (`sb-<project-ref>-auth-token`).
-// localStorage is the live copy. A SameSite=Lax cookie with Max-Age of 30 days
-// is written beside it so a hard reload can restore the session if localStorage
-// is empty. Do not use sessionStorage: that dies with the tab.
-const browserAuthStorage = typeof window === 'undefined' ? undefined : createDurableAuthStorage();
+// Keep the aal2 session in localStorage under the SDK's default key
+// (`sb-<project-ref>-auth-token`). Do not switch this to sessionStorage:
+// that storage dies with the tab, so every reload asks for the password again.
+const browserAuthStorage = typeof window === 'undefined' ? undefined : window.localStorage;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   db: { retry: false },
