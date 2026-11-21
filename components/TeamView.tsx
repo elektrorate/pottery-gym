@@ -210,8 +210,8 @@ const TeamView: React.FC = () => {
 
                 {/* Staff list */}
                 {loading ? (
-                    <div className="flex items-center justify-center py-20">
-                        <div className="w-8 h-8 border-[3px] border-brand border-t-transparent rounded-full animate-spin"></div>
+                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3" role="status" aria-label="Cargando colaboradores">
+                        {[0, 1, 2].map(item => <div key={item} className="h-40 animate-pulse rounded-2xl border border-neutral-border bg-white p-6"><div className="h-12 w-12 rounded-xl bg-neutral-sec" /><div className="mt-4 h-4 w-2/3 rounded bg-neutral-sec" /><div className="mt-2 h-3 w-1/2 rounded bg-neutral-sec" /></div>)}
                     </div>
                 ) : staff.length === 0 ? (
                     <EmptyState title="Todavía no hay colaboradores" body="Añade a quien te ayuda en el taller. Tendrá acceso parecido al tuyo, sin poder crear más cuentas." actionLabel="Añadir el primer colaborador" onAction={() => setShowCreateModal(true)} />

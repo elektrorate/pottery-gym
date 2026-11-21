@@ -16,17 +16,19 @@ export const phoneError = (value: string): string | null => {
   return null;
 };
 
+const negativeWord = (_label: string, gender?: 'f' | 'm') => (gender === 'f' ? 'negativa' : 'negativo');
+
 /** Money and quantities that must be strictly positive. Negatives are not rewritten. */
-export const positiveAmountError = (value: number, label: string): string | null => {
+export const positiveAmountError = (value: number, label: string, gender?: 'f' | 'm'): string | null => {
   if (!Number.isFinite(value)) return `${label} debe ser un número mayor que 0.`;
-  if (value < 0) return `${label} no puede ser negativo.`;
+  if (value < 0) return `${label} no puede ser ${negativeWord(label, gender)}.`;
   if (value <= 0) return `${label} debe ser mayor que 0.`;
   return null;
 };
 
 /** Stock counts may be zero. Negatives are rejected and not rewritten as positives. */
-export const nonNegativeAmountError = (value: number, label: string): string | null => {
+export const nonNegativeAmountError = (value: number, label: string, gender?: 'f' | 'm'): string | null => {
   if (!Number.isFinite(value)) return `${label} debe ser un número igual o mayor que 0.`;
-  if (value < 0) return `${label} no puede ser negativo.`;
+  if (value < 0) return `${label} no puede ser ${negativeWord(label, gender)}.`;
   return null;
 };

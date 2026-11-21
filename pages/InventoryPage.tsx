@@ -4,7 +4,7 @@ import { useData } from '../context/DataContext';
 import InventoryView from '../components/InventoryView';
 
 const InventoryPage: React.FC = () => {
-    const { inventoryItems, inventoryMovements, addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement, isLoadingData } = useData();
+    const { inventoryItems, inventoryMovements, addInventoryItem, updateInventoryItem, archiveInventoryItem, deleteInventoryItem, addInventoryMovement, loadAllData, isLoadingData } = useData();
 
     if (isLoadingData) {
         return (
@@ -24,6 +24,7 @@ const InventoryPage: React.FC = () => {
             onArchiveItem={archiveInventoryItem}
             onDeleteItem={deleteInventoryItem}
             onAddMovement={addInventoryMovement}
+            onReload={loadAllData}
         />
         </SectionLoadBoundary>
     );

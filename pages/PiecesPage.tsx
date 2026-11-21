@@ -4,7 +4,7 @@ import { useData } from '../context/DataContext';
 import PiecesToCollect from '../components/PiecesToCollect';
 
 const PiecesPage: React.FC = () => {
-    const { pieces, students, addPiece, updatePiece, deletePiece, isLoadingData } = useData();
+    const { pieces, students, addPiece, updatePiece, deletePiece, businessDataReady, isLoadingData } = useData();
 
     if (isLoadingData) {
         return (
@@ -22,6 +22,7 @@ const PiecesPage: React.FC = () => {
             onAddPiece={addPiece}
             onUpdatePiece={updatePiece}
             onDeletePiece={deletePiece}
+            rosterReady={businessDataReady}
         />
         </SectionLoadBoundary>
     );

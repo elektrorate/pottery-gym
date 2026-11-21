@@ -135,9 +135,10 @@ interface PiecesToCollectProps {
   onAddPiece: (piece: Omit<CeramicPiece, 'id'>) => Promise<void>;
   onUpdatePiece: (id: string, updates: Partial<CeramicPiece>) => Promise<void>;
   onDeletePiece: (id: string) => Promise<void>;
+  rosterReady?: boolean;
 }
 
-const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onAddPiece, onUpdatePiece, onDeletePiece }) => {
+const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onAddPiece, onUpdatePiece, onDeletePiece, rosterReady = true }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingPiece, setEditingPiece] = useState<CeramicPiece | null>(null);
   const [filterStatus, setFilterStatus] = useState<PieceStatus | 'all'>('all');
@@ -152,6 +153,9 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   const [groupFilter, setGroupFilter] = useState<string>('todos');
   const [pieceToDelete, setPieceToDelete] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pieceErrors, setPieceErrors] = useState<{ owner?: string; description?: string }>({});
+  const [pastDelivery, setPastDelivery] = useState(false);
+  const allowPastDelivery = React.useRef(false);
   const [headerActions, setHeaderActions] = useState<HTMLElement | null>(null);
 
   const [form, setForm] = useState({
@@ -164,7 +168,14 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
     extraCommentary: ''
   });
 
-  const sortedStudents = useMemo(() => [...students].sort((a, b) => a.name.localeCompare(b.name)), [students]);
+  const studentFullName = (student: Student) => `${student.name} ${student.surname || ''}`.trim();
+  const sortedStudents = useMemo(() => [...students].sort((a, b) => studentFullName(a).localeCompare(studentFullName(b), 'es')), [students]);
+  useEffect(() => {
+    if (!showModal || isSubmitting || pastDelivery || pieceToDelete) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowModal(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showModal, isSubmitting, pastDelivery, pieceToDelete]);
 
   // Map owner name → student for fast lookup
   const ownerStudentMap = useMemo(() => {
@@ -255,7 +266,19 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    if (!form.owner) { showError('Por favor selecciona un propietario.'); return; }
+    if (!form.owner || !form.description.trim()) {
+      setPieceErrors({
+        owner: form.owner ? undefined : 'Seleccione un alumno.',
+        description: form.description.trim() ? undefined : 'Indique la descripción de la pieza.'
+      });
+      return;
+    }
+    if (form.deliveryDate && form.deliveryDate < madridDateKey() && !allowPastDelivery.current) {
+      setPastDelivery(true);
+      return;
+    }
+    allowPastDelivery.current = false;
+    setPieceErrors({});
     setIsSubmitting(true);
     try {
       if (editingPiece?.id) await onUpdatePiece(editingPiece.id, form);
@@ -293,7 +316,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
       if (selectedOwner && p.owner.toUpperCase() !== selectedOwner.toUpperCase()) return false;
       if (searchQuery.trim() && !selectedOwner) {
         const q = searchQuery.trim().toLowerCase();
-        if (!p.owner.toLowerCase().includes(q)) return false;
+        if (!`${p.owner} ${p.description || ''} ${p.notes || ''}`.toLocaleLowerCase('es-ES').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return false;
       }
       if (categoryFilter !== 'todos') {
         const student = getStudentForPiece(p);
@@ -315,7 +338,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
       if (selectedOwner && p.owner.toUpperCase() !== selectedOwner.toUpperCase()) return false;
       if (searchQuery.trim() && !selectedOwner) {
         const q = searchQuery.trim().toLowerCase();
-        if (!p.owner.toLowerCase().includes(q)) return false;
+        if (!`${p.owner} ${p.description || ''} ${p.notes || ''}`.toLocaleLowerCase('es-ES').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return false;
       }
       if (categoryFilter !== 'todos') {
         const student = getStudentForPiece(p);
@@ -717,23 +740,26 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
               </h3>
               <p className="text-neutral-textSec text-[14px] mb-6">Define los detalles para el seguimiento en el taller.</p>
 
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <form noValidate onSubmit={handleSubmit} className="space-y-5">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Propietario</label>
                     <select
-                      required
-                      value={form.owner}
-                      onChange={(e) => setForm({ ...form, owner: e.target.value })}
+                      value={sortedStudents.find(student => studentFullName(student) === form.owner)?.id || ''}
+                      onChange={(e) => {
+                        const student = sortedStudents.find(item => item.id === e.target.value);
+                        setForm({ ...form, owner: student ? studentFullName(student) : '' });
+                      }}
                       className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain appearance-none cursor-pointer focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none"
                     >
-                      <option value="">Seleccione un alumno</option>
+                      <option value="">{rosterReady ? 'Seleccione un alumno' : 'Cargando la lista completa de alumnos…'}</option>
                       {sortedStudents.map(student => (
-                        <option key={student.id} value={`${student.name} ${student.surname || ''}`.trim()}>
+                        <option key={student.id} value={student.id}>
                           {presentPersonName(student.name, student.surname)} — {studentCategoryLabel(student.studentCategory)}
                         </option>
                       ))}
                     </select>
+                    {pieceErrors.owner && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{pieceErrors.owner}</p>}
                   </div>
                   <div>
                     <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Estado actual</label>
@@ -752,7 +778,8 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
 
                 <div>
                   <label className="block text-[14px] font-semibold text-neutral-textSec mb-1.5">Descripción de la obra</label>
-                  <input required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" placeholder="Ej: Jarrón con textura" />
+                  <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none" placeholder="Ej: Jarrón con textura" />
+                  {pieceErrors.description && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{pieceErrors.description}</p>}
                 </div>
 
                 <div>
@@ -804,6 +831,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
         }}
         onCancel={() => setPieceToDelete(null)}
       />
+      <ConfirmModal isOpen={pastDelivery} title="La fecha de recogida ya pasó" message="La fecha de recogida es anterior a hoy. Confirme si quiere guardarla así." confirmText="Guardar de todos modos" isDestructive={false} onCancel={() => setPastDelivery(false)} onConfirm={() => { allowPastDelivery.current = true; setPastDelivery(false); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} />
     </div>
     </>
   );

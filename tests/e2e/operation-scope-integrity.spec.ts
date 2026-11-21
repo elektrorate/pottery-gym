@@ -204,7 +204,7 @@ const staleAfter = async (page: Page, name: string, args: any[], heldLabel: stri
 
 const delayed: Array<[string, any[], string]> = [
   ['addInventoryMovement', [movement], 'record_inventory_movement'],
-  ['deleteTeacher', ['teacher'], 'sessions.update.teacher_id'],
+  ['deleteTeacher', ['teacher'], 'teachers.delete'],
   ['reverseGiftCardSession', ['', 'session', 'student-mesa'], 'session_students.select'],
   ['addSession', [draft()], 'save_session_reservation'],
   ['updateSession', ['session', { capacity: 7 }], 'save_session_reservation']
@@ -226,7 +226,6 @@ for (const [heldLabel, change] of [['save_session_reservation', 'actor-return'],
 for (const [name, args, heldLabel] of [
   ['addInventoryMovement', [movement], 'record_inventory_movement'],
   ['deleteInventoryItem', ['item'], 'inventory_items.delete'],
-  ['deleteTeacher', ['teacher'], 'sessions.update.teacher_substitute_id'],
   ['deleteTeacher', ['teacher'], 'teachers.delete'],
   ['reverseGiftCardSession', ['gift', 'session', 'student-mesa'], 'reverse_gift_card_session'],
   ['updateSession', ['session', { attendanceByStudentId: { 'student-mesa': 'present' } }], 'save_session_attendance'],
@@ -244,9 +243,8 @@ test('valid scope preserves inventory quantity and parallel teacher unlink/delet
   expect((await snapshot(page)).state.inventory[0].current_quantity).toBe(5);
   expect(await finish(page, await start(page, 'deleteTeacher', ['teacher']))).toMatchObject({ ok: true });
   expect(backend.rows.teachers).toEqual([]);
-  expect(backend.rows.sessions[0]).toMatchObject({ teacher_id: null, teacher_substitute_id: null });
-  expect(backend.calls.map(label)).toEqual(['record_inventory_movement', 'refresh',
-    'sessions.update.teacher_id', 'sessions.update.teacher_substitute_id', 'teachers.delete']);
+  expect(backend.rows.sessions[0]).toMatchObject({ teacher_id: 'teacher', teacher_substitute_id: 'teacher' });
+  expect(backend.calls.map(label)).toEqual(['record_inventory_movement', 'refresh', 'teachers.delete', 'refresh']);
 });
 
 test('valid mixed session saves the complete activity tree with one atomic RPC and no standalone reads or DML', async ({ page }) => {

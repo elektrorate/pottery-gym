@@ -5,7 +5,7 @@ import DashboardView from '../components/DashboardView';
 import { useNavigate } from 'react-router-dom';
 
 const DashboardPage: React.FC = () => {
-    const { students, sessions, giftCards, capacityDefaults, workshopSchedule, workshopScheduleExceptions, loadError, businessDataReady, isLoadingData, loadAllData } = useData();
+    const { students, sessions, giftCards, inventoryItems, capacityDefaults, workshopSchedule, workshopScheduleExceptions, loadError, businessDataReady, isLoadingData, loadAllData } = useData();
     const navigate = useNavigate();
     const agenda = useWorkshopActivities();
 
@@ -30,6 +30,7 @@ const DashboardPage: React.FC = () => {
             activitiesReady={agenda.ready}
             sessions={sessions}
             giftCards={giftCards}
+            inventoryItems={inventoryItems}
             onNavigate={(view) => navigate(`/${view}`)}
             onOpenStudentProfile={(studentId) => navigate(`/students?selected=${studentId}`)}
             onOpenSession={(sessionId, date) => navigate(`/calendar?sessionId=${encodeURIComponent(sessionId)}&date=${encodeURIComponent(date)}&attendance=1`)}

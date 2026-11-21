@@ -1,8 +1,10 @@
 import { isClassesRunningLow, needsStudentReview, studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
-import { countVisibleStudentsByCategory, isStudentArchived, pendingPaymentNotices, studentHasPendingPayment } from '../utils/studentLifecycle';
+import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, InventoryItem, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
+import { countVisibleStudentsByCategory, isStudentArchived, studentHasPendingPayment } from '../utils/studentLifecycle';
+import { isPaymentPendingToday, paymentPendingReason, scheduledRenewalReason, scheduledRenewals } from '../utils/paymentPending';
+import { inventoryAlertLabel, inventoryHealth } from '../utils/inventoryHealth';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, enrollmentOnDate, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
@@ -19,6 +21,7 @@ interface DashboardViewProps {
   detailsReady?: boolean;
   sessions: ClassSession[];
   giftCards?: GiftCard[];
+  inventoryItems?: InventoryItem[];
   onAdjustClasses?: (intent: ClassAdjustmentIntent) => Promise<void>;
   onUpdateStudent?: (id: string, updates: Partial<Student>) => Promise<void>;
   onUpdateSession?: (id: string, updates: Partial<ClassSession>) => Promise<void>;
@@ -32,7 +35,7 @@ interface DashboardViewProps {
   workshopScheduleExceptions?: WorkshopScheduleException[];
 }
 
-type DashboardAlert = { key?: string; id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' };
+type DashboardAlert = { key?: string; id: string; name: string; reason: string; type: 'warning' | 'info' | 'critical'; category: 'bonuses' | 'payment' | 'expiry' | 'inventory' | 'renewal' };
 type WorkshopActivity = { id: string; title: string; date: string; time: string; description: string };
 
 const MetricIcon: React.FC<{ type: 'members' | 'payments' | 'bonuses' | 'students' | 'sessions' }> = ({ type }) => {
@@ -46,7 +49,7 @@ const MetricIcon: React.FC<{ type: 'members' | 'payments' | 'bonuses' | 'student
   return <svg aria-hidden="true" className="h-4 w-4 text-neutral-textHelper md:h-5 md:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d={paths[type]} /></svg>;
 };
 
-const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studentId: string) => void }> = ({ alert, onOpenStudentProfile }) => {
+const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studentId: string) => void; onNavigate?: (view: AppView) => void }> = ({ alert, onOpenStudentProfile, onNavigate }) => {
   const palette = alert.type === 'critical'
     ? { card: 'bg-[#F8E1DA] border-[#EFC9BE]', icon: 'bg-[#9E3B2B] text-white', text: 'text-[#9E3B2B]', symbol: '!' }
     : { card: 'bg-[#FBEAD2] border-[#EBD5AC]', icon: 'bg-[#916438] text-white', text: 'text-[#8A5517]', symbol: '•' };
@@ -54,7 +57,7 @@ const AlertItem: React.FC<{ alert: DashboardAlert; onOpenStudentProfile: (studen
     <div className={`flex items-center gap-3 rounded-xl border p-3 ${palette.card}`}>
       <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-bold ${palette.icon}`}>{palette.symbol}</div>
        <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-neutral-textMain">{alert.name}</p><p className={`truncate text-[12px] font-medium ${palette.text}`}>{alert.reason}</p></div>
-       {alert.id && <button type="button" onClick={() => onOpenStudentProfile(alert.id)} className="min-h-[36px] w-12 shrink-0 rounded-lg bg-white/70 px-1 text-center text-[12px] font-semibold leading-[1.1] text-neutral-textMain transition-colors hover:bg-white hover:text-brand sm:w-auto sm:px-2.5"><span className="sm:hidden">Ver<br />ficha</span><span className="hidden sm:inline">Ver ficha</span></button>}
+       {alert.category === 'inventory' && onNavigate ? <button type="button" onClick={() => onNavigate('inventory')} className="min-h-[36px] shrink-0 rounded-lg bg-white/70 px-2.5 text-[12px] font-semibold text-neutral-textMain hover:bg-white hover:text-brand">Ver inventario</button> : alert.id ? <button type="button" onClick={() => onOpenStudentProfile(alert.id)} className="min-h-[36px] w-12 shrink-0 rounded-lg bg-white/70 px-1 text-center text-[12px] font-semibold leading-[1.1] text-neutral-textMain transition-colors hover:bg-white hover:text-brand sm:w-auto sm:px-2.5"><span className="sm:hidden">Ver<br />ficha</span><span className="hidden sm:inline">Ver ficha</span></button> : null}
     </div>
   );
 };
@@ -65,19 +68,20 @@ const AlertGroup: React.FC<{
   tone: 'danger' | 'warning';
   emptyLabel: string;
   onOpenStudentProfile: (studentId: string) => void;
-}> = ({ title, alerts, tone, emptyLabel, onOpenStudentProfile }) => {
+  onNavigate?: (view: AppView) => void;
+}> = ({ title, alerts, tone, emptyLabel, onOpenStudentProfile, onNavigate }) => {
   const colors = tone === 'danger'
     ? { border: 'border-[#EFC9BE]', background: 'bg-[#FFF8F5]', text: 'text-[#9E3B2B]', badge: 'bg-[#F8E1DA]' }
     : { border: 'border-[#EBD5AC]', background: 'bg-[#FFFBF3]', text: 'text-[#8A5517]', badge: 'bg-[#FBEAD2]' };
   return (
     <div className={`rounded-xl border p-3 ${colors.border} ${colors.background}`}>
       <div className="mb-2 flex items-center justify-between gap-2"><p className={`text-[11px] font-bold uppercase tracking-[0.14em] ${colors.text}`}>{title}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${colors.badge} ${colors.text}`}>{alerts.length}</span></div>
-      {alerts.length > 0 ? <div className="space-y-2">{alerts.map((alert, idx) => <AlertItem key={alert.key || `${alert.id}-${alert.category}`} alert={alert} onOpenStudentProfile={onOpenStudentProfile} />)}</div> : <p className="rounded-lg bg-white/70 px-3 py-3 text-[12px] text-neutral-textHelper">{emptyLabel}</p>}
+      {alerts.length > 0 ? <div className="space-y-2">{alerts.map((alert) => <AlertItem key={alert.key || `${alert.id}-${alert.category}`} alert={alert} onOpenStudentProfile={onOpenStudentProfile} onNavigate={onNavigate} />)}</div> : <p className="rounded-lg bg-white/70 px-3 py-3 text-[12px] text-neutral-textHelper">{emptyLabel}</p>}
     </div>
   );
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activities = [], activitiesReady = true, detailsReady = true, giftCards = [], onNavigate, onOpenStudentProfile, onOpenSession, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activities = [], activitiesReady = true, detailsReady = true, giftCards = [], inventoryItems = [], onNavigate, onOpenStudentProfile, onOpenSession, capacityDefaults = [], workshopSchedule = [], workshopScheduleExceptions = [] }) => {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const alertAudioContextRef = useRef<AudioContext | null>(null);
   const previousAlertKeysRef = useRef<Set<string> | null>(null);
@@ -102,7 +106,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
      const byCategory = countVisibleStudentsByCategory(students, todayStr);
      const activeMembership = students.filter(student => !isStudentArchived(student, todayStr)
        && (student.studentCategory || 'membresia') === 'membresia'
-       && !studentHasPendingPayment(student)).length;
+       && !isPaymentPendingToday(student, todayStr)).length;
 
      return { totalStudents, pendingStudents, totalSessions, byCategory, activeMembership, reviewStudents: students.filter(needsStudentReview).length };
     }, [students, sessions, todayStr]);
@@ -142,10 +146,18 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
       const fullName = presentPersonName(student.name, student.surname);
       const isMembership = (student.studentCategory || 'membresia') === 'membresia';
       const isExpired = Boolean(student.expiryDate && student.expiryDate < todayStr);
-      pendingPaymentNotices(student).forEach(notice => list.push({
-        id: student.id, key: notice.key, name: fullName, reason: notice.reason,
-        type: 'warning', category: 'payment'
-      }));
+      if (!isStudentArchived(student, todayStr) && isPaymentPendingToday(student, todayStr)) {
+        list.push({
+          id: student.id, key: `${student.id}:payment-today`, name: fullName, reason: paymentPendingReason(student, todayStr),
+          type: 'warning', category: 'payment'
+        });
+      }
+      if (!isStudentArchived(student, todayStr) && scheduledRenewals(student, todayStr).length) {
+        list.push({
+          id: student.id, key: `${student.id}:renewal`, name: fullName, reason: scheduledRenewalReason(student, todayStr),
+          type: 'info', category: 'renewal'
+        });
+      }
       if (isStudentArchived(student, todayStr)) return;
 
       const remaining = studentEffectiveRemainingClasses(student, giftCards);
@@ -157,12 +169,23 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
       }
 
     });
+    inventoryItems.filter(item => item.status !== 'archived').forEach(item => {
+      const health = inventoryHealth(item);
+      if (health === 'ok') return;
+      list.push({
+        id: item.id, key: `inventory:${item.id}:${health}:${item.current_quantity}`, name: item.name,
+        reason: `${inventoryAlertLabel(health, item.current_quantity)} · ${item.current_quantity} ${item.unit || ''}`.trim(),
+        type: health === 'critical' ? 'critical' : 'warning', category: 'inventory'
+      });
+    });
     return list;
-  }, [students, giftCards, todayStr]);
+  }, [students, giftCards, inventoryItems, todayStr]);
 
   const bonusAlerts = useMemo(() => alerts.filter(alert => alert.category === 'bonuses'), [alerts]);
   const paymentAlerts = useMemo(() => alerts.filter(alert => alert.category === 'payment'), [alerts]);
   const expiryAlerts = useMemo(() => alerts.filter(alert => alert.category === 'expiry'), [alerts]);
+  const inventoryAlerts = useMemo(() => alerts.filter(alert => alert.category === 'inventory'), [alerts]);
+  const renewalAlerts = useMemo(() => alerts.filter(alert => alert.category === 'renewal'), [alerts]);
 
   const playAlertSound = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -253,11 +276,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
               <span className="hidden sm:inline">{soundEnabled ? 'Sonido activo' : 'Activar sonido'}</span>
             </button>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <AlertGroup title="Clases agotándose" alerts={bonusAlerts} tone="danger" emptyLabel="No hay clases próximas a agotarse." onOpenStudentProfile={onOpenStudentProfile} />
             <AlertGroup title="Pagos pendientes" alerts={paymentAlerts} tone="warning" emptyLabel={globalStats.reviewStudents ? 'No hay pagos pendientes registrados. Hay datos por verificar.' : 'No hay pagos pendientes registrados.'} onOpenStudentProfile={onOpenStudentProfile} />
             <AlertGroup title="Membresías vencidas" alerts={expiryAlerts} tone="danger" emptyLabel="No hay membresías vencidas." onOpenStudentProfile={onOpenStudentProfile} />
+            <AlertGroup title="Inventario" alerts={inventoryAlerts} tone="warning" emptyLabel="No hay materiales en crítico, stock bajo o agotado." onOpenStudentProfile={onOpenStudentProfile} onNavigate={onNavigate} />
           </div>
+          {renewalAlerts.length > 0 && <div className="mt-3"><AlertGroup title="Renovaciones programadas" alerts={renewalAlerts} tone="warning" emptyLabel="" onOpenStudentProfile={onOpenStudentProfile} /></div>}
         </section>
 
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-5">

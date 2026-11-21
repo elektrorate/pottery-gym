@@ -1,8 +1,8 @@
-import { hasVerifiedMembership, isClassesRunningLow, needsStudentReview, studentBalanceLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining, manualCreditBreakdown } from '../utils/studentPresentation';
+import { hasVerifiedMembership, isClassesRunningLow, needsStudentReview, studentBalanceLabel, studentClassesAvailableLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining, manualCreditBreakdown } from '../utils/studentPresentation';
 import { quedanDeClases } from '../utils/pluralize';
 import { emailError, phoneError, positiveAmountError } from '../utils/contactValidation';
 import { pluralWord } from '../utils/pluralize';
-import { showError } from '../context/toast';
+import { showError, showSuccess } from '../context/toast';
 import { creditRejectionMessage, isProvedCreditRejection, STUDENT_CREDIT_REJECTION_EVENT, type RecognizedCreditRejection } from '../context/data/studentCreditOps';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent, ScalarClassAdjustment } from '../types';
@@ -13,7 +13,13 @@ import { DangerZone } from './shared/DangerZone';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { capitalizeEs, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
-import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, previousClassesMessage, previousClassesToRegister, observedLegacyBalance, cuotaDefaultForCategory } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, membershipPeriodEnd, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, previousClassesMessage, previousClassesToRegister, observedLegacyBalance, cuotaDefaultForCategory } from '../utils/studentLifecycle';
+import { isPaymentPendingToday } from '../utils/paymentPending';
+import { includesFolded } from '../utils/textSearch';
+import { parseSpanishQuantity } from '../utils/quantityInput';
+import { cuotaCeilingError, lengthError, LIMITS, manualCreditCeilingError } from '../utils/fieldLimits';
+import { duplicateContactMessage, duplicateStudentContact, personLabel } from '../utils/duplicateContact';
+import { mapUserFacingError } from '../utils/userFacingError';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel } from '../utils/classTypeLabels';
@@ -93,7 +99,8 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
     window.addEventListener(STUDENT_CREDIT_REJECTION_EVENT, onRejection);
     return () => window.removeEventListener(STUDENT_CREDIT_REJECTION_EVENT, onRejection);
   }, []);
-  const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0
+  const creditCeiling = manualCreditCeilingError(Number(draft.quantity));
+  const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0 && !creditCeiling
     && !!draft.activity && Object.hasOwn(CREDIT_ACTIVITY_LABELS, draft.activity)
     && /^\d{4}-\d{2}-\d{2}$/.test(draft.startsOn) && /^\d{4}-\d{2}-\d{2}$/.test(draft.endsOn)
     && Number.isFinite(Date.parse(draft.startsOn)) && Number.isFinite(Date.parse(draft.endsOn))
@@ -222,7 +229,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         <label>Actividad del crédito manual<select aria-label="Actividad del crédito manual" className={controlClass} value={draft.activity} onChange={event => setDraft({ ...draft, activity: event.target.value as ManualCreditIntent['activity'] })}>
           <option value="">Seleccionar actividad</option>{Object.entries(CREDIT_ACTIVITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
-        <label>Cantidad de clases manuales<input aria-label="Cantidad de clases manuales" className={controlClass} type="number" min="1" step="1" value={draft.quantity} onChange={event => setDraft({ ...draft, quantity: event.target.value })} /></label>
+        <label>Cantidad de clases manuales<input aria-label="Cantidad de clases manuales" className={controlClass} type="number" min="1" step="1" value={draft.quantity} onChange={event => setDraft({ ...draft, quantity: event.target.value })} />{creditCeiling && <span role="alert" className="mt-1 block text-[12px] text-[#9C4235]">{creditCeiling}</span>}</label>
         <p>{draft.mode === 'reconcile_legacy' ? `Indique las ${legacyBalance ?? 'desconocido'} clases anteriores completas, la actividad y las fechas.` : 'Indique la cantidad, la actividad y las fechas.'}</p>
         <label>Inicio del crédito manual<DateField aria-label="Inicio del crédito manual" className={controlClass} value={draft.startsOn} onChange={startsOn => setDraft({ ...draft, startsOn })} /></label>
         <label>Fin del crédito manual<DateField aria-label="Fin del crédito manual" className={controlClass} value={draft.endsOn} onChange={endsOn => setDraft({ ...draft, endsOn })} /></label>
@@ -350,6 +357,12 @@ const StudentList: React.FC<StudentListProps> = ({
   const liveEditingStudent = students.find(student => student.id === editingStudent?.id) || editingStudent;
 
   const [priceText, setPriceText] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string | null; surname?: string | null; notes?: string | null; price?: string | null }>({});
+  const [pendingDuplicate, setPendingDuplicate] = useState<Student | null>(null);
+  const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState(false);
+  const skipDuplicateCheck = useRef(false);
+  const skipPastExpiry = useRef(false);
+  const [pendingPastExpiry, setPendingPastExpiry] = useState(false);
   const [form, setForm] = useState({
     name: '',
     surname: '',
@@ -383,6 +396,16 @@ const StudentList: React.FC<StudentListProps> = ({
   const [newSessionTime, setNewSessionTime] = useState('10:00');
 
   useEffect(() => { setActivePreset(listPreset); }, [listPreset]);
+  useEffect(() => {
+    if (!showModal) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (pendingDuplicate || pendingPaymentConfirm || pendingCategory || pendingMembershipTier || studentToDelete || studentToArchive || pendingClassAdjustment) return;
+      setShowModal(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showModal, pendingDuplicate, pendingPaymentConfirm, pendingCategory, pendingMembershipTier, studentToDelete, studentToArchive, pendingClassAdjustment]);
   useEffect(() => { if (initialCategory) setCategoryFilter(initialCategory); }, [initialCategory]);
   useEffect(() => { if (initialTab) setActiveTab(initialTab); }, [initialTab]);
 
@@ -438,11 +461,11 @@ const StudentList: React.FC<StudentListProps> = ({
 
   const handleCreateClick = () => {
     setEditingStudent(null);
-    const nextMonth = addMembershipMonth(today);
+    const start = getWorkshopDate();
     setForm({
       name: '', surname: '', email: '', phone: '', notes: '', observations: '',
       classesRemaining: MEMBERSHIP_PLANS.gold.bonuses, price: MEMBERSHIP_PLANS.gold.price, paymentStatus: DEFAULT_STUDENT_PAYMENT_STATUS, classType: 'Modelado',
-      expiryDate: nextMonth, assignedClasses: [],
+      expiryDate: membershipPeriodEnd(start), assignedClasses: [],
       studentCategory: 'membresia', membershipTier: 'gold', membershipActivatedAt: getWorkshopDate(), groupName: '', bonosAsignados: MEMBERSHIP_PLANS.gold.bonuses, repetirMensualmente: false
     });
     setShowModal(true);
@@ -485,31 +508,57 @@ const StudentList: React.FC<StudentListProps> = ({
 
   const requestMembershipTierChange = (tier: MembershipTier) => {
     if (tier === form.membershipTier) return;
+    if (!editingStudent) {
+      applyMembershipTierChange(tier);
+      return;
+    }
     setPendingMembershipTier(tier);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    if (!form.name.trim()) {
-      showError('El nombre es obligatorio.');
+    const nameError = !form.name.trim() ? 'El nombre es obligatorio.' : lengthError(form.name, LIMITS.name, 'El nombre');
+    const surnameError = lengthError(form.surname, LIMITS.name, 'Los apellidos');
+    const notesError = lengthError(form.notes, LIMITS.note, 'Las notas') || lengthError(form.observations, LIMITS.note, 'Las observaciones');
+    if (nameError || surnameError || notesError || emailError(form.email) || phoneError(form.phone)) {
+      setFieldErrors({ name: nameError, surname: surnameError, notes: notesError });
       return;
     }
+    setFieldErrors({});
     const isMembership = form.studentCategory === 'membresia';
-    if (emailError(form.email) || phoneError(form.phone)) return;
     if (!isMembership && form.classesRemaining > form.bonosAsignados) return;
-    const packPrice = Number(priceText);
+    const parsedPrice = parseSpanishQuantity(priceText);
+    const packPrice = parsedPrice.ok ? parsedPrice.value : Number.NaN;
     if (!isMembership) {
+      const cuotaLabel = form.studentCategory === 'grupo_temporal' ? 'La cuota del grupo temporal' : form.studentCategory === 'grupal' ? 'La cuota del grupo' : 'La cuota del bono';
       if (!priceText.trim()) {
-        showError('Indica la cuota del bono. No hay un precio configurado para esta categoría.');
+        setFieldErrors({ price: `Indique ${cuotaLabel.charAt(0).toLocaleLowerCase('es-ES')}${cuotaLabel.slice(1)}. No hay un precio configurado para esta categoría.` });
         return;
       }
-      const amountError = positiveAmountError(packPrice, 'La cuota');
+      const amountError = positiveAmountError(packPrice, cuotaLabel, 'f') || cuotaCeilingError(packPrice);
       if (amountError) {
-        showError(amountError);
+        setFieldErrors({ price: amountError });
         return;
       }
     }
+    if (form.expiryDate && form.expiryDate < '2000-01-01') {
+      setFieldErrors({ notes: 'La fecha «Válido hasta» no puede ser anterior al año 2000.' });
+      return;
+    }
+    if (form.expiryDate && form.expiryDate < today && !skipPastExpiry.current) {
+      setPendingPastExpiry(true);
+      return;
+    }
+    skipPastExpiry.current = false;
+    if (!skipDuplicateCheck.current) {
+      const duplicate = duplicateStudentContact({ id: editingStudent?.id, email: form.email, phone: form.phone }, students);
+      if (duplicate) {
+        setPendingDuplicate(duplicate);
+        return;
+      }
+    }
+    skipDuplicateCheck.current = false;
     const plan = MEMBERSHIP_PLANS[form.membershipTier];
     const membershipActivatedAt = form.membershipActivatedAt || editingStudent?.membershipActivatedAt || editingStudent?.createdAt?.split('T')[0] || getWorkshopDate();
     const { assignedClasses: _assignedClasses, ...studentForm } = form;
@@ -550,7 +599,8 @@ const StudentList: React.FC<StudentListProps> = ({
       }
       setShowModal(false);
       setEditingStudent(null);
-    } catch (error: any) { showError(error.message || 'No se pudo guardar el alumno.'); }
+      showSuccess(editingStudent?.id ? 'Ficha guardada.' : 'Alumno creado.');
+    } catch (error: any) { showError(mapUserFacingError(error, 'No se pudo guardar el alumno.')); }
     finally { setIsSubmitting(false); }
   };
 
@@ -665,9 +715,8 @@ const StudentList: React.FC<StudentListProps> = ({
     return students.filter(s => {
       const archived = isStudentArchived(s, today);
       const lifecycle = getStudentLifecycle(s, today);
-      const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
-      const matchesSearch = !searchQuery.trim() || fullName.includes(searchQuery.trim().toLowerCase());
-      if (activePreset === 'payment') return matchesSearch && studentHasPendingPayment(s);
+      const matchesSearch = includesFolded(`${s.name} ${s.surname || ''} ${s.email || ''} ${s.phone || ''}`, searchQuery);
+      if (activePreset === 'payment') return includesFolded(`${s.name} ${s.surname || ''}`, searchQuery) && isPaymentPendingToday(s, today);
       if (activePreset === 'low-classes') return matchesSearch && !archived && isClassesRunningLow(s, giftCards);
       if (activePreset === 'enrolled') return matchesSearch && !!enrolledStudentIds?.includes(s.id);
       const cat = s.studentCategory || 'membresia';
@@ -700,7 +749,7 @@ const StudentList: React.FC<StudentListProps> = ({
     if (!query) return [];
     return students
       .map(s => `${s.name} ${s.surname || ''}`.trim())
-      .filter(name => name.toLowerCase().includes(query))
+      .filter(name => includesFolded(name, query))
       .slice(0, 6);
   }, [students, searchQuery]);
 
@@ -767,10 +816,10 @@ const StudentList: React.FC<StudentListProps> = ({
               const classTotal = hasVerifiedMembership(s) || isNonMembershipCategory(cat) ? s.bonosAsignados : undefined;
               const percentage = classTotal && classTotal > 0 ? Math.min(100, ((s.classesRemaining ?? 0) / classTotal) * 100) : 0;
                return <button key={s.id} data-student-id={s.id} onClick={() => handleEditClick(s)} className="ui-list w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(260px,1.8fr)_1fr_110px_118px] gap-3 md:gap-4 items-center px-4 md:px-5 py-3.5 border-b last:border-0 border-[#EDE2D8] hover:bg-[#FCF8F4] focus:outline-none focus:bg-[#FCF8F4] transition-colors group">
-                  <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{presentPersonName(s.name, s.surname)}</strong><span className="ui-meta block truncate">{s.phone || s.email || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{studentActivityLabel(s, giftCards) || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' && !hasVerifiedMembership(s) ? 'Plan por confirmar · Por verificar' : studentCategoryLabel(cat)}</span></span></div>
+                  <div className="flex items-center gap-3 min-w-0"><span className="w-11 h-11 shrink-0 rounded-full bg-[#F0E2D6] text-[#7B3F22] flex items-center justify-center text-[12px] font-bold">{initials}</span><span className="min-w-0"><strong className="ui-card-title block text-[#7B3F22] truncate group-hover:text-[#C68952] transition-colors">{presentPersonName(s.name, s.surname)}</strong><span className="ui-meta block truncate">{[s.phone, s.email].filter(Boolean).join(' · ') || 'Sin contacto añadido'}</span><span className="ui-meta md:hidden block mt-1">{studentActivityLabel(s, giftCards) || 'Sin actividad'} · {isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' && !hasVerifiedMembership(s) ? 'Plan por confirmar · Por verificar' : studentCategoryLabel(cat)}</span></span></div>
                   <div className="hidden md:block min-w-0"><span className="ui-data block text-[#7B3F22] truncate">{studentActivityLabel(s, giftCards) || 'Sin actividad'}</span><span className="inline-flex mt-1 px-2 py-0.5 rounded border border-[#DDBFA4] text-[12px] font-bold uppercase tracking-[0.06em] text-[#8B6B5E]">{isArchived ? CATEGORY_LABELS.archivados : cat === 'membresia' ? (hasVerifiedMembership(s) ? MEMBERSHIP_PLANS[membershipTier].label : 'Plan por confirmar') : studentCategoryLabel(cat)}</span></div>
-                  <div className="max-w-[140px] text-right md:max-w-none md:text-left"><strong className={`block whitespace-normal text-[12px] leading-snug tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{studentBalanceLabel(s, giftCards)}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
-                  <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : isNonMembershipCategory(cat) ? studentCategoryLabel(cat) : isExpired ? 'Vencida' : needsStudentReview(s) ? 'Por verificar' : isPending ? 'Pendiente' : 'Activo'}</span>
+                  <div className="max-w-[140px] text-right md:max-w-none md:text-left"><strong className={`block whitespace-normal text-[12px] leading-snug tabular-nums ${isPending ? 'text-[#A85D3B]' : 'text-[#7B3F22]'}`}>{studentClassesAvailableLabel(s, giftCards)}</strong><div className="w-16 h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-1 ml-auto md:ml-0"><span className={`block h-full ${isPending ? 'bg-[#C68952]' : 'bg-[#7B3F22]'}`} style={{ width: `${percentage}%` }} /></div></div>
+                  <span className={`hidden md:inline-flex justify-center px-2 py-1 rounded text-[12px] font-bold uppercase tracking-[0.06em] border ${isArchived ? 'bg-[#F0E5DB] text-[#8B6B5E] border-[#DDBFA4]' : isPending || getStudentPaymentStatus(s) === 'pending' ? 'bg-[#FBF1EC] text-[#A85D3B] border-[#E8CABB]' : 'bg-[#F5F1E9] text-[#7B3F22] border-[#D8CDBE]'}`}>{isArchived ? 'Archivado' : isNonMembershipCategory(cat) ? (getStudentPaymentStatus(s) === 'paid' ? 'Pagado' : getStudentPaymentStatus(s) === 'pending' ? 'Pendiente' : 'Por verificar') : isExpired ? 'Vencida' : needsStudentReview(s) ? 'Por verificar' : isPending ? 'Pendiente' : 'Activo'}</span>
               </button>;
             })}
             {hasMoreStudents && <div className="flex justify-center border-t border-[#EDE2D8] px-4 py-4"><button type="button" onClick={() => setVisibleLimit(limit => limit + 50)} className="min-h-10 rounded-lg border border-[#C68952] bg-white px-4 py-2 text-[12px] font-bold text-[#7B3F22] hover:bg-[#F7F1EB]">Cargar más alumnos ({filteredStudents.length - visibleStudents.length} restantes)</button></div>}
@@ -781,14 +830,14 @@ const StudentList: React.FC<StudentListProps> = ({
       {showModal && <div className="fixed inset-0 bg-[#4B2A1D]/45 backdrop-blur-[2px] z-[100] flex items-end md:items-center justify-center overflow-hidden">
         <div className={`bg-[#FDFBF9] w-full ${editingStudent ? 'md:max-w-5xl' : 'md:max-w-2xl'} h-[100dvh] md:h-auto md:max-h-[92dvh] md:rounded-xl shadow-[0_20px_60px_rgba(75,42,29,0.2)] relative flex flex-col overflow-hidden animate-fade-in`}>
           <div className="px-4 sm:px-7 py-4 border-b border-[#E6D8CB] flex items-center justify-between shrink-0 bg-[#FDFBF9]"><div className="flex items-center gap-3 min-w-0"><span className="hidden sm:flex w-10 h-10 rounded-full bg-[#F0E2D6] text-[#7B3F22] items-center justify-center text-[12px] font-bold">{editingStudent ? presentInitials(editingStudent.name, editingStudent.surname) : '+'}</span><div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8B6B5E]">{editingStudent ? 'Perfil del alumno' : 'Nuevo alumno'}</p><h3 className="text-[20px] text-[#7B3F22] truncate" style={{ fontFamily: "'Outfit', sans-serif" }}>{editingStudent ? presentPersonName(editingStudent.name, editingStudent.surname) : 'Crear ficha'}</h3></div></div><button onClick={() => setShowModal(false)} className="w-9 h-9 rounded-md border border-[#DDBFA4] text-[#8B6B5E] flex items-center justify-center hover:bg-[#F0E2D6] hover:text-[#7B3F22] transition-colors" aria-label="Cerrar ficha"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 6l12 12M18 6 6 18" /></svg></button></div>
-          {editingStudent && liveEditingStudent && <div className="px-4 sm:px-7 py-3 border-b border-[#E6D8CB] bg-[#FDFBF9] shrink-0" data-testid="student-payment-action">{studentHasPendingPayment(liveEditingStudent) ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[13px] font-semibold text-[#A85D3B]">Pago pendiente</p><button type="button" onClick={() => void confirmVisiblePayment()} disabled={isSubmitting} className="h-11 px-5 bg-[#7B3F22] text-white rounded-md text-[14px] font-bold hover:bg-[#63321C] disabled:opacity-60">Confirmar pago</button></div> : <p data-testid="payment-state" className="inline-flex min-h-10 items-center rounded-md bg-[#F5F1E9] px-3 text-[13px] font-bold text-[#7B3F22]">{getStudentPaymentStatus(liveEditingStudent) === 'paid' ? 'Pago al día' : 'Pago desconocido'}</p>}</div>}
+          {editingStudent && liveEditingStudent && <div className="px-4 sm:px-7 py-3 border-b border-[#E6D8CB] bg-[#FDFBF9] shrink-0" data-testid="student-payment-action">{studentHasPendingPayment(liveEditingStudent) ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-[13px] font-semibold text-[#A85D3B]">Pago pendiente</p><button type="button" onClick={() => setPendingPaymentConfirm(true)} disabled={isSubmitting} className="h-11 px-5 bg-[#7B3F22] text-white rounded-md text-[14px] font-bold hover:bg-[#63321C] disabled:opacity-60">Confirmar pago</button></div> : <p data-testid="payment-state" className="inline-flex min-h-10 items-center rounded-md bg-[#F5F1E9] px-3 text-[13px] font-bold text-[#7B3F22]">{getStudentPaymentStatus(liveEditingStudent) === 'paid' ? 'Pago al día' : 'Pago desconocido'}</p>}</div>}
 
-            <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-4 pb-28 sm:px-7 md:pb-28"><form onSubmit={handleSubmit} className={`grid grid-cols-1 gap-6 py-5 md:py-6 ${editingStudent ? 'lg:grid-cols-[1.2fr_1fr] lg:gap-8' : ''}`}>
+            <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-4 pb-28 sm:px-7 md:pb-28"><form noValidate onSubmit={handleSubmit} className={`grid grid-cols-1 gap-6 py-5 md:py-6 ${editingStudent ? 'lg:grid-cols-[1.2fr_1fr] lg:gap-8' : ''}`}>
               <div className="space-y-5">
                <section>
                 <div className="mb-3"><h4 className="text-[14px] font-bold text-[#7B3F22]">Información personal</h4><p className="text-[11px] text-[#8B6B5E]">Los campos con * son obligatorios.</p></div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label className="block text-[12px] font-medium text-[#7B3F22]">Nombre <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre" aria-label="Nombre" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
+                  <label className="block text-[12px] font-medium text-[#7B3F22]">Nombre <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr><input value={form.name} maxLength={LIMITS.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre" aria-label="Nombre" aria-invalid={fieldErrors.name ? true : undefined} className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" />{fieldErrors.name && <span role="alert" className="mt-1 block text-[12px] text-[#9C4235]">{fieldErrors.name}</span>}</label>
                   <label className="block text-[12px] font-medium text-[#7B3F22]">Apellidos<input value={form.surname} onChange={(e) => setForm({ ...form, surname: e.target.value })} placeholder="Apellidos" aria-label="Apellidos" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
                   <label className="block text-[12px] font-medium text-[#7B3F22] sm:col-span-2">Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email" aria-label="Email" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
                   <label className="block text-[12px] font-medium text-[#7B3F22] sm:col-span-2">Teléfono<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Teléfono" aria-label="Teléfono" aria-invalid={phoneError(form.phone) ? true : undefined} className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
@@ -796,7 +845,7 @@ const StudentList: React.FC<StudentListProps> = ({
                   {phoneError(form.phone) && <p role="alert" className="sm:col-span-2 text-[12px] text-[#9C4235]">{phoneError(form.phone)}</p>}
                 </div>
               </section>
-               <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as StudentCategoryValue)} aria-label="Categoría del alumno" className="col-span-2 h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos de clases</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="text" inputMode="decimal" value={priceText} onChange={(e) => { const raw = e.target.value; setPriceText(raw); const parsed = Number(raw); if (raw.trim() === '') setForm({ ...form, price: 0 }); else if (Number.isFinite(parsed)) setForm({ ...form, price: parsed }); }} placeholder="Cuota" aria-label="Cuota" aria-invalid={form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') ? true : undefined} className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div>{form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">{positiveAmountError(Number(priceText), 'La cuota')}</p>}{form.studentCategory !== 'membresia' && <p className="mt-2 text-[12px] text-[#8B6B5E]">La cuota del bono no hereda el precio de la membresía. No hay una lista de precios de bonos en ajustes: indícala.</p>}</section>
+               <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as StudentCategoryValue)} aria-label="Categoría del alumno" className="col-span-2 h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos de clases</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="text" inputMode="decimal" value={priceText} onChange={(e) => { const raw = e.target.value; setPriceText(raw); const parsed = parseSpanishQuantity(raw); if (raw.trim() === '') setForm({ ...form, price: 0 }); else if (parsed.ok) setForm({ ...form, price: parsed.value }); }} placeholder="Cuota" aria-label="Cuota" aria-invalid={fieldErrors.price ? true : undefined} className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div>{fieldErrors.price && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">{fieldErrors.price}</p>}{form.studentCategory !== 'membresia' && <p className="mt-2 text-[12px] text-[#8B6B5E]">{form.studentCategory === 'grupo_temporal' ? 'La cuota del grupo temporal no hereda el precio de la membresía. Indíquelo usted.' : 'La cuota del bono no hereda el precio de la membresía. No hay una lista de precios de bonos en ajustes: indíquela.'} Puede usar coma decimal, por ejemplo 12,5.</p>}</section>
                 {form.studentCategory === 'membresia' && (!editingStudent || hasVerifiedMembership(editingStudent)) && <div className="grid grid-cols-3 gap-1.5 mt-2">
                     {(['plata', 'gold', 'platinum'] as MembershipTier[]).map(tier => <button key={tier} type="button" disabled={managedEdit} onClick={() => requestMembershipTierChange(tier)} className={`min-h-11 rounded-lg border px-2 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors ${form.membershipTier === tier ? 'border-brand bg-brand text-white shadow-sm' : 'border-neutral-border bg-white text-neutral-textMain hover:border-brand hover:text-brand'}`}><span>{MEMBERSHIP_PLANS[tier].label}</span><span className={`block text-[11px] font-medium normal-case tracking-normal ${form.membershipTier === tier ? 'text-white/90' : 'text-neutral-textSec'}`}>{MEMBERSHIP_PLANS[tier].price}€ · {MEMBERSHIP_PLANS[tier].bonuses} clases</span></button>)}
                </div>}
@@ -850,7 +899,7 @@ const StudentList: React.FC<StudentListProps> = ({
                      <div className="flex items-center bg-white border border-[#E7B899] rounded-md overflow-hidden h-10">
                        <button type="button" onClick={() => setForm(f => ({ ...f, bonosAsignados: Math.max(1, f.bonosAsignados - 1) }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Reducir clases">-</button>
                       <input type="number" readOnly value={form.bonosAsignados} aria-label="Clases contratadas" className="w-full min-w-0 text-center text-[14px] font-bold text-[#A85D3B] outline-none" />
-                       <button type="button" onClick={() => setForm(f => ({ ...f, bonosAsignados: Math.min(isNonMembershipCategory(f.studentCategory) ? TEMPORAL_MAX_BONOS : MEMBERSHIP_PLANS[f.membershipTier].bonuses, f.bonosAsignados + 1), classesRemaining: isNonMembershipCategory(f.studentCategory) ? Math.min(TEMPORAL_MAX_BONOS, Math.max(f.classesRemaining, f.bonosAsignados + 1)) : f.classesRemaining }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6]" aria-label="Aumentar clases">+</button>
+                       <button type="button" disabled={isNonMembershipCategory(form.studentCategory) && form.bonosAsignados >= TEMPORAL_MAX_BONOS} onClick={() => setForm(f => ({ ...f, bonosAsignados: Math.min(isNonMembershipCategory(f.studentCategory) ? TEMPORAL_MAX_BONOS : MEMBERSHIP_PLANS[f.membershipTier].bonuses, f.bonosAsignados + 1), classesRemaining: isNonMembershipCategory(f.studentCategory) ? Math.min(TEMPORAL_MAX_BONOS, Math.max(f.classesRemaining, f.bonosAsignados + 1)) : f.classesRemaining }))} className="w-9 h-10 shrink-0 text-[#A85D3B] hover:bg-[#F0E2D6] disabled:cursor-not-allowed disabled:opacity-40" aria-label="Aumentar clases">+</button>
                     </div>
                   </div>
                   <div>
@@ -870,7 +919,7 @@ const StudentList: React.FC<StudentListProps> = ({
                 </div>
               </fieldset>}
                </>}
-              <label className="block text-[12px] font-medium text-[#7B3F22]">Fecha de vencimiento<DateField disabled={managedEdit} value={form.expiryDate} onChange={expiryDate => setForm({ ...form, expiryDate })} aria-label="Fecha de vencimiento de membresía" className="mt-1 h-10 w-full max-w-xs px-2.5 bg-white border border-[#E7B899] rounded-md text-[13px] text-[#7B3F22] outline-none focus:border-[#C68952] disabled:cursor-not-allowed disabled:opacity-60" /></label>
+              <label className="block text-[12px] font-medium text-[#7B3F22]">Válido hasta<DateField disabled={managedEdit || (!editingStudent && form.studentCategory === 'membresia')} value={form.expiryDate} onChange={expiryDate => setForm({ ...form, expiryDate })} aria-label="Fecha de vencimiento de membresía" className="mt-1 h-10 w-full max-w-xs px-2.5 bg-white border border-[#E7B899] rounded-md text-[13px] text-[#7B3F22] outline-none focus:border-[#C68952] disabled:cursor-not-allowed disabled:opacity-60" /><span className="mt-1 block text-[11px] text-[#8B6B5E]">{form.studentCategory === 'membresia' ? 'El período de membresía incluye este día. Un inicio el 21/11 es válido hasta el 20/12.' : 'El día indicado está incluido.'}</span>{fieldErrors.notes && <span role="alert" className="mt-1 block text-[12px] text-[#9C4235]">{fieldErrors.notes}</span>}</label>
               {!editingStudent && <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-3">Observaciones internas</h4><textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} placeholder="Preferencias, nivel o avisos relevantes" aria-label="Observaciones internas" className="w-full min-h-[120px] p-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none resize-y focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></section>}
               {managedEdit && <p className="text-sm">Use las acciones de período para cambiar el plan, las fechas, las clases o el pago.</p>}
             </div>
@@ -923,7 +972,7 @@ const StudentList: React.FC<StudentListProps> = ({
                    <p>Confirme el plan y las fechas antes de crear el período.</p>
                    <button type="button" disabled={isSubmitting || !liveEditingStudent.membershipTier || !liveEditingStudent.expiryDate} onClick={() => void runMembershipAction(() => onActivateMembership(liveEditingStudent.id))}>Inicializar período</button>
                  </div>}
-                 <label>Plan del próximo período <select value={renewalTier} disabled={isSubmitting || !!renewalIntentRef.current} onChange={event => setRenewalTier(event.target.value as MembershipTier)}><option value="">Selecciona un plan confirmado</option>{Object.entries(MEMBERSHIP_PLANS).map(([tier, plan]) => <option key={tier} value={tier}>{plan.label} · {plan.price}€ · {plan.bonuses} clases</option>)}</select></label>
+                 <label className="relative z-10 mt-4 block">Plan del próximo período <select value={renewalTier} disabled={isSubmitting || !!renewalIntentRef.current} onChange={event => setRenewalTier(event.target.value as MembershipTier)} className="mt-1 block w-full rounded-md border border-[#DDBFA4] bg-white px-2 py-2 text-[13px]"><option value="">Selecciona un plan confirmado</option>{Object.entries(MEMBERSHIP_PLANS).map(([tier, plan]) => <option key={tier} value={tier}>{plan.label} · {plan.price}€ · {plan.bonuses} clases</option>)}</select></label>
                  <p>Renovar programa un único sucesor pendiente; conserva las clases y el pago actuales hasta su inicio.</p>
                  <button type="button" disabled={isSubmitting || !renewalTier || !hasVerifiedMembership(liveEditingStudent)} onClick={handleRenewMembership}>Programar renovación / reintentar</button>
                  <p>{studentBalanceLabel(liveEditingStudent)}</p>
@@ -947,12 +996,25 @@ const StudentList: React.FC<StudentListProps> = ({
             onApproveManualCredit={onApproveManualCredit} onSettlePendingPenalty={onSettlePendingPenalty}
             onWaivePendingPenalty={onWaivePendingPenalty} canManageStudentCredits={canManageStudentCredits}
             getPendingStudentCreditOperation={getPendingStudentCreditOperation} onRetryPendingStudentCreditOperation={onRetryPendingStudentCreditOperation} />}
+          {editingStudent && managedEdit && <section aria-label="Zona de peligro" className="rounded-md border border-[#E6D8CB] bg-[#FDFBF9] px-3 py-3 text-[12px] leading-relaxed text-[#7B3F22]">Las membresías no se eliminan: se archivan para conservar el historial de pagos y de clases. Use «Archivar alumno manualmente».</section>}
           {editingStudent && !managedEdit && <section aria-label="Zona de peligro"><DangerZone description={`Eliminar a ${presentPersonName(editingStudent.name, editingStudent.surname)} borra la ficha para siempre. No se puede deshacer. Si solo quieres ocultarla, usa Archivar.`} actionLabel="Eliminar alumno" disabled={isSubmitting} onAction={() => setStudentToDelete(editingStudent.id)} /></section>}
           </div>
 
           <div className="absolute bottom-0 left-0 right-0 px-4 sm:px-7 py-3 bg-[#FDFBF9]/95 backdrop-blur border-t border-[#E6D8CB] flex items-center justify-end gap-3 shrink-0 z-10"><button type="button" onClick={() => setShowModal(false)} className="h-10 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E] hover:text-[#7B3F22]">Cancelar</button><button onClick={handleSubmit} disabled={isSubmitting} className="h-10 px-4 sm:px-5 bg-[#7B3F22] text-white rounded-md text-[11px] font-bold uppercase tracking-[0.1em] hover:bg-[#63321C] transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? 'Guardando...' : (editingStudent ? 'Guardar cambios' : 'Guardar alumno')}</button></div>
         </div>
       </div>}
+        <ConfirmModal isOpen={pendingPastExpiry} title="La vigencia ya pasó" message={`«Válido hasta» es ${formatDate(form.expiryDate)}. Puede guardarla si esa fecha es correcta.`} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipPastExpiry.current = true; setPendingPastExpiry(false); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingPastExpiry(false)} />
+        <ConfirmModal isOpen={!!pendingDuplicate} title="Contacto ya registrado" message={pendingDuplicate ? duplicateContactMessage('alumno', personLabel(pendingDuplicate), form.email && pendingDuplicate.email && form.email.trim().toLocaleLowerCase('es-ES') === pendingDuplicate.email.trim().toLocaleLowerCase('es-ES') ? form.email : undefined, form.phone && pendingDuplicate.phone && form.phone.replace(/\s/g, '') === pendingDuplicate.phone.replace(/\s/g, '') ? form.phone : form.phone || form.email) : ''} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipDuplicateCheck.current = true; setPendingDuplicate(null); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingDuplicate(null)} />
+        <ConfirmModal isOpen={pendingPaymentConfirm} title="¿Confirmar pago?" message={(() => {
+          if (!liveEditingStudent) return 'Va a confirmar el pago.';
+          const periodId = selectConfirmablePaymentPeriodId(liveEditingStudent);
+          const period = liveEditingStudent.membershipPeriods?.find(item => item.id === periodId);
+          const amount = period?.price ?? liveEditingStudent.price;
+          const start = period?.startsOn;
+          const end = period?.endsOn;
+          const when = start || end ? ` del período ${start ? formatDate(start) : 'sin inicio'} — ${end ? formatDate(end) : 'sin vencimiento'}` : '';
+          return `Va a confirmar el pago${amount ? ` de ${amount} €` : ''}${when}.`;
+        })()} confirmText="Confirmar pago" isDestructive={false} onConfirm={() => { setPendingPaymentConfirm(false); void confirmVisiblePayment(); }} onCancel={() => setPendingPaymentConfirm(false)} />
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory ? studentCategoryLabel(pendingCategory) : ''}. Se ajustarán sus clases y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y las clases contratadas.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />
         <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo con la acción Reactivar alumno manualmente, sin renovar ni confirmar un pago." confirmText="Archivar" isDestructive={false} onConfirm={async () => { if (studentToArchive && !isSubmitting) { setIsSubmitting(true); try { await onUpdate(studentToArchive, { archivedAt: getWorkshopDate() }); setStudentToArchive(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo archivar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToArchive(null)} />

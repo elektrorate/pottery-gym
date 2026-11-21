@@ -4,6 +4,10 @@ import { giftCardTypeLabel, studentEffectiveRemainingClasses } from '../utils/st
 import { getStudentSessionStatus } from '../utils/recordPresentation';
 import { formatDate, formatTime, madridDateKey, parseDateOnly } from '../utils/dateFormat';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
+import { includesFolded, compareEs } from '../utils/textSearch';
+import { sessionsForStudent } from '../utils/historySessions';
+import { isStudentArchived } from '../utils/studentLifecycle';
+import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { presentDisplayName, presentPersonName } from '../utils/displayName';
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
@@ -37,6 +41,7 @@ const isTemporaryCategory = (category?: string) => isNonMembershipCategory(categ
 type ExtendedCategoryFilter = 'todos' | 'membresia' | 'temporal' | 'bonos_especiales';
 
 const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, giftCards }) => {
+  const today = useWorkshopDate();
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<ExtendedCategoryFilter>('todos');
   const [searchQuery, setSearchQuery] = useState('');
@@ -85,12 +90,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
     const studentIsTemporary = isTemporaryCategory(student.studentCategory);
 
     // Filtrar sesiones donde el alumno participó (coincidencia de nombre)
-    const studentSessions = sessions.filter(s =>
-      s.students.some(name => {
-        const key = name.toUpperCase();
-        return key === upperFullName || key === upperNameOnly;
-      })
-    ).sort((a, b) => b.date.localeCompare(a.date));
+    const studentSessions = sessionsForStudent(sessions, student);
 
     // Filtrar piezas del alumno
     const studentPieces = pieces.filter(p =>
@@ -163,14 +163,11 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
       const isTemporary = isTemporaryCategory(cat);
       const matchesCategory = categoryFilter === 'todos'
         || (categoryFilter === 'membresia' && cat === 'membresia')
-        || (categoryFilter === 'temporal' && isTemporary)
+        || (categoryFilter === 'temporal' && cat === 'temporal')
         || (categoryFilter === 'bonos_especiales' && isTemporary && bonusSpecialStudentIds.has(s.id));
-      const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
-      const matchesSearch = !debouncedSearchQuery
-        || fullName.includes(debouncedSearchQuery)
-        || (s.groupName && s.groupName.toLowerCase().includes(debouncedSearchQuery));
+      const matchesSearch = includesFolded(`${s.name} ${s.surname || ''} ${s.groupName || ''}`, debouncedSearchQuery);
       return matchesCategory && matchesSearch;
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    }).sort((a, b) => compareEs(a.name, b.name));
   }, [students, categoryFilter, debouncedSearchQuery, bonusSpecialStudentIds]);
 
   useEffect(() => {
@@ -278,7 +275,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                         className={`w-full text-left p-4 rounded-2xl transition-all border flex items-center justify-between group ${selectedStudentId === s.id ? (isTemporary ? 'bg-amber-500 text-white border-amber-500' : 'bg-brand text-white border-brand') + ' soft-shadow' : 'bg-transparent border-transparent text-neutral-textSec hover:bg-neutral-alt'}`}
                       >
                         <div className="overflow-hidden flex-1">
-                          <p className={`font-semibold text-[14px] truncate ${selectedStudentId === s.id ? 'text-white' : 'text-neutral-textMain'}`}>{presentPersonName(s.name, s.surname)}</p>
+                          <p className={`font-semibold text-[14px] truncate ${selectedStudentId === s.id ? 'text-white' : 'text-neutral-textMain'}`}>{presentPersonName(s.name, s.surname)}{isStudentArchived(s, today) ? ' · Archivado' : ''}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className={`text-[11px] font-semibold ${selectedStudentId === s.id ? 'text-white/80' : 'text-neutral-textHelper'}`}>
                               {studentCategoryLabel(cat)}
@@ -377,7 +374,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                               {formatExpiryDate(studentDetails.student.expiryDate)}
                             </p>
                             <p className="text-[12px] font-semibold text-neutral-textSec">
-                              {expired ? 'Expirado' : 'Expira'}
+                              {expired ? 'Válido hasta (vencido)' : 'Válido hasta'}
                             </p>
                           </div>
                         )}
