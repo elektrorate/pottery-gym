@@ -39,7 +39,7 @@ try {
   psql(database, ['-c', `create or replace function auth.jwt() returns jsonb language sql stable as $$
     select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb; $$;`]);
   const migrations = readdirSync(new URL('../migrations/', import.meta.url)).filter(name => /^\d+_.*\.sql$/.test(name)).sort();
-  assert.ok(migrations.includes('20261121153000_unusable_membership_exception.sql'));
+  assert.ok(migrations.includes('20261121054908_unusable_membership_exception.sql'));
   for (const migration of migrations) file(database, `supabase/migrations/${migration}`);
   console.log(`PASS: applied ${migrations.length} migrations on local PostgreSQL ${version}, database ${database}`);
   const fixture = file(database, 'supabase/tests/unusable_membership_exception.fixture.psql');
@@ -47,7 +47,7 @@ try {
   assert.ok(passes >= 20, `expected the fixture assertions to pass, saw ${passes}`);
   console.log(`PASS: fixture ${passes} assertions`);
 
-  file(database, 'supabase/rollbacks/20261121153000_unusable_membership_exception_rollback.sql');
+  file(database, 'supabase/rollbacks/20261121054908_unusable_membership_exception_rollback.sql');
   const rolled = psql(database, ['-c', `
     set request.jwt.claim.role = 'authenticated';
     set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
@@ -67,7 +67,7 @@ try {
   assert.match(rolled, /PASS: reject: Membership override requires known original positive credit needing an exception/);
   console.log('PASS: rollback restores the deadlock');
 
-  file(database, 'supabase/migrations/20261121153000_unusable_membership_exception.sql');
+  file(database, 'supabase/migrations/20261121054908_unusable_membership_exception.sql');
   const again = psql(database, ['-c', `
     select public.ux_assert(f->>'usable' = 'false' and f->>'overridable' = 'true' and f->>'no_credit_allowed' = 'true'
       and f->>'override_requires_owner' = 'true' and f->>'courtesy_requires_owner' = 'true',

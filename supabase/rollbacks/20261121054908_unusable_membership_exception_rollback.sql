@@ -1,4 +1,4 @@
--- Rollback for 20261121153000_unusable_membership_exception.sql
+-- Rollback for 20261121054908_unusable_membership_exception.sql
 -- Restores the previous funding and approval functions. Does not change rows,
 -- balances, periods, or attendance. Run only on a database that has applied
 -- the forward migration, as the function owner (the migration role).
