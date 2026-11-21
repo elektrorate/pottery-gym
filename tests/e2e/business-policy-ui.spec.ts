@@ -395,6 +395,7 @@ for (const [now, classification, remaining] of [
   await cancel(page, memberId);
   await expect(dialog(page)).toHaveAttribute('data-revision', '8');
   await expect(row(page, memberId)).toHaveAttribute('data-reservation-state', 'cancelled');
+  await row(page, memberId).getByTestId('cancellation-state').locator('summary').click();
   await expect(row(page, memberId).getByTestId('cancellation-state')).toContainText(now);
   await expect(row(page, memberId).getByTestId('cancellation-state')).toContainText('Alumno avisa de cancelacion');
   await expect(row(page, memberId).getByTestId('cancellation-state')).toContainText('Cancelada por: staff');
@@ -801,12 +802,12 @@ test('missing revision blocks business callbacks; missing IDs cannot be guessed 
   await configure(page, { fixture: 'missing-revision' });
   await open(page);
   await approve(page, memberId);
-  await expect(dialog(page).getByRole('alert')).toContainText('revisión');
+  await expect(dialog(page).getByRole('alert')).toContainText('Recargue la sesión');
   expect(await output(page, 'calls')).toEqual([]);
   await dialog(page).getByRole('button', { name: 'Cancelar', exact: true }).click();
   await configure(page, { fixture: 'missing-ids' });
   await open(page);
-  await expect(page.getByRole('alert')).toContainText('IDs persistidos y alineados');
+  await expect(page.getByRole('alert')).toContainText('no se puede identificar al alumno solo por el nombre');
   await expect(dialog(page)).toHaveCount(0);
   expect(await output(page, 'calls')).toEqual([]);
 });

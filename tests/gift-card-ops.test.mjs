@@ -64,14 +64,14 @@ test('explicit member survives duplicate names/category without any student quer
 test('missing identity never resolves even unique legacy names or auto-creates duplicates', async () => {
   for (const students of [ctx.students, ctx.students.slice(0, 1), []]) {
     ctx.students = students;
-    await assert.rejects(ops.addGiftCard(ctx, newCard()), /Selecciona la sede y el destinatario/);
+    await assert.rejects(ops.addGiftCard(ctx, newCard()), /alumno destinatario/);
   }
   assert.equal(harness.calls.length, 0);
   assert.equal(harness.errors.length, 3);
 });
 test('missing sede and invented consumption fail before any write', async () => {
   ctx.sedeId = null;
-  await assert.rejects(ops.addGiftCard(ctx, newCard({ recipientStudentId: 'member' })), /Selecciona la sede/);
+  await assert.rejects(ops.addGiftCard(ctx, newCard({ recipientStudentId: 'member' })), /Seleccione el taller/);
   ctx.sedeId = 'tenant';
   await assert.rejects(ops.addGiftCard(ctx, newCard({ recipientStudentId: 'member', sessionsUsed: 1 })), /historial de consumo/);
   assert.equal(harness.calls.length, 0);
@@ -84,9 +84,9 @@ test('display-name edit preserves explicit identity and uses authoritative RETUR
   assert.equal(cards[0].expiryDate, '2028-04-30');
 });
 test('clearing identity or editing a legacy name without explicit identity is rejected', async () => {
-  await assert.rejects(ops.updateGiftCard(ctx, 'card', { recipientStudentId: undefined }, cards), /identidad explicita/);
+  await assert.rejects(ops.updateGiftCard(ctx, 'card', { recipientStudentId: undefined }, cards), /alumno destinatario/);
   cards[0].recipientStudentId = undefined;
-  await assert.rejects(ops.updateGiftCard(ctx, 'card', { recipient: 'Alex' }, cards), /Selecciona el destinatario/);
+  await assert.rejects(ops.updateGiftCard(ctx, 'card', { recipient: 'Alex' }, cards), /Seleccione el alumno/);
   assert.equal(harness.calls.length, 0);
 });
 test('expiry-only override is rejected; validity edit sends no client expiry drift', async () => {
@@ -202,8 +202,8 @@ test('reload failure rejects completed writes without reverting authoritative ro
 });
 test('missing returned rows reject add/update rather than report unconfirmed success', async () => {
   harness.result = { data: null, error: null };
-  await assert.rejects(ops.addGiftCard(ctx, newCard({ recipientStudentId: 'member' })), /no devolvio/);
-  await assert.rejects(ops.updateGiftCard(ctx, 'card', { buyer: 'Edited' }, cards), /no devolvio/);
+  await assert.rejects(ops.addGiftCard(ctx, newCard({ recipientStudentId: 'member' })), /No se pudo crear el bono regalo/);
+  await assert.rejects(ops.updateGiftCard(ctx, 'card', { buyer: 'Edited' }, cards), /No se pudo guardar el bono regalo/);
   assert.equal(ctx.reloads, 0);
   assert.equal(harness.errors.length, 2);
 });
@@ -234,7 +234,7 @@ test('missing RPC/receipt and refresh failure fail closed with no direct-write f
   harness.result = { data: null, error: { code: 'PGRST202', message: 'RPC unavailable' } };
   await assert.rejects(ops.applyGiftCardSessionIntent(ctx, intent), { code: 'PGRST202', message: 'RPC unavailable' });
   harness.result = { data: null, error: null };
-  await assert.rejects(ops.applyGiftCardSessionIntent(ctx, intent), /recibo/);
+  await assert.rejects(ops.applyGiftCardSessionIntent(ctx, intent), /No se pudo confirmar el bono regalo/);
   harness.result = { data: base, error: null };
   ctx.safeReload = async () => { throw new Error('reload failed'); };
   await assert.rejects(ops.applyGiftCardSessionIntent(ctx, intent), /reload failed/);

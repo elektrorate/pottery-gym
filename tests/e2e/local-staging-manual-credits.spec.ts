@@ -482,7 +482,7 @@ test('known legacy: exact owner reconciliation preserves raw payment/category/ba
   expect(await snapshot(key)).toEqual(before);
   await loginBrowser(page);
   await openProfile(page, key);
-  await expect(panel(page, key).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 3');
+  await expect(panel(page, key).getByTestId('legacy-credit-observation')).toContainText('Le quedan 3 clases anteriores por registrar.');
   const { args, result } = await approveUI(page, key, proposed);
   const after = await snapshot(key);
   approved(key, after, args, result);
@@ -495,8 +495,12 @@ test('known legacy: exact owner reconciliation preserves raw payment/category/ba
   await reject(owner, 'approve_student_manual_credit', { ...args, p_request_key: randomUUID() });
   expect(await snapshot(key)).toEqual(after);
   await openProfile(page, key);
-  await expect(panel(page, key).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 3');
-  await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText('3 restantes / 3 aprobadas');
+  const legacyAfter = panel(page, key).getByTestId('legacy-credit-observation');
+  await expect(legacyAfter).toContainText('ya están registradas');
+  await legacyAfter.locator('summary').click();
+  await expect(legacyAfter).toContainText('Observación original: 3');
+  await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText('Le quedan 3 clases (de 3 aprobadas).');
+  await panel(page, key).getByTestId('manual-credit-ledger').locator('summary').click();
   await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText(owner.id);
 });
 
@@ -521,7 +525,7 @@ test('unknown legacy cannot reconcile; independent new_manual requires explicit 
   expect(after.students[0]).toMatchObject({ classes_remaining: null, payment_status: 'pending', student_category: 'temporal' });
   await openProfile(page, key);
   await expect(panel(page, key).getByTestId('legacy-credit-observation')).toContainText('Desconocido / sin observaci\u00f3n de origen');
-  await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText('2 restantes / 2 aprobadas');
+  await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText('Le quedan 2 clases (de 2 aprobadas).');
   expect(await rpc(owner, 'approve_student_manual_credit', args)).toEqual({ ...result, replayed: true });
   expect(await snapshot(key)).toEqual(after);
 });
@@ -624,8 +628,9 @@ test('explicit manual source reservation and real attendance UI finalize one dec
   await expect(target).toHaveAttribute('data-billing-state', 'charged');
   expect(await snapshot(key)).toEqual(charged);
   await openProfile(page, key);
-  await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText('1 restantes / 2 aprobadas');
-  await expect(panel(page, key).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 0');
+  await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText('Le queda 1 clase (de 2 aprobadas).');
+  await panel(page, key).getByTestId('legacy-credit-observation').locator('summary').click();
+  await expect(panel(page, key).getByTestId('legacy-credit-observation')).toContainText('Observación original: 0');
 });
 
 test('original pending Gift Card: confirm that exact card, then owner UI settles only its immutable source with one audited debit', async ({ page }) => {
@@ -640,6 +645,7 @@ test('original pending Gift Card: confirm that exact card, then owner UI settles
   await openProfile(page, key);
   const target = penaltyRow(page, key, proposed.p_penalty_id);
   await expect(target).toHaveAttribute('data-penalty-state', 'pending');
+  await target.getByTestId('penalty-original-source').locator('summary').click();
   await expect(target.getByTestId('penalty-original-source')).toContainText(manifest.subjects[key].cardId!);
   await expect(target.getByRole('button', { name: 'Aplicar descuento pendiente', exact: true })).toBeDisabled();
   await target.getByLabel(`Motivo de resoluci\u00f3n ${proposed.p_penalty_id}`, { exact: true }).fill(proposed.p_reason);
@@ -1024,14 +1030,17 @@ for (const rejectedWrite of [false, true]) for (const [operation, name, button, 
   await expect(descriptor).toContainText(args.p_reason);
   if (operation === 'approve_manual') {
     await expect(panel(page, key).getByLabel('Modo del cr\u00e9dito manual').locator('option[value="reconcile_legacy"]')).toHaveJSProperty('disabled', true);
+    await panel(page, key).getByTestId('manual-credit-ledger').locator('summary').click();
     await expect(panel(page, key).getByTestId('manual-credit-ledger')).toContainText(afterWrite.entitlements[0].id);
   } else {
+    await descriptor.locator('summary').click();
     await expect(descriptor).toContainText(baseline.penalties[0].id);
     await expect(descriptor).toContainText(s!.id);
     await expect(penaltyRow(page, key, baseline.penalties[0].id)).toHaveAttribute('data-penalty-state', afterWrite.incidents[0].penalty_state);
     if (operation === 'settle_penalty' && !rejectedWrite) {
-      await expect(penaltyRow(page, key, baseline.penalties[0].id).getByTestId('penalty-settlement-audit'))
-        .toContainText(delivered.settlement_id);
+      const audit = penaltyRow(page, key, baseline.penalties[0].id).getByTestId('penalty-settlement-audit');
+      await audit.locator('summary').click();
+      await expect(audit).toContainText(delivered.settlement_id);
     }
   }
   expect(await retainedIntent(page, args.p_request_key)).toEqual(retained);

@@ -71,7 +71,7 @@ const MfaGate: React.FC<{children: React.ReactNode; userId: string; onLogout: ()
   if (ready) return <>{children}</>;
   return <main className="min-h-screen flex items-center justify-center bg-neutral-base p-6"><section className="w-full max-w-md rounded-2xl border border-neutral-border bg-neutral-surface p-8 text-neutral-textMain">
     <h1 className="text-xl font-semibold">Protege tu acceso</h1>
-    <p className="mt-3 text-sm text-neutral-textSec">El acceso administrativo requiere un segundo factor con una aplicación autenticadora. Conserva una copia segura de tu autenticador. Si pierdes el acceso, el responsable de Supabase deberá verificar tu identidad para recuperarlo.</p>
+    <p className="mt-3 text-sm text-neutral-textSec">Use su aplicación autenticadora. Si pierde el acceso, pida ayuda a quien administra el taller.</p>
     {loading ? <p role="status" className="mt-4">Comprobando seguridad…</p> : reauth ? null : <>
       {!factorId && <button type="button" disabled={busy} onClick={enroll} className="mt-5 rounded-lg bg-brand px-4 py-3 text-white disabled:opacity-50">Configurar autenticador</button>}
       {qr && <div className="mt-5"><img src={qr.startsWith('data:') ? qr : 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(qr)} alt="Código QR para configurar el autenticador" className="mx-auto h-52 w-52 bg-white"/>

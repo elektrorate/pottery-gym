@@ -2,6 +2,7 @@ import { showError, showWarning } from '../context/toast';
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Teacher, ClassSession } from '../types';
+import { AdvancedDetails } from './shared/AdvancedDetails';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
@@ -273,6 +274,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                 </button>
               </div>
             </form>
+            {editingTeacher && <AdvancedDetails><p>Identificador del profesor: {editingTeacher.id}</p></AdvancedDetails>}
             {editingTeacher && (
               <DangerZone
                 description={`Eliminar a ${`${editingTeacher.name} ${editingTeacher.surname || ''}`.trim()} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}

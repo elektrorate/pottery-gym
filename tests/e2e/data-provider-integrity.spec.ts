@@ -284,7 +284,7 @@ test('activity roster parent/session mismatch rejects refresh visibly rather tha
   const backend = backends.get(page)!;
   await open(page); await ready(page);
   backend.rows.session_activity_block_students[0].session_id = 'recent';
-  expect(await run(page, 'loadAllData')).toMatchObject({ ok: false, error: expect.stringContaining('roster de actividades') });
+  expect(await run(page, 'loadAllData')).toMatchObject({ ok: false, error: expect.stringContaining('lista de la clase') });
   expect(await snapshot(page)).toMatchObject({ ready: false, error: expect.any(String) });
   expect(backend.rpcs).toEqual([]);
 });
@@ -633,7 +633,7 @@ for (const change of [{ actor: 'owner-b' }, { sede: 'sede-b' }, { admin: true }]
     await expect.poll(async () => (await snapshot(page)).loading).toBe(true);
     expect((await snapshot(page))).toMatchObject({ ready: false, students: [], sessions: [], giftCards: [], owner: false });
     const count = backend.reads.filter(read => read.table === 'students').length;
-    expect(await run(page, 'loadAllData', [], 'old')).toMatchObject({ ok: false, error: expect.stringContaining('identidad') });
+    expect(await run(page, 'loadAllData', [], 'old')).toMatchObject({ ok: false, error: expect.stringContaining('sesión de trabajo') });
     expect(await run(page, 'approveStudentManualCredit', [approval()], 'old')).toMatchObject({ ok: false });
     expect(await run(page, 'updateSession', ['recent', attendance()], 'old')).toMatchObject({ ok: false });
     expect(backend.reads.filter(read => read.table === 'students')).toHaveLength(count); expect(backend.rpcs).toEqual([]);

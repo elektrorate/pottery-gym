@@ -49,7 +49,7 @@ async function callManageStaff(body: Record<string, any>): Promise<any> {
         if (response.status === 401) {
             throw new Error('Sesión no válida. Vuelve a iniciar sesión.');
         }
-        throw new Error(data?.error || `Error del servidor (${response.status}).`);
+        throw new Error(data?.error || 'No se pudo completar la operación. Inténtelo de nuevo.');
     }
 
     if (data?.error) throw new Error(data.error);

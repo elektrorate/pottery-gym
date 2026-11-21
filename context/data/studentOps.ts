@@ -10,9 +10,9 @@ export const addStudent = async (ctx: OpsContext, input: Omit<Student, 'id'>) =>
         if (ctx.sedeId) payload.sede_id = ctx.sedeId;
         const { data, error } = await withTimeout('students.insert', supabase.from('students').insert(payload).select().single());
         if (error) throw error;
-        if (!data) throw new Error('El servidor no devolvió el alumno creado.');
+        if (!data) throw new Error('No se pudo crear el alumno. Inténtelo de nuevo.');
         if (isManagedMembership(input) && !data.current_membership_period_id) {
-            throw new Error('El servidor no devolvió el período inicial. Verifica la versión del backend antes de reintentar.');
+            throw new Error('No se creó el período. Recargue e inténtelo de nuevo.');
         }
         ctx.setStudents(previous => [mapStudentRowToModel(data), ...previous]);
         await ctx.safeReload();

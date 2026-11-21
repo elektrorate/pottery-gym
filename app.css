@@ -2,3 +2,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  .ui-advanced {
+    margin-top: 0.35rem;
+    border: 1px solid #E6D8CB;
+    border-radius: 8px;
+    background: #FBF8F5;
+    padding: 0.35rem 0.65rem;
+    color: #8B6B5E;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .ui-advanced > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #7B3F22;
+  }
+  .ui-advanced > div {
+    margin-top: 0.35rem;
+    display: grid;
+    gap: 0.2rem;
+    overflow-wrap: anywhere;
+  }
+}

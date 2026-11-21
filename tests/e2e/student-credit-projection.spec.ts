@@ -63,7 +63,7 @@ const asMembership = () => {
 const blocked = (data: Fixture) => {
   const penalty = project(data)[0].pendingPenalties![0];
   expect(penalty.canSettle).toBe(false);
-  expect(penalty.blockedReason).toContain('No se permite sustituirlo');
+  expect(penalty.blockedReason).toContain('No use otro');
 };
 
 test('attaches immutable manual rights and exact incident session identity without changing the student budget or payment', () => {

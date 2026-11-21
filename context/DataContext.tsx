@@ -179,7 +179,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const scopeVersion = scopeVersionRef.current;
     const requireScope = useCallback(() => {
         if (!session?.user.id || !activeRef.current || scopeRef.current !== scope || scopeVersionRef.current !== scopeVersion) {
-            throw new Error('La identidad o la sede activa ha cambiado. Recarga los datos antes de continuar.');
+            throw new Error('La sesión de trabajo cambió. Recargue los datos antes de continuar.');
         }
     }, [session?.user.id, scope, scopeVersion]);
     const requireBusinessData = useCallback(() => {
@@ -300,7 +300,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                 const session = sessionsById.get(row.session_id);
                 if (!block || block.session_id !== row.session_id || (session && block.sede_id !== session.sede_id)
                     || !sessionStudentsMap[row.session_id]?.some(item => item.student_id === row.student_id)) {
-                    throw new Error('El roster de actividades no coincide con el bloque, la sede o el alumno de la sesion. Recarga los datos.');
+                    throw new Error('La lista de la clase no coincide. Recargue los datos.');
                 }
                 (activityBlockStudentsMap[row.block_id] ||= []).push(row);
             });
@@ -457,9 +457,9 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
             (businessRes.data || []).forEach((row: any) => {
                 if (typeof row.activity_source_verified !== 'boolean'
                     || ['funding_activity_type', 'funding_activity_block_id', 'activity_teacher_id', 'activity_capacity'].some(key => !Object.hasOwn(row, key))) {
-                    throw new Error('El backend requiere la proyeccion de actividad y financiacion mixta de esta version.');
+                    throw new Error('Falta información de la clase. Recargue los datos.');
                 }
-                if (!sessionIds.has(row.session_id)) throw new Error('El estado de negocio contiene una sesion no cargada. Recarga los datos.');
+                if (!sessionIds.has(row.session_id)) throw new Error('Hay una clase que no está cargada. Recargue los datos.');
                 (businessBySession[row.session_id] ||= []).push(row);
             });
             const enhancedSessions = fullSessions.map(item => attachSessionBusinessState(item, businessBySession[item.id] || []));
@@ -472,14 +472,14 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
                     || !['modelado', 'torno'].includes(row.type)
                     || (row.payment_status !== null && !['paid', 'pending', 'refunded'].includes(row.payment_status))
                     || !['pending', 'active', 'exhausted', 'consumed', 'expired', 'cancelled'].includes(row.status)) {
-                    throw new Error('La proyeccion de bonos regalo no contiene una financiacion verificable. Recarga los datos.');
+                    throw new Error('Los bonos regalo no se pudieron comprobar. Recargue los datos.');
                 }
                 giftIds.add(row.id);
                 return { ...mapGiftCardRowToModel(row), movements: movementsByGiftCard[row.id] || [] };
             });
             const ownerIds = (ownerRes.data || []).map((row: any) => row.id);
             if (ownerIds.some(id => typeof id !== 'string' || !id) || new Set(ownerIds).size !== ownerIds.length) {
-                throw new Error('No se pudo verificar la identidad de las sedes del propietario.');
+                throw new Error('No se pudo comprobar el taller.');
             }
             const enhancedStudents = attachStudentCreditProfiles(
                 attachAttendanceHistory(joinStudentMemberships(fullStudentsRes.data || [], effectiveRes.data || [], periodsRes.data || []), enhancedSessions),
@@ -583,7 +583,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     const confirmMembershipPayment = async (id: string, periodId: string) => {
         requireBusinessData();
         if (!studentsRef.current.find(student => student.id === id)?.membershipPeriods?.some(period => period.id === periodId)) {
-            throw new Error('Selecciona un período del alumno. Inicializa primero el registro legado si es necesario.');
+            throw new Error('Seleccione un período del alumno. Si es antiguo, créelo antes.');
         }
         await membership.confirm(periodId);
     };

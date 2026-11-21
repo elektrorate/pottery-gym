@@ -693,6 +693,7 @@ for (const [key, kind, balance] of [['uiPending', 'membership_override', 3], ['u
     const reason = `UI individual ${kind} ${manifest.runId}`;
     const { result } = await uiAction(page, s, 'approve_session_exception', 'Aprobar excepci\u00f3n', reason, kind);
     await expect(row(page, s).getByTestId('exception-state')).toContainText(reason);
+    await row(page, s).getByTestId('exception-state').locator('summary').click();
     await expect(row(page, s).getByTestId('exception-state')).toContainText(employee.id);
     await row(page, s).getByRole('button', { name: /^Marcar asistencia de / }).click();
     await dialog(page).getByRole('button', { name: 'Guardar provisional', exact: true }).click();
@@ -720,6 +721,7 @@ test('policy2 real cancellation UI retains the cancelled row, server timestamp a
   const { result } = await uiAction(page, s, 'cancel_session_reservation', 'Cancelar reserva', 'UI timely cancellation');
   expect(result.cancellation_kind).toBe('timely');
   await expect(row(page, s)).toHaveAttribute('data-reservation-state', 'cancelled');
+  await row(page, s).getByTestId('cancellation-state').locator('summary').click();
   await expect(row(page, s).getByTestId('cancellation-state')).toContainText(result.cancelled_at);
   await expect(row(page, s).getByRole('button', { name: /^Marcar asistencia de / })).toBeDisabled();
   noFinance(await snapshot(s), 4);

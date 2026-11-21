@@ -24,7 +24,7 @@ export const getGiftCardLifecycle = (card: GiftCard, today: string, expiryDate?:
 export const sessionBusinessErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String((error as any)?.message || error || 'No se pudo guardar la sesión.');
   if (message.startsWith('Presence requires valid original credit')) {
-    return 'No se puede finalizar la asistencia: la membresía, el bono de clases o el bono regalo original no está pagado, está vencido, archivado o no cubre esta sesión. Confirma el pago correspondiente o solicita al propietario una excepción explícita para esta sesión.';
+    return 'No se puede finalizar: confirme el pago o pida al propietario una excepción para esta sesión.';
   }
   return message;
 };
