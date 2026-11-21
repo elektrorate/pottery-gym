@@ -14,7 +14,7 @@ const actorId = '60000000-0000-0000-0000-000000000001';
 const settlementId = '70000000-0000-0000-0000-000000000001';
 const initialStudents: Student[] = [studentId, otherId].map(id => ({
   id, sedeId, name: 'Alex', surname: 'Perez', phone: id === studentId ? '111' : '222',
-  classesRemaining: 4, legacyManualBalance: 4, bonosAsignados: 4, status: 'new',
+  classesRemaining: 4, legacyManualBalance: 4, status: 'new',
   studentCategory: 'temporal', paymentStatus: null, manualCredits: [],
   pendingPenalties: [{ id: id === studentId ? penaltyId : '40000000-0000-0000-0000-000000000002',
     studentId: id, sedeId, sessionId, sessionDate: '2026-10-11', sessionStart: '18:00', sessionRevision: 7,

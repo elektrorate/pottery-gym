@@ -16,7 +16,7 @@ import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { presentDisplayName, presentPersonName } from '../utils/displayName';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
-import { studentEffectiveRemainingClasses, studentMatchesSessionAudience } from '../utils/studentPresentation';
+import { defaultSessionFundingLabel, studentBalanceLabel, studentEffectiveRemainingClasses, studentMatchesSessionAudience } from '../utils/studentPresentation';
 import { pluralWord, sesionLabel } from '../utils/pluralize';
 interface CalendarViewProps {
   readOnly?: boolean;
@@ -942,7 +942,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                             <div key={studentId || idx} data-student-id={studentId} data-attendance-status={att} data-reservation-state={cancelled ? 'cancelled' : 'reserved'} className="flex items-center gap-2.5">
                               <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`}></div>
                               <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${cancelled ? 'text-neutral-textHelper line-through' : att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{presentDisplayName(studentName)}</span>
-                              {att === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
+                              {att === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó sin avisar</span>}
                               {studentId && <AdvancedDetails className="shrink-0"><p>Identificador del alumno: {studentId}</p></AdvancedDetails>}
                               {cancelled && <span className="shrink-0 text-[11px] text-neutral-textHelper">Cancelada</span>}
                             </div>
@@ -1112,8 +1112,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
               <div data-testid="attendance-policy" className="mb-5 rounded-[12px] border border-[#E8D9CC] bg-[#F8EEE5] px-4 py-2.5 text-[13px] leading-snug text-[#6E5145]">
                 <p>{policy2
-                  ? 'Asistió: vino. Faltó: no vino. Al finalizar, las dos descuentan una clase; cancelar con 8 horas no descuenta.'
-                  : 'Sesión anterior: marca Asistió o Faltó. No se aplican penalizaciones nuevas.'}</p>
+                  ? 'Asistió: vino y, al finalizar, descuenta una clase. Faltó sin avisar: no vino y también descuenta una clase. Cancelar la reserva con 8 horas de antelación no descuenta.'
+                  : 'Sesión anterior: marca Asistió o Faltó sin avisar. No se aplican penalizaciones nuevas.'}</p>
                 {policy2 && attendanceDirty && <p className="mt-2 font-semibold">Guarda primero la asistencia provisional o los cambios para habilitar las operaciones por alumno.</p>}
               </div>
 
@@ -1165,13 +1165,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className={`truncate text-[14px] font-medium text-[#3F2E27] ${status === 'absent' && !cancelled ? 'line-through decoration-[#9C4235]' : ''}`}>{studentName}</p>
-                          {status === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
+                          {status === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó sin avisar</span>}
                           {isBonusStudent && (
                             <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[12px] font-semibold ${bonos <= 0 ? 'bg-[#F7E3DF] text-[#9C4235]'
                               : bonos <= Math.ceil(bonosTotal * 0.25) ? 'bg-[#F5E8D4] text-[#916438]'
                                 : 'bg-[#E7F0E8] text-[#47704D]'
                               }`}>
-                              Clases {bonos}/{bonosTotal}
+                              {studentObj ? studentBalanceLabel(studentObj, giftCards) : ''}
                             </span>
                           )}
                         </div>
@@ -1180,7 +1180,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           {attendanceSession.giftCardIdByStudentId?.[studentId] && <p>Bono regalo vinculado: {attendanceSession.giftCardIdByStudentId[studentId]}</p>}
                         </AdvancedDetails>
                         <span className={`ui-meta mt-1 block font-medium ${status === 'present' ? 'text-[#47704D]' : status === 'absent' ? 'text-[#9C4235]' : 'text-[#9B8175]'}`}>
-                          {cancelled ? 'Reserva cancelada (solo lectura)' : status === 'present' ? 'Asistió' : status === 'absent' ? 'Faltó' : 'Pendiente'}
+                          {cancelled ? 'Reserva cancelada (solo lectura)' : status === 'present' ? 'Asistió (descuenta clase)' : status === 'absent' ? 'Faltó sin avisar (descuenta clase)' : 'Pendiente'}
                         </span>
                       </div>
                       <div className="flex shrink-0 gap-1.5">
@@ -1189,7 +1189,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           onClick={() => handleMarkAttendance(studentId, 'present')}
                            disabled={cancelled || (!!attendanceSession.completedAt && !isEditingAttendance)}
                            className={`inline-flex h-10 items-center gap-1 rounded-[9px] border px-2.5 text-[12px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#6B876F] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'present' ? 'border-[#5F8065] bg-[#5F8065] text-white' : 'border-[#D8E4D9] bg-[#F4F8F4] text-[#5F8065] hover:bg-[#E7F0E8]'}`}
-                           title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Marcar Asistencia"}
+                           title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Asistió (descuenta clase)"}
                           aria-label={`Marcar asistencia de ${studentName} (${shortId(studentId)})`}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="m5 13 4 4L19 7" /></svg>
@@ -1200,11 +1200,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           onClick={() => handleMarkAttendance(studentId, 'absent')}
                            disabled={cancelled || (!!attendanceSession.completedAt && !isEditingAttendance)}
                            className={`inline-flex h-10 items-center gap-1 rounded-[9px] border px-2.5 text-[12px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#9C4235] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 ${status === 'absent' ? 'border-[#9C4235] bg-[#9C4235] text-white' : 'border-[#EBCFC9] bg-[#FCF4F2] text-[#9C4235] hover:bg-[#F7E3DF]'}`}
-                           title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Marcar Falta"}
+                           title={attendanceSession.completedAt && !isEditingAttendance ? "Sesión ya finalizada" : "Faltó sin avisar (descuenta clase). Cancelar con 8 horas de antelación no descuenta."}
                           aria-label={`Marcar falta de ${studentName} (${shortId(studentId)})`}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18 18 6M6 6l12 12" /></svg>
-                          Faltó
+                          Faltó sin avisar
                         </button>
                         {!cancelled && status !== 'pending' && (!attendanceSession.completedAt || isEditingAttendance) && (
                           <button
@@ -1228,7 +1228,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                             {business?.cancelledAt && <p>Hora registrada: {business.cancelledAt}</p>}
                           </AdvancedDetails>
                         </div>}
-                        {business?.exceptionId && <div data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Sin motivo'}.{actorPhrase('Aprobada por', business?.approvedBy) ? ` ${actorPhrase('Aprobada por', business?.approvedBy)}.` : ''}{business.approvedAt && ` ${formatDateTime(business.approvedAt)}`}
+                        {business?.exceptionId && <div data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : isNonMembershipCategory(studentObj?.studentCategory) ? 'descuento del bono' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Sin motivo'}.{actorPhrase('Aprobada por', business?.approvedBy) ? ` ${actorPhrase('Aprobada por', business?.approvedBy)}.` : ''}{business.approvedAt && ` ${formatDateTime(business.approvedAt)}`}
                           {(isInternalId(business.approvedBy) || !business.approvedBy) && <AdvancedDetails>
                             {isInternalId(business.approvedBy) && <p>Aprobada por: {business.approvedBy}</p>}
                             {!business.approvedBy && <p>Aprobada por: el taller</p>}
@@ -1245,8 +1245,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         {!cancelled && !attendanceSession.completedAt && onApproveSessionException && <div className="space-y-2">
                           <label htmlFor={`exception-kind-${studentId}`} className="block">Tipo de excepción para {studentName}</label>
                           <select id={`exception-kind-${studentId}`} aria-label={`Tipo de excepción para ${studentName} (${shortId(studentId)})`} value={businessForm.kind} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, kind: event.target.value as 'membership_override' | 'no_credit' } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]">
-                            <option value="membership_override">Descontar una clase de esta membresía, aunque esté pendiente, vencida o no cubra la sesión</option>
-                            <option value="no_credit">Dejar asistir sin descontar una clase, si el bono está impago, vencido o no cubre</option>
+                            <option value="membership_override">{isNonMembershipCategory(studentObj?.studentCategory) ? 'Descontar una clase de este bono, aunque el pago esté pendiente' : 'Descontar una clase de esta membresía, aunque esté pendiente, vencida o no cubra la sesión'}</option>
+                            <option value="no_credit">Dejar asistir sin descontar una clase</option>
                           </select>
                           <label htmlFor={`exception-reason-${studentId}`} className="block">Motivo de excepción para {studentName}</label>
                           <input id={`exception-reason-${studentId}`} aria-label={`Motivo de excepción para ${studentName} (${shortId(studentId)})`} value={businessForm.reason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, reason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
@@ -1667,7 +1667,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                     }}
                                     className="mt-1 h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-2 text-[12px] text-[#2F211B] disabled:opacity-55"
                                   >
-                                    <option value="">{cat === 'membresia' ? 'Clases de la membresía' : 'Sin bono ni clases añadidas'}</option>
+                                    <option value="">{studentObj ? defaultSessionFundingLabel(studentObj) : 'Sin bono ni clases añadidas'}</option>
                                     {selectedCardId && !fundingCards.some(card => card.id === selectedCardId) && (
                                       <option value={selectedCardId} disabled>{linkedCard ? giftFundingLabel(linkedCard, displayName) : 'Bono regalo ya vinculado: recargue para comprobarlo'}</option>
                                     )}

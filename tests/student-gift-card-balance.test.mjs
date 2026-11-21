@@ -16,7 +16,7 @@ test('temporal student ficha counts come from non-cancelled gift cards, not stud
   assert.equal(paulaBalance.remaining, 2);
   assert.equal(paulaBalance.cards.length, 1);
   assert.equal(paulaBalance.allCards.length, 2);
-  assert.equal(studentBalanceLabel(paula, cards), '2 clases');
+  assert.equal(studentBalanceLabel(paula, cards), 'Quedan 2 de 2 clases');
   assert.equal(studentBalanceLabel(paula), '0 clases');
   assert.equal(studentBalanceLabel({ ...paula, classesRemaining: 1 }), '1 clase');
   assert.equal(studentClassTypeFromGiftCards(paula, cards), 'Modelado');
@@ -28,5 +28,5 @@ test('temporal student ficha counts come from non-cancelled gift cards, not stud
 test('used sessions reduce remaining without changing contracted classes', () => {
   const used = [{ ...cards[0], sessionsUsed: 1, sessionsRemaining: 1 }];
   assert.deepEqual(studentGiftCardBalance(paula.id, used), { cards: used, contracted: 2, remaining: 1, allCards: used });
-  assert.equal(studentBalanceLabel(paula, used), '1 / 2 clases');
+  assert.equal(studentBalanceLabel(paula, used), 'Queda 1 de 2 clases');
 });

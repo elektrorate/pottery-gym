@@ -464,7 +464,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                               <p className="text-[15px] font-semibold text-neutral-textMain">{formatSessionDate(s.date)}</p>
                               <p className="text-[13px] text-neutral-textSec mt-0.5">{formatTime(s.startTime)} - {formatTime(s.endTime)} • {s.classType}</p>
                             </div>
-                            <div className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold shrink-0 ${status === 'Asistió' ? 'bg-[#DFF0E4] text-[#20663B] border border-[#BFDECB]' : status === 'Faltó' ? 'bg-[#F8E1DA] text-[#9E3B2B] border border-[#EFC9BE]' : 'bg-neutral-alt text-neutral-textHelper border border-neutral-border'}`}>
+                            <div className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold shrink-0 ${status === 'Asistió' ? 'bg-[#DFF0E4] text-[#20663B] border border-[#BFDECB]' : status === 'Faltó sin avisar' ? 'bg-[#F8E1DA] text-[#9E3B2B] border border-[#EFC9BE]' : 'bg-neutral-alt text-neutral-textHelper border border-neutral-border'}`}>
                               {status}
                             </div>
                           </div>

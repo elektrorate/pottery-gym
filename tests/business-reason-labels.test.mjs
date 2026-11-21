@@ -55,6 +55,11 @@ test('attendance errors stay in Spanish, including the owner-only unusable membe
       mod.sessionBusinessErrorMessage(new Error('Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session')),
       'Solo el propietario del taller puede aprobar esta excepción cuando la membresía está pendiente, vencida o no cubre la sesión.'
     );
+    const constraint = mod.sessionBusinessErrorMessage(new Error(
+      'new row for relation "session_business_exceptions" violates check constraint "session_business_exceptions_check1"'));
+    assert.match(constraint, /No se pudo aprobar la excepción/);
+    assert.doesNotMatch(constraint, /session_business_exceptions_check1/);
+    assert.doesNotMatch(constraint, /violates check constraint/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

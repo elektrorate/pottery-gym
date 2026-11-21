@@ -133,10 +133,12 @@ begin
     st := (subject.value->>'studentId')::uuid;
     balance := case subject.value->>'kind' when 'known' then 3 when 'unknown' then null when 'queued' then 4 else 0 end;
     -- UUID-qualified names must not match historical generic gift labels.
+    -- 'known' is an unassigned legacy balance, not a class pack. A pack sets bonos_asignados.
     insert into public.students(id,sede_id,full_name,name,surname,email,student_category,class_type,status,
       bonos_asignados,classes_remaining,payment_status)
       values (st,own_sede,'Manual '||subject.key||' '||st,'Manual '||subject.key||' '||st,null,
-        'manual-'||st||'@pottery.local','temporal','Modelado','active',balance,balance,'pending');
+        'manual-'||st||'@pottery.local','temporal','Modelado','active',
+        case when subject.value->>'kind' = 'known' then null else balance end, balance, 'pending');
     if subject.value->>'kind' = 'queued' then
       insert into public.student_membership_periods(id,student_id,sede_id,membership_tier,plan_price,allocated_classes,
         starts_on,ends_on,payment_status,confirmed_at,confirmed_by,activated_at)

@@ -16,7 +16,8 @@ test('Dashboard counts homonyms by ID, does not count unknown payments, and open
   await expect(page.getByText('Alumnos Hoy', { exact: true }).locator('..')).toContainText('2');
   await page.getByRole('button', { name: /Activos de membresía/ }).click();
   await expect(page.getByTestId('saved')).toContainText('students?category=membresia&tab=all');
-  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
+  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('2');
+  await expect(page.getByText('Grupo Temporal Visible')).toBeVisible();
   await page.getByRole('button', { name: 'Control de asistencia', exact: true }).click();
   await expect(page.getByTestId('saved')).toContainText('"sessionId":"homonym-session"');
   await expect(page.getByTestId('saved')).toContainText('"date":"2026-10-16"');

@@ -52,7 +52,8 @@ test('single lifecycle tabs and dashboard share the same membership counts', asy
   await expect(page.getByRole('button', { name: /Grupo Temporal Visible/ })).toBeVisible();
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
   await expect(page.getByText('Activos de membresía').locator('..')).toContainText('2');
-  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
+  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('2');
+  await expect(page.getByText('Grupo Temporal Visible')).toBeVisible();
 });
 
 test('search persists while secondary filters stay scoped to the selected tab', async ({ page }) => {
@@ -164,7 +165,9 @@ test('pending payment can be confirmed from the profile and the dashboard counte
   await expect(page.getByRole('button', { name: 'Confirmar pago', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
-  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('0');
+  await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
+  await expect(page.getByText('Grupo Temporal Visible')).toBeVisible();
+  await expect(page.getByText('Pendiente Dia Cinco')).toHaveCount(0);
 });
 
 test('manual class balance changes wait for a reason and confirmation', async ({ page }) => {

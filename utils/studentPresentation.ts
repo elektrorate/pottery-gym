@@ -1,6 +1,6 @@
 import type { GiftCard, Student } from '../types';
 import { isNonMembershipCategory } from './classTypeLabels.ts';
-import { claseLabel, pluralWord } from './pluralize.ts';
+import { claseLabel, quedanDeClases } from './pluralize.ts';
 
 export function hasVerifiedMembership(student: Student): boolean {
   return !!student.effectivePeriodId && !!student.membershipTier && Number.isSafeInteger(student.bonosAsignados) && student.bonosAsignados! > 0;
@@ -82,14 +82,43 @@ export function studentBalanceLabel(student: Student, giftCards?: GiftCard[]): s
   if ((student.studentCategory ?? 'membresia') !== 'membresia') {
     if (giftCards) {
       const { cards, remaining, contracted } = studentGiftCardBalance(student.id, giftCards);
-      if (cards.length) return remaining === contracted ? claseLabel(remaining) : `${remaining} / ${contracted} ${pluralWord(contracted, 'clase', 'clases')}`;
+      if (cards.length) return quedanDeClases(remaining, contracted);
+    }
+    if (typeof student.bonosAsignados === 'number' && student.bonosAsignados > 0) {
+      return quedanDeClases(student.classesRemaining ?? 0, student.bonosAsignados);
     }
     return claseLabel(student.classesRemaining ?? 0);
   }
-  if (hasVerifiedMembership(student)) return `${student.classesRemaining} / ${student.bonosAsignados}`;
+  if (hasVerifiedMembership(student)) return quedanDeClases(student.classesRemaining, student.bonosAsignados!);
   if (student.legacyManualBalance == null) return 'Clases por confirmar';
   const count = student.legacyManualBalance;
   return `Le ${count === 1 ? 'queda' : 'quedan'} ${claseLabel(count)}`;
+}
+
+/**
+ * Default funding line in Nueva sesión. A class pack is the same balance Alumnos shows.
+ * Gift cards and added classes stay as their own options. There is no invented price here.
+ */
+export function defaultSessionFundingLabel(student: Pick<Student, 'studentCategory' | 'classesRemaining' | 'bonosAsignados'>): string {
+  if ((student.studentCategory ?? 'membresia') === 'membresia') return 'Clases de la membresía';
+  const total = student.bonosAsignados;
+  const remaining = student.classesRemaining ?? 0;
+  if (typeof total === 'number' && Number.isSafeInteger(total) && total > 0) {
+    const phrase = quedanDeClases(remaining, total);
+    return `Bono de clases: ${phrase.charAt(0).toLocaleLowerCase('es-ES')}${phrase.slice(1)}`;
+  }
+  if (remaining > 0) return `Bono de clases: ${claseLabel(remaining)}`;
+  return 'Sin bono ni clases añadidas';
+}
+
+/** A new class pack explains classes_remaining. That balance is not "clases anteriores". */
+export function assignedPackCoversBalance(student: Pick<Student, 'studentCategory' | 'bonosAsignados' | 'classesRemaining'>): boolean {
+  if (!isNonMembershipCategory(student.studentCategory)) return false;
+  const total = student.bonosAsignados;
+  const remaining = student.classesRemaining;
+  return typeof total === 'number' && Number.isSafeInteger(total) && total > 0
+    && typeof remaining === 'number' && Number.isSafeInteger(remaining)
+    && remaining >= 0 && remaining <= total;
 }
 
 /** Same rule as the «Clases agotándose» alert. Archive is checked by the caller. */

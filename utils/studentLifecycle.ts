@@ -2,6 +2,7 @@ import { inferMembershipTier } from '../types';
 import type { Student, MembershipPeriod } from '../types';
 import { isNonMembershipCategory } from './classTypeLabels';
 import { formatDate, madridDateKey } from './dateFormat';
+import { assignedPackCoversBalance } from './studentPresentation';
 
 export type StudentLifecycle = 'active' | 'pending' | 'expired' | 'temporary' | 'archived';
 export const getWorkshopDate = (now = new Date()) => madridDateKey(now);
@@ -114,6 +115,53 @@ export const getPendingMembershipPayments = (student: Student) => {
 export const studentHasPendingPayment = (student: Student) =>
   getPendingMembershipPayments(student).length > 0
   || (!isManagedMembership(student) && getStudentPaymentStatus(student) === 'pending');
+
+export type PendingPaymentNotice = { key: string; reason: string };
+
+/** Every student with a pending payment, including class packs. One notice per open period. */
+export const pendingPaymentNotices = (student: Student): PendingPaymentNotice[] => {
+  if (!studentHasPendingPayment(student)) return [];
+  if (isManagedMembership(student)) {
+    return getPendingMembershipPayments(student).map(period => ({
+      key: `${student.id}:${period.id}:payment`,
+      reason: `Pago pendiente · ${period.startsOn ? formatDate(period.startsOn) : 'Sin inicio'} — ${period.endsOn ? formatDate(period.endsOn) : 'Sin vencimiento'}`
+    }));
+  }
+  return [{ key: `${student.id}:payment`, reason: 'Pago pendiente' }];
+};
+
+/**
+ * Membership plans have a fixed cuota. Class packs do not: packages has no price
+ * catalog and settings do not list bono prices. Callers must leave the field empty.
+ */
+export const cuotaDefaultForCategory = (
+  category: Student['studentCategory'] | string | null | undefined,
+  planPrice: number
+): number | null => (category ?? 'membresia') === 'membresia' ? planPrice : null;
+
+/**
+ * Previous classes are an unassigned legacy balance. A class pack whose assigned
+ * size covers classes_remaining is the bono itself, including a student just created.
+ */
+export const previousClassesToRegister = (student: Student): number | null => {
+  if ((student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy')) return null;
+  if (assignedPackCoversBalance(student)) return null;
+  if (student.canReconcileLegacy === false) return null;
+  if (isManagedMembership(student) || student.effectivePeriodId || student.materializedPeriodId || student.membershipPeriods?.length) return null;
+  const balance = typeof student.legacyManualBalance === 'number' && Number.isFinite(student.legacyManualBalance)
+    ? student.legacyManualBalance : null;
+  if (balance == null || !Number.isSafeInteger(balance) || balance <= 0) return null;
+  return balance;
+};
+
+export const previousClassesMessage = (student: Student): string => {
+  if ((student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy')) {
+    return 'Esas clases anteriores ya están registradas.';
+  }
+  const balance = previousClassesToRegister(student);
+  if (balance == null) return 'No hay clases anteriores por registrar.';
+  return `Le ${balance === 1 ? 'queda' : 'quedan'} ${balance} ${balance === 1 ? 'clase anterior' : 'clases anteriores'} por registrar.`;
+};
 
 /** Period id the profile can confirm with the existing payment RPC. Legacy rows have no id. */
 export const selectConfirmablePaymentPeriodId = (student: Student): string | null => {
