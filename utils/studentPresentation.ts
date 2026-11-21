@@ -45,6 +45,39 @@ export const studentActivityLabel = (student: Pick<Student, 'id' | 'classType'>,
   return undefined;
 };
 
+/** Class-bono students, or anyone with a linked non-cancelled gift card. Group students without a bono are excluded. */
+export function studentHasClassBono(student: Pick<Student, 'id' | 'studentCategory'>, giftCards: GiftCard[] = []): boolean {
+  if ((student.studentCategory ?? 'membresia') === 'temporal') return true;
+  return studentGiftCardBalance(student.id, giftCards).cards.length > 0;
+}
+
+/**
+ * Calendar audience `temporal` is stored as “not membership”, but the control is labelled
+ * «Bonos de clases». Match students who actually have class bonos. «Ambos» stays everyone.
+ */
+export function studentMatchesSessionAudience(
+  student: Pick<Student, 'id' | 'studentCategory'>,
+  audience: 'membresia' | 'temporal' | 'ambos' | undefined,
+  giftCards: GiftCard[] = []
+): boolean {
+  if (!audience || audience === 'ambos') return true;
+  if (audience === 'membresia') return (student.studentCategory || 'membresia') === 'membresia';
+  return studentHasClassBono(student, giftCards);
+}
+
+/** Manual credits are a separate ledger. This line explains them without adding them to the counter. */
+export function manualCreditBreakdown(student: Pick<Student, 'manualCredits'>): string {
+  const credits = student.manualCredits || [];
+  const added = credits.filter(credit => credit.mode !== 'reconcile_legacy')
+    .reduce((sum, credit) => sum + Math.max(0, credit.remainingClasses || 0), 0);
+  const previous = credits.filter(credit => credit.mode === 'reconcile_legacy')
+    .reduce((sum, credit) => sum + Math.max(0, credit.remainingClasses || 0), 0);
+  const parts: string[] = [];
+  if (added > 0) parts.push(`Incluye ${claseLabel(added)} ${added === 1 ? 'añadida' : 'añadidas'}`);
+  if (previous > 0) parts.push(`Incluye ${claseLabel(previous)} ${previous === 1 ? 'anterior registrada' : 'anteriores registradas'}`);
+  return parts.join('. ');
+}
+
 export function studentBalanceLabel(student: Student, giftCards?: GiftCard[]): string {
   if ((student.studentCategory ?? 'membresia') !== 'membresia') {
     if (giftCards) {

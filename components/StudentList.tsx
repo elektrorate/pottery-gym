@@ -1,4 +1,6 @@
-import { hasVerifiedMembership, isClassesRunningLow, needsStudentReview, studentBalanceLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining } from '../utils/studentPresentation';
+import { hasVerifiedMembership, isClassesRunningLow, needsStudentReview, studentBalanceLabel, studentGiftCardBalance, studentActivityLabel, studentClassTypeFromGiftCards, giftCardTypeLabel, giftCardPaymentLabel, giftCardSessionsRemaining, manualCreditBreakdown } from '../utils/studentPresentation';
+import { emailError, phoneError, positiveAmountError } from '../utils/contactValidation';
+import { pluralWord } from '../utils/pluralize';
 import { showError } from '../context/toast';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent, ScalarClassAdjustment } from '../types';
@@ -8,7 +10,7 @@ import { ClassAdjustmentDialog } from './shared/ClassAdjustmentDialog';
 import { DangerZone } from './shared/DangerZone';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
-import { formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
+import { capitalizeEs, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
 import { countVisibleStudentsByCategory, getPendingMembershipPayments, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
@@ -56,7 +58,7 @@ interface StudentListProps {
 const CREDIT_ACTIVITY_LABELS = { mesa: 'Modelado / mesa', torno: 'Torno', coworking: 'Coworking', workshop: 'Workshop', privada: 'Privada' };
 
 const quedanClases = (remaining: number, allocated: number) =>
-  `${remaining === 1 ? 'Le queda 1 clase' : `Le quedan ${remaining} clases`} (de ${allocated} aprobadas).`;
+  `${remaining === 1 ? 'Le queda' : 'Le quedan'} ${remaining} ${pluralWord(remaining, 'clase', 'clases')} (de ${allocated} ${pluralWord(allocated, 'aprobada', 'aprobadas')}).`;
 
 const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit' | 'onSettlePendingPenalty' | 'onWaivePendingPenalty' |
   'canManageStudentCredits' | 'getPendingStudentCreditOperation' | 'onRetryPendingStudentCreditOperation'> & { student: Student; today: string }> =
@@ -155,7 +157,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
   const legacySummary = reconciled
     ? 'Esas clases anteriores ya están registradas.'
     : canReconcile
-      ? `Le quedan ${legacyBalance} clases anteriores por registrar.`
+      ? `Le ${legacyBalance === 1 ? 'queda' : 'quedan'} ${legacyBalance} ${legacyBalance === 1 ? 'clase anterior' : 'clases anteriores'} por registrar.`
       : 'No hay clases anteriores por registrar.';
 
   return <section aria-label="Clases añadidas e incidencias" data-testid="student-credit-panel" data-student-id={student.id}
@@ -217,8 +219,8 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         <label>Fin del crédito manual<DateField aria-label="Fin del crédito manual" className={controlClass} value={draft.endsOn} onChange={endsOn => setDraft({ ...draft, endsOn })} /></label>
       </div>
       <label>Motivo del crédito manual<textarea aria-label="Motivo del crédito manual" maxLength={2000} className={`${controlClass} min-h-20 py-2`} value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value })} /></label>
-      <label>Evidencia / origen del crédito manual<textarea aria-label="Evidencia / origen del crédito manual" maxLength={10000} className={`${controlClass} min-h-20 py-2`} value={draft.evidence} onChange={event => setDraft({ ...draft, evidence: event.target.value })} /></label>
-      <p>Motivo: máximo 2000 caracteres. Evidencia / origen: máximo 10000 caracteres.</p>
+      <label>Evidencia / origen del crédito manual <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr><textarea aria-label="Evidencia / origen del crédito manual" required aria-required="true" maxLength={10000} className={`${controlClass} min-h-20 py-2`} value={draft.evidence} onChange={event => setDraft({ ...draft, evidence: event.target.value })} /></label>
+      <p>Obligatorio. Indica de dónde salen estas clases. Motivo: máximo 2000 caracteres. Evidencia / origen: máximo 10000 caracteres.</p>
       <button type="button" disabled={!validDraft} className={`${buttonClass} bg-[#7B3F22] text-white hover:bg-[#63321C]`} onClick={() => void runOperation('approve_manual')}>Aprobar crédito manual</button>
     </fieldset> : <p>Solo lectura. Solo el propietario de este taller puede añadir clases.</p>}
     <div className="space-y-2" data-testid="student-penalty-list"><h5 className="font-bold text-[#7B3F22]">Incidencias</h5>
@@ -338,6 +340,7 @@ const StudentList: React.FC<StudentListProps> = ({
   const managedEdit = Boolean(editingStudent && isManagedMembership(editingStudent));
   const liveEditingStudent = students.find(student => student.id === editingStudent?.id) || editingStudent;
 
+  const [priceText, setPriceText] = useState('');
   const [form, setForm] = useState({
     name: '',
     surname: '',
@@ -358,6 +361,14 @@ const StudentList: React.FC<StudentListProps> = ({
     bonosAsignados: 4,
     repetirMensualmente: false
   });
+
+  useEffect(() => {
+    if (!showModal) return;
+    if (form.studentCategory === 'membresia') setPriceText(Number.isFinite(form.price) ? String(form.price) : '');
+  }, [showModal, editingStudent?.id, form.studentCategory, form.price]);
+  useEffect(() => {
+    if (showModal) setPriceText(Number.isFinite(form.price) ? String(form.price) : '');
+  }, [showModal, editingStudent?.id]);
 
   const [newSessionDate, setNewSessionDate] = useState('');
   const [newSessionTime, setNewSessionTime] = useState('10:00');
@@ -473,6 +484,12 @@ const StudentList: React.FC<StudentListProps> = ({
       return;
     }
     const isMembership = form.studentCategory === 'membresia';
+    if (emailError(form.email) || phoneError(form.phone)) return;
+    if (!isMembership && form.classesRemaining > form.bonosAsignados) return;
+    if (!isMembership && (!priceText.trim() || positiveAmountError(Number(priceText), 'La cuota'))) {
+      if (!priceText.trim()) setPriceText('0');
+      return;
+    }
     const plan = MEMBERSHIP_PLANS[form.membershipTier];
     const membershipActivatedAt = form.membershipActivatedAt || editingStudent?.membershipActivatedAt || editingStudent?.createdAt?.split('T')[0] || getWorkshopDate();
     const { assignedClasses: _assignedClasses, ...studentForm } = form;
@@ -481,9 +498,7 @@ const StudentList: React.FC<StudentListProps> = ({
       ...studentForm,
       price: isMembership ? plan.price : form.price,
       bonosAsignados: isMembership ? form.bonosAsignados : packBonos,
-      classesRemaining: isMembership
-        ? Math.max(0, form.classesRemaining)
-        : Math.min(packBonos, Math.max(0, form.classesRemaining)),
+      classesRemaining: Math.max(0, form.classesRemaining),
       repetirMensualmente: isMembership ? form.repetirMensualmente : false,
       membershipTier: isMembership ? form.membershipTier : undefined,
       membershipActivatedAt: isMembership ? membershipActivatedAt : undefined,
@@ -755,10 +770,12 @@ const StudentList: React.FC<StudentListProps> = ({
                   <label className="block text-[12px] font-medium text-[#7B3F22]">Nombre <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre" aria-label="Nombre" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
                   <label className="block text-[12px] font-medium text-[#7B3F22]">Apellidos<input value={form.surname} onChange={(e) => setForm({ ...form, surname: e.target.value })} placeholder="Apellidos" aria-label="Apellidos" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
                   <label className="block text-[12px] font-medium text-[#7B3F22] sm:col-span-2">Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email" aria-label="Email" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
-                  <label className="block text-[12px] font-medium text-[#7B3F22] sm:col-span-2">Teléfono<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Teléfono" aria-label="Teléfono" className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
+                  <label className="block text-[12px] font-medium text-[#7B3F22] sm:col-span-2">Teléfono<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Teléfono" aria-label="Teléfono" aria-invalid={phoneError(form.phone) ? true : undefined} className="mt-1 h-11 w-full px-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></label>
+                  {emailError(form.email) && <p role="alert" className="sm:col-span-2 text-[12px] text-[#9C4235]">{emailError(form.email)}</p>}
+                  {phoneError(form.phone) && <p role="alert" className="sm:col-span-2 text-[12px] text-[#9C4235]">{phoneError(form.phone)}</p>}
                 </div>
               </section>
-               <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as StudentCategoryValue)} aria-label="Categoría del alumno" className="col-span-2 h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos de clases</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="number" value={form.price} onChange={(e) => setForm({ ...form, price: parseInt(e.target.value) })} placeholder="Cuota" aria-label="Cuota" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div></section>
+               <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-2">Actividad y categoría</h4><div className="grid grid-cols-2 gap-1.5"><select value={form.classType} onChange={(e) => setForm({ ...form, classType: e.target.value })} aria-label="Tipo de clase" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option>Modelado</option><option>Torno</option><option>Coworking</option><option>Iniciación</option></select><select disabled={!!editingStudent} value={form.studentCategory} onChange={(e) => requestCategoryChange(e.target.value as StudentCategoryValue)} aria-label="Categoría del alumno" className="col-span-2 h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="membresia">Membresía</option><option value="temporal">Bonos de clases</option><option value="grupal">Grupal</option><option value="grupo_temporal">Grupo temporal</option></select><select disabled={managedEdit || !editingStudent} value={form.paymentStatus} onChange={(e) => setForm({ ...form, paymentStatus: e.target.value as 'paid' | 'pending' })} aria-label="Estado del pago" className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] outline-none focus:border-[#C68952]"><option value="unknown">Pago desconocido</option><option value="paid">Pago al día</option><option value="pending">Pago pendiente</option></select><input disabled={managedEdit || form.studentCategory === 'membresia'} type="text" inputMode="decimal" value={priceText} onChange={(e) => { const raw = e.target.value; setPriceText(raw); const parsed = Number(raw); if (raw.trim() === '') setForm({ ...form, price: 0 }); else if (Number.isFinite(parsed)) setForm({ ...form, price: parsed }); }} placeholder="Cuota" aria-label="Cuota" aria-invalid={form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') ? true : undefined} className="h-10 px-2.5 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none focus:border-[#C68952]" /></div>{form.studentCategory !== 'membresia' && priceText.trim() && positiveAmountError(Number(priceText), 'La cuota') && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">{positiveAmountError(Number(priceText), 'La cuota')}</p>}</section>
                 {form.studentCategory === 'membresia' && (!editingStudent || hasVerifiedMembership(editingStudent)) && <div className="grid grid-cols-3 gap-1.5 mt-2">
                     {(['plata', 'gold', 'platinum'] as MembershipTier[]).map(tier => <button key={tier} type="button" disabled={managedEdit} onClick={() => requestMembershipTierChange(tier)} className={`min-h-11 rounded-lg border px-2 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors ${form.membershipTier === tier ? 'border-brand bg-brand text-white shadow-sm' : 'border-neutral-border bg-white text-neutral-textMain hover:border-brand hover:text-brand'}`}><span>{MEMBERSHIP_PLANS[tier].label}</span><span className={`block text-[11px] font-medium normal-case tracking-normal ${form.membershipTier === tier ? 'text-white/90' : 'text-neutral-textSec'}`}>{MEMBERSHIP_PLANS[tier].price}€ · {MEMBERSHIP_PLANS[tier].bonuses} clases</span></button>)}
                </div>}
@@ -784,11 +801,12 @@ const StudentList: React.FC<StudentListProps> = ({
                        </div>
                      </div>
                      <div className="h-1 bg-[#F0E5DB] rounded-full overflow-hidden mb-3"><div className={`h-full ${balance.remaining <= 0 ? 'bg-[#A85D3B]' : 'bg-[#7B3F22]'}`} style={{ width: `${Math.min(100, balance.contracted ? (balance.remaining / balance.contracted) * 100 : 0)}%` }} /></div>
+                     {manualCreditBreakdown(editingStudent) && <p className="mb-3 text-[12px] text-[#7B3F22]">{manualCreditBreakdown(editingStudent)}.</p>}
                      <ul className="space-y-2">
                        {balance.allCards.map(card => (
                          <li key={card.id} className="rounded-md border border-[#E6D8CB] bg-white px-3 py-2.5">
                            <p className="text-[13px] font-bold text-[#7B3F22]">{card.code || 'Sin código'} · {giftCardTypeLabel(card.type)}</p>
-                           <p className="text-[12px] text-[#8B6B5E]">{giftCardSessionsRemaining(card)} / {card.numClasses} clases · {card.price != null ? `${card.price} €` : 'Sin importe'} · {giftCardPaymentLabel(card.paymentStatus)}</p>
+                           <p className="text-[12px] text-[#8B6B5E]">{giftCardSessionsRemaining(card)} / {card.numClasses} {pluralWord(card.numClasses, 'clase', 'clases')} · {card.price != null ? `${card.price} €` : 'Sin importe'} · {giftCardPaymentLabel(card.paymentStatus)}</p>
                            <p className="text-[12px] text-[#8B6B5E]">Comprador: {card.buyer || 'Sin comprador'}{card.buyerEmail ? ` · ${card.buyerEmail}` : ''}{card.buyerPhone ? ` · ${card.buyerPhone}` : ''}</p>
                            {card.recipientEmail && <p className="text-[12px] text-[#8B6B5E]">Email del destinatario: {card.recipientEmail}</p>}
                            {card.dedication && <p className="text-[12px] text-[#7B3F22]">«{card.dedication}»</p>}
@@ -823,7 +841,9 @@ const StudentList: React.FC<StudentListProps> = ({
                     </div>
                   </div>
                 </div>
-                 <div className="h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-2"><div className={`h-full ${form.classesRemaining <= 0 ? 'bg-[#A85D3B]' : 'bg-[#7B3F22]'}`} style={{ width: `${Math.min(100, (form.classesRemaining / form.bonosAsignados) * 100)}%` }} /></div>
+                 <div className="h-1 bg-[#F0E5DB] rounded-full overflow-hidden mt-2"><div className={`h-full ${form.classesRemaining <= 0 ? 'bg-[#A85D3B]' : 'bg-[#7B3F22]'}`} style={{ width: `${Math.min(100, form.bonosAsignados ? (form.classesRemaining / form.bonosAsignados) * 100 : 0)}%` }} /></div>
+                 {form.studentCategory !== 'membresia' && form.classesRemaining > form.bonosAsignados && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">Las clases restantes no pueden ser más que las contratadas.</p>}
+                 {editingStudent && manualCreditBreakdown(editingStudent) && <p className="mt-2 text-[12px] text-[#7B3F22]">{manualCreditBreakdown(editingStudent)}.</p>}
                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
                     {form.studentCategory === 'membresia' && <p className="text-[12px] text-[#8B6B5E]">Tras el vencimiento queda pendiente cinco días y vencida desde el sexto. Renovar no confirma el pago.</p>}
                 </div>
@@ -839,7 +859,7 @@ const StudentList: React.FC<StudentListProps> = ({
               <section><div className="flex items-baseline justify-between mb-3"><h4 className="text-[14px] font-bold text-[#7B3F22]">Asistencia</h4><span className="text-[11px] text-[#8B6B5E]">Registro de sesiones</span></div><div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar">{form.assignedClasses.length === 0 ? <p className="py-6 border border-dashed border-[#DDBFA4] rounded-md text-center text-[12px] text-[#8B6B5E]">No hay asistencias registradas aún.</p> : form.assignedClasses.map((ac, idx) => <div key={idx} className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white border border-[#E6D8CB] rounded-md"><div><p className="text-[13px] font-bold text-[#7B3F22]">{formatDate(ac.date)}</p><p className="text-[11px] text-[#8B6B5E]">{formatTime(ac.startTime)} - {formatTime(ac.endTime)}</p></div><div className="flex gap-1"><button type="button" onClick={() => { const updated = [...form.assignedClasses]; updated[idx].status = updated[idx].status === 'present' ? 'pending' : 'present'; setForm({ ...form, assignedClasses: updated }); }} className={`w-8 h-8 rounded-md flex items-center justify-center border ${ac.status === 'present' ? 'bg-[#7B3F22] text-white border-[#7B3F22]' : 'bg-white text-[#8B6B5E] border-[#DDBFA4]'}`} aria-label="Marcar presente">✓</button><button type="button" onClick={() => { const updated = [...form.assignedClasses]; updated[idx].status = updated[idx].status === 'absent' ? 'pending' : 'absent'; setForm({ ...form, assignedClasses: updated }); }} className={`w-8 h-8 rounded-md flex items-center justify-center border ${ac.status === 'absent' ? 'bg-[#A85D3B] text-white border-[#A85D3B]' : 'bg-white text-[#8B6B5E] border-[#DDBFA4]'}`} aria-label="Marcar ausente">×</button></div></div>)}</div><div className="grid grid-cols-[1fr_1fr_44px] gap-2 mt-3"><DateField value={newSessionDate} onChange={setNewSessionDate} aria-label="Fecha de asistencia" className="h-10 px-2 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22]" /><TimeField value={newSessionTime} onChange={setNewSessionTime} aria-label="Hora de asistencia" className="h-10 px-2 bg-white border border-[#DDBFA4] rounded-md text-[12px] text-[#7B3F22]" /><button type="button" onClick={handleAddSession} className="h-10 rounded-md bg-[#F0E2D6] text-[#7B3F22] text-lg hover:bg-[#DDBFA4]" aria-label="Añadir asistencia">+</button></div></section>
                 <section className="border-t border-[#E6D8CB] pt-6">
                   <div className="flex items-baseline justify-between mb-3">
-                    <h4 className="text-[14px] font-bold text-[#7B3F22]">Asistencia de {formatMonthLabel(currentMonthKey)}</h4>
+                    <h4 className="text-[14px] font-bold text-[#7B3F22]">Asistencia de {capitalizeEs(formatMonthLabel(currentMonthKey))}</h4>
                     <span className="text-[11px] text-[#8B6B5E]">Desde el calendario</span>
                   </div>
                   <div className="grid grid-cols-7 gap-1 mb-1.5">
@@ -866,7 +886,7 @@ const StudentList: React.FC<StudentListProps> = ({
                     const isExpanded = expandedAttendanceMonth === monthKey;
                     const presentCount = records.filter(record => record.status === 'present').length;
                     const absentCount = records.filter(record => record.status === 'absent').length;
-                    return <div key={monthKey} className="rounded-md border border-[#E6D8CB] bg-white overflow-hidden"><button type="button" onClick={() => setExpandedAttendanceMonth(isExpanded ? currentMonthKey : monthKey)} className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-[#FCF8F4]"><span className="text-[12px] font-bold capitalize text-[#7B3F22]">{formatMonthLabel(monthKey)}</span><span className="text-[11px] text-[#8B6B5E]">{presentCount} presentes · {absentCount} faltas <span className="ml-1">{isExpanded ? '−' : '+'}</span></span></button>{isExpanded && <div className="border-t border-[#E6D8CB] px-3 py-2 space-y-1.5">{records.map((record, index) => <div key={`${record.date}-${record.startTime}-${index}`} className="flex items-center justify-between text-[11px]"><span className="text-[#7B3F22]">{formatDate(record.date)} · {formatTime(record.startTime)} - {formatTime(record.endTime)}</span><span className={`font-bold ${record.status === 'present' ? 'text-[#47704D]' : 'text-[#9C4235]'}`}>{record.status === 'present' ? 'Presente' : 'Falta'}</span></div>)}</div>}</div>;
+                    return <div key={monthKey} className="rounded-md border border-[#E6D8CB] bg-white overflow-hidden"><button type="button" onClick={() => setExpandedAttendanceMonth(isExpanded ? currentMonthKey : monthKey)} className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-[#FCF8F4]"><span className="text-[12px] font-bold text-[#7B3F22]">{capitalizeEs(formatMonthLabel(monthKey))}</span><span className="text-[11px] text-[#8B6B5E]">{presentCount} presentes · {absentCount} faltas <span className="ml-1">{isExpanded ? '−' : '+'}</span></span></button>{isExpanded && <div className="border-t border-[#E6D8CB] px-3 py-2 space-y-1.5">{records.map((record, index) => <div key={`${record.date}-${record.startTime}-${index}`} className="flex items-center justify-between text-[11px]"><span className="text-[#7B3F22]">{formatDate(record.date)} · {formatTime(record.startTime)} - {formatTime(record.endTime)}</span><span className={`font-bold ${record.status === 'present' ? 'text-[#47704D]' : 'text-[#9C4235]'}`}>{record.status === 'present' ? 'Presente' : 'Falta'}</span></div>)}</div>}</div>;
                   })}</div>}
                 </section>
                <section className="border-t border-[#E6D8CB] pt-6"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-3">Observaciones internas</h4><textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} placeholder="Preferencias, nivel o avisos relevantes" aria-label="Observaciones internas" className="w-full min-h-[120px] p-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none resize-y focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></section>

@@ -1,4 +1,5 @@
 import { clearDesignerCaches } from '../bonos-designer/lib/cacheScope';
+import { clearMfaTrust } from '../utils/mfaTrust';
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -162,6 +163,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const signOutCurrent = useCallback(async (generation: number, expectedActor?: string) => {
         if (!isCurrent(generation)) return;
         signOutInProgressRef.current = generation;
+        clearMfaTrust();
         try {
             // Wait for the SDK lock BEFORE deciding whether this actor may be signed out.
             const { data: { session: storedSession } } = await supabase.auth.getSession();
@@ -467,6 +469,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     const logout = async () => {
+        clearMfaTrust();
         clearDesignerCaches();
         if (!mountedRef.current) return;
         const expectedActor = actorRef.current;

@@ -1,5 +1,6 @@
 import { designerStorageKey, clearDesignerCaches, removeUnscopedDesignerCaches, type DesignerScope } from './lib/cacheScope';
 import { presentDisplayName } from '../utils/displayName';
+import { clearMfaTrust } from '../utils/mfaTrust';
 ﻿
 import React, { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
@@ -426,6 +427,7 @@ const AdminApp: React.FC = () => {
   const handleSignOut = async () => {
     if (!supabase) return;
     clearDesignerCaches(); resetSensitiveState();
+    clearMfaTrust();
     await supabase.auth.signOut({ scope: 'local' });
     setShowHistory(false);
   };

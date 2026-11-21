@@ -95,6 +95,63 @@ test('aal2 without a usable TOTP timestamp requires a full sign-in', async () =>
       ]),
       now
     );
+    assert.equal(
+      mod.assessMfaAccess('aal2', [{ method: 'otp', timestamp: String(now / 1000) }], now).status,
+      'allow'
+    );
+    assert.equal(
+      mod.resolveMfaAccess('aal2', ['otp'], now - day, now).status,
+      'allow'
+    );
+    assert.equal(
+      mod.resolveMfaAccess('aal2', ['otp'], now - 31 * day, now).status,
+      'step-up'
+    );
+    assert.equal(
+      mod.resolveMfaAccess('aal1', ['otp'], now, now).status,
+      'step-up'
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('device trust cookie is SameSite Lax, lasts 30 days, and is scoped to the user', async () => {
+  const result = await build({
+    entryPoints: ['utils/mfaTrust.ts'],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'node'
+  });
+  const dir = await mkdtemp(path.join(tmpdir(), 'mfa-trust-'));
+  const jar = new Map();
+  const writes = [];
+  globalThis.window = { location: { protocol: 'https:' } };
+  globalThis.document = {
+    get cookie() { return [...jar.entries()].map(([key, value]) => `${key}=${value}`).join('; '); },
+    set cookie(value) {
+      writes.push(value);
+      const [pair, ...attrs] = value.split(';').map(part => part.trim());
+      const index = pair.indexOf('=');
+      const name = pair.slice(0, index);
+      const maxAge = attrs.find(attr => attr.toLowerCase().startsWith('max-age='));
+      if (maxAge && Number(maxAge.split('=')[1]) === 0) jar.delete(name);
+      else jar.set(name, pair.slice(index + 1));
+    }
+  };
+  const file = path.join(dir, 'trust.mjs');
+  await writeFile(file, result.outputFiles[0].text);
+  try {
+    const trust = await import(pathToFileURL(file).href);
+    const verifiedAt = Date.UTC(2026, 10, 1);
+    trust.writeMfaTrust('user-a', verifiedAt);
+    assert.equal(writes.some(value => value.startsWith('pg-mfa-trust=') && value.includes('Max-Age=2592000') && value.includes('SameSite=Lax') && value.includes('Secure')), true);
+    assert.equal(trust.readMfaTrust('user-a'), verifiedAt);
+    assert.equal(trust.readMfaTrust('user-b'), null);
+    trust.clearMfaTrust();
+    assert.equal(trust.readMfaTrust('user-a'), null);
+    assert.equal(trust.MFA_TRUST_MAX_AGE_SEC, 30 * 24 * 60 * 60);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -1,5 +1,6 @@
 import { EmptyState } from './shared/EmptyState';
 import { claseLabel } from '../utils/pluralize';
+import { giftCardTypeLabel, studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 import { getStudentSessionStatus } from '../utils/recordPresentation';
 import { formatDate, formatTime, madridDateKey, parseDateOnly } from '../utils/dateFormat';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
@@ -291,7 +292,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                           {/* Info rápida para temporales */}
                           {isTemporary && (
                             <div className={`flex items-center gap-2 mt-1 text-[11px] ${selectedStudentId === s.id ? 'text-white/70' : 'text-neutral-textSec'}`}>
-                              <span>{claseLabel(s.classesRemaining)}</span>
+                              <span>{claseLabel(studentEffectiveRemainingClasses(s, giftCards))}</span>
                               {s.expiryDate && (
                                 <span className={isExpired(s.expiryDate) ? 'text-[#9E3B2B] font-semibold' : ''}>
                                   • Exp: {formatExpiryDate(s.expiryDate)}
@@ -347,8 +348,8 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                       </div>
                       {/* KPIs principales */}
                       <div className={`grid grid-cols-2 ${isTemporary ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3 w-full md:w-auto`}>
-                        <div className={`p-3 rounded-2xl border text-center min-w-[100px] ${studentDetails.student.classesRemaining <= 1 ? 'bg-[#F8E1DA] border-[#EFC9BE]' : 'bg-neutral-sec border-neutral-border'}`}>
-                          <p className={`text-[24px] font-bold ${studentDetails.student.classesRemaining <= 1 ? 'text-[#9E3B2B]' : 'text-neutral-textMain'}`}>{studentDetails.student.classesRemaining}</p>
+                        <div className={`p-3 rounded-2xl border text-center min-w-[100px] ${studentEffectiveRemainingClasses(studentDetails.student, giftCards) <= 1 ? 'bg-[#F8E1DA] border-[#EFC9BE]' : 'bg-neutral-sec border-neutral-border'}`}>
+                          <p className={`text-[24px] font-bold ${studentEffectiveRemainingClasses(studentDetails.student, giftCards) <= 1 ? 'text-[#9E3B2B]' : 'text-neutral-textMain'}`}>{studentEffectiveRemainingClasses(studentDetails.student, giftCards)}</p>
                           <p className="text-[12px] font-semibold text-neutral-textSec">Clases Rest.</p>
                         </div>
                         <div className="bg-neutral-sec p-3 rounded-2xl border border-neutral-border text-center min-w-[100px]">
@@ -417,7 +418,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                           <div key={card.id} className="bg-white p-4 rounded-2xl border border-neutral-border soft-shadow flex items-start justify-between gap-4">
                             <div className="space-y-1">
                               <p className="text-[14px] font-bold text-neutral-textMain">
-                                {card.type} · {claseLabel(card.numClasses)}
+                                {giftCardTypeLabel(card.type)} · {claseLabel(card.numClasses)}
                               </p>
                               <p className="text-[12px] font-semibold text-neutral-textSec">
                                 Emitido: <span className="text-neutral-textMain">{formatGiftCardDate(card.createdAt)}</span>

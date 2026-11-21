@@ -98,6 +98,8 @@ const SettingsView: React.FC = () => {
   })();
 
   const [workshopName, setWorkshopName] = useState(savedSettings.workshopName || '');
+  const [workshopNameLoaded, setWorkshopNameLoaded] = useState(Boolean(savedSettings.workshopName));
+  const workshopNameEdited = useRef(false);
   const [defaultClassDuration, setDefaultClassDuration] = useState(savedSettings.defaultClassDuration || '120');
   const [defaultMaxCapacity, setDefaultMaxCapacity] = useState(savedSettings.defaultMaxCapacity || '10');
   const [currency, setCurrency] = useState(savedSettings.currency || 'EUR');
@@ -119,6 +121,31 @@ const SettingsView: React.FC = () => {
   const [savingScheduleDay, setSavingScheduleDay] = useState<number | null>(null);
   const [openScheduleDays, setOpenScheduleDays] = useState<Record<number, boolean>>({});
   const [isScheduleSectionOpen, setIsScheduleSectionOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadWorkshopName = async () => {
+      const query = sedeId
+        ? supabase.from('sedes').select('name').eq('id', sedeId).limit(1)
+        : profile?.id
+          ? supabase.from('sedes').select('name').eq('owner_id', profile.id).eq('is_active', true).limit(1)
+          : null;
+      if (!query) {
+        if (!cancelled && !savedSettings.workshopName) setWorkshopName('Casa Rosier');
+        if (!cancelled) setWorkshopNameLoaded(true);
+        return;
+      }
+      const { data } = await query;
+      if (cancelled) return;
+      if (!workshopNameEdited.current) {
+        const stored = String(data?.[0]?.name || '').trim();
+        setWorkshopName(stored || savedSettings.workshopName || 'Casa Rosier');
+      }
+      setWorkshopNameLoaded(true);
+    };
+    void loadWorkshopName();
+    return () => { cancelled = true; };
+  }, [sedeId, profile?.id]);
 
   useEffect(() => {
     if (workshopSchedule.length > 0) {
@@ -464,8 +491,9 @@ const SettingsView: React.FC = () => {
             <CompactField label="Nombre del taller">
               <input
                 type="text" value={workshopName}
-                onChange={e => setWorkshopName(e.target.value)}
-                placeholder="Ej: Cerámica artesanal"
+                onChange={e => { workshopNameEdited.current = true; setWorkshopName(e.target.value); }}
+                placeholder={workshopNameLoaded ? 'Casa Rosier' : 'Cargando nombre del taller…'}
+                aria-busy={!workshopNameLoaded}
                 className={`${inputClass} col-span-1`}
               />
             </CompactField>

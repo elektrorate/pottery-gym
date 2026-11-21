@@ -4,6 +4,7 @@ import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
 import { pluralize } from '../utils/pluralize';
+import { emailError } from '../utils/contactValidation';
 import { supabase } from '../supabaseClient';
 import { formatDate } from '../utils/dateFormat';
 import { presentDisplayName } from '../utils/displayName';
@@ -96,6 +97,7 @@ const TeamView: React.FC = () => {
             showFeedback('error', 'La contraseña debe tener al menos 12 caracteres.');
             return;
         }
+        if (emailError(createForm.email)) return;
 
         setActionLoading(true);
 
@@ -200,7 +202,9 @@ const TeamView: React.FC = () => {
 
                     </div>
                     <div className="text-[14px] font-semibold text-neutral-textSec">
-                        {pluralize(staff.length, 'colaborador registrado', 'colaboradores registrados')}
+                        {loading
+                          ? <span role="status">Cargando colaboradores…</span>
+                          : pluralize(staff.length, 'colaborador registrado', 'colaboradores registrados')}
                     </div>
                 </div>
 
@@ -291,8 +295,10 @@ const TeamView: React.FC = () => {
                                         value={createForm.email}
                                         onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
                                         placeholder="colaborador@email.com"
+                                        aria-invalid={emailError(createForm.email) ? true : undefined}
                                         className="w-full min-h-[44px] px-4 py-2.5 rounded-[10px] bg-white border border-neutral-border focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper transition-all"
                                     />
+                                    {emailError(createForm.email) && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{emailError(createForm.email)}</p>}
                                 </div>
                                 <div>
                                     <label className="block text-[12px] font-semibold text-neutral-textSec mb-1.5">Contraseña</label>

@@ -9,15 +9,15 @@ import { getStudentLifecycle, isStudentArchived, isNonMembershipCategory } from 
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
 import { getScheduleConflictReason, madridDateKey, MAX_WEEKLY_SESSIONS, weeklyDatesUntil } from '../utils/workshopSchedule';
-import { formatCalendarDate, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
+import { capitalizeEs, formatCalendarDate, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
 import { AdvancedDetails, isInternalId } from './shared/AdvancedDetails';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { presentDisplayName, presentPersonName } from '../utils/displayName';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
-import { studentEffectiveRemainingClasses } from '../utils/studentPresentation';
-import { sesionLabel } from '../utils/pluralize';
+import { studentEffectiveRemainingClasses, studentMatchesSessionAudience } from '../utils/studentPresentation';
+import { pluralWord, sesionLabel } from '../utils/pluralize';
 interface CalendarViewProps {
   readOnly?: boolean;
   sessions: ClassSession[];
@@ -98,6 +98,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const [detailsDialog, setDetailsDialog] = useState<{ session: ClassSession; mode: 'teacher' | 'schedule' } | null>(null);
   const [rosterOnly, setRosterOnly] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
+  const [cupoDraft, setCupoDraft] = useState<string | null>(null);
   const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [repeatUntil, setRepeatUntil] = useState('');
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
@@ -148,6 +149,17 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const activeSelectedCount = selectedRoster.filter(id => !editingReservation || !isCancelled(editingReservation, id)).length;
   const formCapacity = sessionForm.classType === 'mixto'
     ? sessionForm.activityBlocks.reduce((total, block) => total + block.capacity, 0) : sessionForm.capacity;
+  const cupoShown = sessionForm.classType === 'mixto' ? String(formCapacity) : (cupoDraft ?? String(sessionForm.capacity));
+  const cupoError = sessionForm.classType === 'feriado' || sessionForm.classType === 'mixto' ? ''
+    : !/^\d+$/.test(cupoShown) ? 'El cupo debe ser un entero de 1 a 100.'
+    : Number(cupoShown) < 1 ? 'El cupo debe ser al menos 1.'
+    : Number(cupoShown) > 100 ? 'El cupo no puede ser mayor que 100.' : '';
+  const scheduleError = sessionForm.classType === 'feriado' || !sessionForm.startTime || !sessionForm.endTime ? ''
+    : sessionForm.startTime >= sessionForm.endTime
+      ? 'La hora de fin tiene que ser posterior a la de inicio.'
+      : (workshopSchedule.length > 0 || workshopScheduleExceptions.length > 0)
+        ? (getScheduleConflictReason({ date: sessionForm.date, startTime: sessionForm.startTime, endTime: sessionForm.endTime, classType: sessionForm.classType }, workshopSchedule, workshopScheduleExceptions) || '')
+        : '';
   const mixedHistoryLocked = editingReservation?.classType === 'mixto' && (!!editingReservation.completedAt
     || editingReservation.studentIds?.some(id => isCancelled(editingReservation, id)));
   const getFundingActivity = (studentId: string) => {
@@ -274,6 +286,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
         return true;
       }
       setSaveError('');
+      setCupoDraft(null);
       setPendingSave({ kind: 'recovery', id: descriptor.isNewSession ? null : descriptor.sessionId, descriptor });
       if (descriptor.operation === 'reservation') {
         setEditingSessionId(descriptor.isNewSession ? null : descriptor.sessionId);
@@ -316,6 +329,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       return;
     }
     setSaveError('');
+    setCupoDraft(null);
     setRepeatWeekly(false);
     setRepeatUntil('');
     setStudentSearchQuery(''); // Limpiar búsqueda al abrir modal
@@ -578,14 +592,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       showError("Debes indicar el motivo de la sesion privada.");
       return;
     }
-    if (sessionForm.startTime >= sessionForm.endTime) {
-      showError("La hora de inicio debe ser anterior a la hora de fin.");
+    if (sessionForm.classType !== 'feriado' && scheduleError) {
+      setSaveError(scheduleError);
       return;
     }
-    const capacity = sessionForm.classType === 'mixto' ? formCapacity
-      : Math.max(1, Math.min(100, Number(sessionForm.capacity) || 0));
-    if (!capacity) {
-      showError("Indica una capacidad válida para la sesión.");
+    const capacity = sessionForm.classType === 'mixto' ? formCapacity : Number(cupoShown);
+    if (sessionForm.classType !== 'feriado' && (sessionForm.classType !== 'mixto' && cupoError || !Number.isInteger(capacity) || capacity < 1 || capacity > 100)) {
+      setSaveError(cupoError || 'El cupo debe ser un entero de 1 a 100.');
       return;
     }
     if (activeSelectedCount > capacity) {
@@ -1003,7 +1016,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
               <div className="mt-4 flex items-center justify-between gap-3">
                 <button type="button" aria-label="Mes anterior" onClick={() => setSelectedDate(current => { const next = new Date(current); next.setMonth(next.getMonth() - 1); return next; })} className="flex h-10 w-10 items-center justify-center rounded-full text-neutral-textSec transition hover:bg-brand-soft hover:text-brand"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m15 19-7-7 7-7" /></svg></button>
-                  <h4 className="text-center text-[20px] font-semibold capitalize tracking-tight text-neutral-textMain">{formatCalendarDate(selectedDate, 'monthYear')}</h4>
+                  <h4 className="text-center text-[20px] font-semibold tracking-tight text-neutral-textMain">{capitalizeEs(formatCalendarDate(selectedDate, 'monthYear'))}</h4>
                 <button type="button" aria-label="Mes siguiente" onClick={() => setSelectedDate(current => { const next = new Date(current); next.setMonth(next.getMonth() + 1); return next; })} className="flex h-10 w-10 items-center justify-center rounded-full text-neutral-textSec transition hover:bg-brand-soft hover:text-brand"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m9 5 7 7-7 7" /></svg></button>
               </div>
 
@@ -1357,6 +1370,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     {sessionForm.classType === 'feriado' && (
                       <p className="mt-2 text-[11px] leading-relaxed text-[#8B6B5E]">Día bloqueado por feriado (00:00–24:00).</p>
                     )}
+                    {scheduleError && <p role="alert" className="mt-2 text-[12px] text-[#9C4235]">{scheduleError}</p>}
                     {!editingSessionId && <div className="mt-3 rounded-[10px] border border-[#E8D9CC] bg-white p-3">
                       <label className="flex items-start gap-2 text-[13px] text-[#2F211B]">
                         <input type="checkbox" className="mt-1" checked={repeatWeekly} onChange={event => { setRepeatWeekly(event.target.checked); if (!event.target.checked) setRepeatUntil(''); }} />
@@ -1379,6 +1393,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         value={sessionForm.classType}
                         onChange={(e) => {
                           const classType = e.target.value as ClassSession['classType'];
+                          setCupoDraft(null);
                           setSessionForm({
                              ...sessionForm,
                              classType,
@@ -1417,15 +1432,20 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       <span className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">Cupo máximo <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr></span>
                       <input
                         aria-label="Cupo máximo"
-                        type="number"
-                        min="1"
-                        max="100"
+                        type="text"
+                        inputMode="numeric"
                         disabled={sessionForm.classType === 'mixto' || mixedHistoryLocked}
-                        value={formCapacity}
-                        onChange={(e) => setSessionForm({ ...sessionForm, capacity: Number(e.target.value) })}
+                        value={cupoShown}
+                        aria-invalid={cupoError ? true : undefined}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setCupoDraft(raw);
+                          if (/^\d+$/.test(raw)) setSessionForm({ ...sessionForm, capacity: Number(raw) });
+                        }}
                         className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] font-medium text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
                       />
-                      <span className="mt-1 block text-[11px] text-[#8B6B5E]">{activeSelectedCount} de {formCapacity || 0} plazas ocupadas</span>
+                      {cupoError && <p role="alert" className="mt-1 text-[12px] text-[#9C4235]">{cupoError}</p>}
+                      <span className="mt-1 block text-[11px] text-[#8B6B5E]">{activeSelectedCount} de {/^\d+$/.test(cupoShown) ? cupoShown : 0} plazas ocupadas</span>
                     </label>
                   )}
 
@@ -1485,9 +1505,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     {sessionForm.classType === 'mixto' && <fieldset disabled={mixedHistoryLocked} className="space-y-3 rounded-[12px] border border-[#E8D9CC] bg-[#FFF9F3] p-3">
                       <legend className="ui-label px-1 uppercase tracking-[0.14em] text-[#7B3F22]">Actividades y profesores</legend>
                       {sessionForm.activityBlocks.map((block, blockIndex) => <div key={block.activityType} className="rounded-[10px] border border-[#E1C9B5] bg-white p-3">
-                        <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">{block.activityType === 'mesa' ? 'Mesa' : 'Torno'}</span><input aria-label={`Cupo ${block.activityType}`} type="number" min="1" max="100" value={block.capacity} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, capacity: Number(event.target.value) } : item) })} className="h-8 w-20 rounded border border-[#DDBFA4] px-2 text-[12px]" /></div>
+                        <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">{block.activityType === 'mesa' ? 'Mesa' : 'Torno'}</span><input aria-label={`Cupo ${block.activityType}`} type="text" inputMode="numeric" value={block.capacity} onChange={event => { const raw = event.target.value; if (raw !== '' && !/^\d+$/.test(raw)) return; setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, capacity: raw === '' ? 0 : Number(raw) } : item) }); }} className="h-8 w-20 rounded border border-[#DDBFA4] px-2 text-[12px]" /></div>
                         <select aria-label={`Profesor de ${block.activityType}`} value={block.teacherId || ''} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, teacherId: event.target.value || undefined } : item) })} className="mb-2 h-9 w-full rounded border border-[#DDBFA4] bg-white px-2 text-[12px]"><option value="">Sin profesor</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{presentPersonName(teacher.name, teacher.surname)}</option>)}</select>
-                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => { const cat = student.studentCategory || 'membresia'; const matchesAudience = sessionForm.sessionAudience === 'ambos' || (sessionForm.sessionAudience === 'membresia' ? cat === 'membresia' : isNonMembershipCategory(cat)); return !isStudentArchived(student, today) && matchesAudience; }).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{presentPersonName(student.name, student.surname)}</span><span className="ml-auto text-[10px] opacity-60">{isNonMembershipCategory(student.studentCategory) ? studentCategoryLabel(student.studentCategory) : 'Membresía'}</span></label>; })}</div>
+                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => { const matchesAudience = studentMatchesSessionAudience(student, sessionForm.sessionAudience, giftCards); return !isStudentArchived(student, today) && matchesAudience; }).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{presentPersonName(student.name, student.surname)}</span><span className="ml-auto text-[10px] opacity-60">{isNonMembershipCategory(student.studentCategory) ? studentCategoryLabel(student.studentCategory) : 'Membresía'}</span></label>; })}</div>
                       </div>)}
                     </fieldset>}
                     <fieldset>
@@ -1538,13 +1558,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         const filtered = students
                           .filter(s => {
                             if (isStudentArchived(s, today)) return false;
-                            const cat = s.studentCategory || 'membresia';
-                            // Filtro por audiencia - 'ambos' muestra todos los tipos
-                            const matchesAudience = sessionForm.sessionAudience === 'ambos'
-                              ? true
-                              : sessionForm.sessionAudience === 'membresia'
-                                ? (cat === 'membresia')
-                                : isNonMembershipCategory(cat);
+                            const matchesAudience = studentMatchesSessionAudience(s, sessionForm.sessionAudience, giftCards);
                             // Filtro por búsqueda
                             const fullName = `${s.name} ${s.surname || ''}`.trim().toLowerCase();
                             const groupName = (s.groupName || '').toLowerCase();
@@ -1666,7 +1680,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                 </label>
                                 {selectedCardId && <AdvancedDetails><p>Bono regalo interno: {selectedCardId}</p></AdvancedDetails>}
                                 {selectedManualId && <div data-testid="selected-manual-credit-info" className="mt-2 text-[11px] text-[#8B6B5E] [overflow-wrap:anywhere]">
-                                  {linkedManual ? <p>Le {linkedManual.remainingClasses === 1 ? 'queda' : 'quedan'} {linkedManual.remainingClasses} de {linkedManual.allocatedClasses} clases, {formatDate(linkedManual.startsOn)} a {formatDate(linkedManual.endsOn)}. Evidencia: {linkedManual.evidence}.</p>
+                                  {linkedManual ? <p>Le {linkedManual.remainingClasses === 1 ? 'queda' : 'quedan'} {linkedManual.remainingClasses} de {linkedManual.allocatedClasses} {pluralWord(linkedManual.allocatedClasses, 'clase', 'clases')}, {formatDate(linkedManual.startsOn)} a {formatDate(linkedManual.endsOn)}. Evidencia: {linkedManual.evidence}.</p>
                                     : <p>Recargue para comprobar estas clases. No se sustituye sola.</p>}
                                   <p>Elegirlas no descuenta la clase; se comprueba al pasar lista.</p>
                                   <AdvancedDetails><p>ID de credito manual: {selectedManualId}</p></AdvancedDetails>

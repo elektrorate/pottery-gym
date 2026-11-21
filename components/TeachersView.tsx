@@ -11,6 +11,7 @@ import { pluralize } from '../utils/pluralize';
 import { teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
 import { formatDate, formatTime } from '../utils/dateFormat';
 import { presentDisplayName, presentPersonName } from '../utils/displayName';
+import { emailError, phoneError } from '../utils/contactValidation';
 
 interface TeachersViewProps {
   teachers: Teacher[];
@@ -80,6 +81,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
       showError('El nombre es obligatorio.');
       return;
     }
+    if (emailError(form.email) || phoneError(form.phone)) return;
     setIsSubmitting(true);
     // CRITICAL FIX: send empty strings (not undefined) for optional fields.
     // DataContext.updateTeacher converts '' to null so Supabase clears old values.
@@ -242,14 +244,20 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   placeholder="Email"
+                  aria-label="Email"
+                  aria-invalid={emailError(form.email) ? true : undefined}
                   className="w-full min-h-[44px] px-4 py-2.5 rounded-[10px] bg-white border border-neutral-border focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper"
                 />
                 <input
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
                   placeholder="Teléfono"
+                  aria-label="Teléfono"
+                  aria-invalid={phoneError(form.phone) ? true : undefined}
                   className="w-full min-h-[44px] px-4 py-2.5 rounded-[10px] bg-white border border-neutral-border focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none text-[15px] text-neutral-textMain placeholder:text-neutral-textHelper"
                 />
+                {emailError(form.email) && <p role="alert" className="md:col-span-2 text-[12px] text-[#9E3B2B]">{emailError(form.email)}</p>}
+                {phoneError(form.phone) && <p role="alert" className="md:col-span-2 text-[12px] text-[#9E3B2B]">{phoneError(form.phone)}</p>}
               </div>
               <textarea
                 value={form.notes}

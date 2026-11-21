@@ -1,4 +1,5 @@
 import { supabase } from '../supabaseClient';
+import { clearMfaTrust } from './mfaTrust';
 
 const LOCAL_SIGN_OUT_TIMEOUT_MS = 1200;
 const SUPABASE_KEY_PREFIX = 'sb-';
@@ -29,6 +30,7 @@ export const logoutAndRedirect = async (redirectTo: string = '/login') => {
   } catch (error) {
     console.error('Error during logout:', error);
   } finally {
+    clearMfaTrust();
     clearStoredSupabaseSession();
     if (typeof window !== 'undefined') {
       window.location.replace(redirectTo);
