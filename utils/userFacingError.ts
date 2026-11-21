@@ -1,8 +1,18 @@
 import { businessReasonLabel } from './businessReasonLabels';
 
+const PENDING_PAYMENT = 'El alumno todavía tiene clases disponibles, pero el pago está pendiente. Confirme el pago o use «Descontar una clase».';
+const CREDIT_STILL_AVAILABLE = 'El alumno aún tiene clases disponibles; use Descontar una clase.';
+
+/** The suffix after «No-credit exception cannot bypass available credit» decides the sentence. */
+export const noCreditExceptionMessage = (message: string): string | null => {
+  const match = /No-credit exception cannot bypass available credit(?::\s*([\s\S]*))?/i.exec(message);
+  if (!match) return null;
+  const reason = (match[1] || '').toLowerCase();
+  if (reason.includes('payment is unpaid or unknown') || reason.includes('unpaid or unknown')) return PENDING_PAYMENT;
+  return CREDIT_STILL_AVAILABLE;
+};
+
 const EXACT: Array<[RegExp, string]> = [
-  [/No-credit exception cannot bypass available credit/i,
-    'El alumno todavía tiene clases del bono disponibles, pero el pago del bono está pendiente. Confirme el pago o use «Descontar una clase».'],
   [/Original scalar pack payment is unpaid or unknown/i,
     'El alumno todavía tiene clases del bono disponibles, pero el pago del bono está pendiente. Confirme el pago o use «Descontar una clase».'],
   [/Membership override requires known original positive credit/i,
@@ -36,6 +46,8 @@ const looksTechnical = (message: string) =>
 export const mapUserFacingError = (error: unknown, fallback = 'No se pudo completar la acción. Inténtelo de nuevo.'): string => {
   const message = (error instanceof Error ? error.message : String((error as { message?: string })?.message || error || '')).trim();
   if (!message) return fallback;
+  const noCredit = noCreditExceptionMessage(message);
+  if (noCredit) return noCredit;
   for (const [pattern, spanish] of EXACT) {
     if (pattern.test(message)) return spanish;
   }

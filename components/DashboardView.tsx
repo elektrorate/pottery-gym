@@ -106,7 +106,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
      const byCategory = countVisibleStudentsByCategory(students, todayStr);
      const activeMembership = students.filter(student => !isStudentArchived(student, todayStr)
        && (student.studentCategory || 'membresia') === 'membresia'
-       && !studentHasPendingPayment(student)).length;
+       && !isPaymentPendingToday(student, todayStr)).length;
 
      return { totalStudents, pendingStudents, totalSessions, byCategory, activeMembership, reviewStudents: students.filter(needsStudentReview).length };
     }, [students, sessions, todayStr]);

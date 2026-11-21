@@ -1,5 +1,6 @@
 import type { Teacher } from '../../types';
 import { showError, showWarning } from '../toast';
+import { mapUserFacingError } from '../../utils/userFacingError';
 import { supabase, withTimeout, isAbortError, OpsContext } from './shared';
 
 export const addTeacher = async (ctx: OpsContext, newTeacher: Omit<Teacher, 'id'>) => {
@@ -41,19 +42,14 @@ export const updateTeacher = async (ctx: OpsContext, id: string, updates: Partia
 
 export const deleteTeacher = async (ctx: OpsContext, id: string) => {
     ctx.assertScope();
-    ctx.setTeachers(prev => prev.filter(t => t.id !== id));
     try {
-        const teacherReset = supabase.from('sessions').update({ teacher_id: null }).eq('teacher_id', id);
-        ctx.assertScope();
-        const substituteReset = supabase.from('sessions').update({ teacher_substitute_id: null }).eq('teacher_substitute_id', id);
-        await Promise.allSettled([teacherReset, substituteReset]);
-        ctx.assertScope();
         const { error } = await withTimeout('teachers.delete', supabase.from('teachers').delete().eq('id', id));
         ctx.assertScope();
-        if (error) { showError(`No se pudo eliminar el profesor. ${error.message || ''}`); ctx.safeReload(); return; }
+        if (error) throw error;
+        ctx.setTeachers(prev => prev.filter(t => t.id !== id));
+        await ctx.safeReload().catch(() => undefined);
     } catch (err: any) {
-        showError(`${err.message || 'Error inesperado al eliminar profesor.'}`);
-        ctx.assertScope();
-        void ctx.safeReload().catch(() => undefined);
+        showError(mapUserFacingError(err, 'No se pudo eliminar el profesor.'));
+        try { ctx.assertScope(); void ctx.safeReload().catch(() => undefined); } catch { /* The scope already changed. */ }
     }
 };

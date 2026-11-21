@@ -442,7 +442,7 @@ const WorkshopAvailabilityPanel = React.forwardRef<WorkshopAvailabilityHandle>(f
           </span>
         </button>
         <div id="session-availability-content" hidden={!availabilityExpanded}>
-        <p className="ui-secondary mb-4 mt-3">Inscritos reales frente al cupo guardado en cada sesión.</p>
+        <p className="ui-secondary mb-4 mt-3">Inscritos reales frente al cupo guardado en cada sesión. La lista muestra {filteredSessions.length} {filteredSessions.length === 1 ? 'sesión' : 'sesiones'}. En el periodo hay {sessionsInRange} sin contar feriados. El respaldo de Administración cuenta las {sessions.length} sesiones cargadas, feriados incluidos.</p>
         <div className="grid gap-2 rounded-xl border border-neutral-border bg-white p-3 md:grid-cols-[auto_auto_auto_1fr]">
           <select aria-label="Periodo de sesiones" value={range} onChange={event => { setRange(event.target.value as typeof range); setVisibleCount(12); }} className={inputClass}><option value="week">Esta semana</option><option value="next">Próxima semana</option><option value="custom">Rango de fechas</option></select>
           {range === 'custom' && <><DateField aria-label="Desde" value={customFrom} onChange={setCustomFrom} className={inputClass} /><DateField aria-label="Hasta" value={customTo} onChange={setCustomTo} className={inputClass} /></>}

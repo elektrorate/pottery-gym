@@ -22,11 +22,12 @@ interface InventoryViewProps {
   onArchiveItem: (id: string) => Promise<void>;
   onDeleteItem?: (id: string) => Promise<void>;
   onAddMovement: (movement: Omit<InventoryMovement, 'id'>) => Promise<void>;
+  onReload?: () => Promise<void>;
 }
 
 type SubView = 'dashboard' | 'list' | 'detail' | 'form';
 
-const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddItem, onUpdateItem, onArchiveItem, onDeleteItem, onAddMovement }) => {
+const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddItem, onUpdateItem, onArchiveItem, onDeleteItem, onAddMovement, onReload }) => {
   const [currentSubView, setCurrentSubView] = useState<SubView>('list');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -39,6 +40,8 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
   const [isSubmittingMovement, setIsSubmittingMovement] = useState(false);
   const movementRequest = useRef<{ fingerprint: string; key: string; expectedQuantity: number } | null>(null);
   const [quantityText, setQuantityText] = useState({ current: '0', min: '0' });
+  const [quantityFieldError, setQuantityFieldError] = useState('');
+  const [itemFieldErrors, setItemFieldErrors] = useState<{ name?: string; code?: string }>({});
   const [itemForm, setItemForm] = useState({
     category: 'glaze' as InventoryCategory,
     name: '',
@@ -131,8 +134,23 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
     setShowMovementForm(false);
     setCurrentSubView('detail');
   };
+  useEffect(() => {
+    if (isSubmittingItem || isSubmittingMovement) return;
+    if (currentSubView !== 'form' && !showMovementForm) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (showMovementForm) { setShowMovementForm(false); return; }
+      setCurrentSubView(editingItem ? 'detail' : 'list');
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [currentSubView, showMovementForm, isSubmittingItem, isSubmittingMovement, editingItem]);
+
   const handleOpenForm = () => {
     setEditingItem(null);
+    setQuantityText({ current: '0', min: '0' });
+    setQuantityFieldError('');
+    setItemFieldErrors({});
     setItemForm({
       category: filterCategory === 'all' ? 'glaze' : filterCategory,
       name: '',
@@ -198,6 +216,10 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       showError('Ya existe un material con ese código.');
       return false;
     }
+    if (!quantityText.current.trim() || !quantityText.min.trim()) {
+      setQuantityFieldError(!quantityText.current.trim() ? 'Indique la cantidad actual.' : 'Indique el mínimo.');
+      return false;
+    }
     const currentParsed = parseSpanishQuantity(quantityText.current);
     const minParsed = parseSpanishQuantity(quantityText.min);
     const quantityError = !currentParsed.ok ? 'La cantidad no es válida. Use una coma para los decimales, por ejemplo 2,5.'
@@ -212,7 +234,10 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       showError(lengthError(itemForm.name, LIMITS.name, 'El nombre') || '');
       return false;
     }
-    if (quantityError) return false;
+    if (quantityError) { setQuantityFieldError(quantityError); return false; }
+    setQuantityFieldError('');
+    if (!itemForm.name.trim()) { setItemFieldErrors({ name: 'El nombre es obligatorio.' }); return false; }
+    if (!normalizedCode) { setItemFieldErrors({ code: 'El código es obligatorio.' }); return false; }
 
     let parsedFormula: StructuredFormula | undefined;
     let formulaUnit: 'percent' | 'weight' | undefined;
@@ -245,24 +270,30 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       color_family: itemForm.color_family || undefined,
       finish: itemForm.finish || undefined
     };
-    if (editingItem) {
-      const quantityChanged = currentParsed.ok && currentParsed.value !== editingItem.current_quantity;
-      const { current_quantity: _ignored, ...withoutQuantity } = payload;
-      await onUpdateItem(editingItem.id, quantityChanged ? withoutQuantity : payload);
-      if (quantityChanged) {
-        await onAddMovement({
-          requestKey: crypto.randomUUID(),
-          expectedQuantity: editingItem.current_quantity,
-          item_id: editingItem.id,
-          type: 'adjust',
-          new_quantity: currentParsed.value,
-          unit: payload.unit || editingItem.unit,
-          reason: 'Ajuste',
-          date: madridDateKey(),
-          notes: `Cantidad ${editingItem.current_quantity} → ${currentParsed.value}`
-        });
-      }
-    } else await onAddItem(payload);
+    try {
+      if (editingItem) {
+        const quantityChanged = currentParsed.ok && currentParsed.value !== editingItem.current_quantity;
+        const { current_quantity: _ignored, ...withoutQuantity } = payload;
+        await onUpdateItem(editingItem.id, quantityChanged ? withoutQuantity : payload);
+        if (quantityChanged) {
+          await onAddMovement({
+            requestKey: crypto.randomUUID(),
+            expectedQuantity: editingItem.current_quantity,
+            item_id: editingItem.id,
+            type: 'adjust',
+            new_quantity: currentParsed.value,
+            unit: payload.unit || editingItem.unit,
+            reason: 'Ajuste',
+            date: madridDateKey(),
+            notes: `Cantidad ${editingItem.current_quantity} → ${currentParsed.value}`
+          });
+        }
+      } else await onAddItem(payload);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'No se pudo guardar el material.');
+      await onReload?.().catch(() => undefined);
+      return false;
+    }
     return true;
   };
 
@@ -506,7 +537,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
         {showMovementForm && (
           <div className="bg-white rounded-2xl border border-neutral-border soft-shadow p-4 md:p-6">
             <h4 className="text-[15px] font-semibold text-neutral-textMain mb-4">Nuevo movimiento</h4>
-            <form onSubmit={handleSubmitMovement} className="space-y-4">
+            <form noValidate onSubmit={handleSubmitMovement} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Tipo</label>
@@ -702,7 +733,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
             </button>
           </div>
 
-          <form onSubmit={handleSubmitItem} className="space-y-6">
+          <form noValidate onSubmit={handleSubmitItem} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Categoría</label>
@@ -722,8 +753,9 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                   value={itemForm.code}
                   onChange={(e) => setItemForm({ ...itemForm, code: e.target.value })}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
-                  placeholder="Ej: GL-010"
-                />
+                placeholder="Ej: GL-010"
+              />
+              {itemFieldErrors.code && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{itemFieldErrors.code}</p>}
               </div>
             </div>
 
@@ -735,6 +767,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                 placeholder="Ej: Esmalte blanco mate"
               />
+              {itemFieldErrors.name && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{itemFieldErrors.name}</p>}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -747,6 +780,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                   onChange={(e) => setQuantityText(current => ({ ...current, current: e.target.value }))}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                 />
+                {quantityFieldError && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{quantityFieldError}</p>}
                 {(() => { const parsed = parseSpanishQuantity(quantityText.current); const message = !parsed.ok && quantityText.current.trim() ? 'La cantidad no es válida. Use una coma decimal, por ejemplo 2,5.' : parsed.ok ? nonNegativeAmountError(parsed.value, 'La cantidad', 'f') : null; return message ? <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{message}</p> : null; })()}
               </div>
               <div>

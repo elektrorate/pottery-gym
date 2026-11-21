@@ -302,7 +302,7 @@ test('a changed paid source never auto-reapproves a free exception; current kind
   await open(page);
   await expect(row(page, memberId).getByRole('button', { name: 'Reaprobar excepción', exact: true })).toBeDisabled();
   await approve(page, memberId, 'no_credit', 'Solicito nueva cortesia con credito disponible');
-  await expect(dialog(page).getByRole('alert')).toContainText('el pago del bono está pendiente');
+  await expect(dialog(page).getByRole('alert')).toContainText('El alumno aún tiene clases disponibles; use Descontar una clase.');
   const rejected = (await output(page, 'calls'))[3].input;
   assertBusinessIntent(rejected, 'approve_exception', memberId, 9);
   expect(rejected.kind).toBe('no_credit');

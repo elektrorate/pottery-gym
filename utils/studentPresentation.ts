@@ -1,5 +1,6 @@
 import type { GiftCard, Student } from '../types';
 import { isNonMembershipCategory } from './classTypeLabels.ts';
+import { madridDateKey } from './dateFormat.ts';
 import { claseLabel, quedanDeClases } from './pluralize.ts';
 
 export function hasVerifiedMembership(student: Student): boolean {
@@ -65,9 +66,15 @@ export function studentMatchesSessionAudience(
   return studentHasClassBono(student, giftCards);
 }
 
-export function manualCreditRemaining(student: Pick<Student, 'manualCredits'>, mode?: 'added' | 'previous') {
+export function manualCreditRemaining(student: Pick<Student, 'manualCredits'>, mode?: 'added' | 'previous', today = madridDateKey()) {
   return (student.manualCredits || [])
-    .filter(credit => mode === 'previous' ? credit.mode === 'reconcile_legacy' : mode === 'added' ? credit.mode !== 'reconcile_legacy' : true)
+    .filter(credit => {
+      const end = credit.endsOn?.slice(0, 10);
+      if (end && end < today) return false;
+      if (mode === 'previous') return credit.mode === 'reconcile_legacy';
+      if (mode === 'added') return credit.mode !== 'reconcile_legacy';
+      return true;
+    })
     .reduce((sum, credit) => sum + Math.max(0, credit.remainingClasses || 0), 0);
 }
 

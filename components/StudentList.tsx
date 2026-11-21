@@ -17,7 +17,7 @@ import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentS
 import { isPaymentPendingToday } from '../utils/paymentPending';
 import { includesFolded } from '../utils/textSearch';
 import { parseSpanishQuantity } from '../utils/quantityInput';
-import { cuotaCeilingError, lengthError, LIMITS } from '../utils/fieldLimits';
+import { cuotaCeilingError, lengthError, LIMITS, manualCreditCeilingError } from '../utils/fieldLimits';
 import { duplicateContactMessage, duplicateStudentContact, personLabel } from '../utils/duplicateContact';
 import { mapUserFacingError } from '../utils/userFacingError';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
@@ -99,7 +99,8 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
     window.addEventListener(STUDENT_CREDIT_REJECTION_EVENT, onRejection);
     return () => window.removeEventListener(STUDENT_CREDIT_REJECTION_EVENT, onRejection);
   }, []);
-  const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0
+  const creditCeiling = manualCreditCeilingError(Number(draft.quantity));
+  const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0 && !creditCeiling
     && !!draft.activity && Object.hasOwn(CREDIT_ACTIVITY_LABELS, draft.activity)
     && /^\d{4}-\d{2}-\d{2}$/.test(draft.startsOn) && /^\d{4}-\d{2}-\d{2}$/.test(draft.endsOn)
     && Number.isFinite(Date.parse(draft.startsOn)) && Number.isFinite(Date.parse(draft.endsOn))
@@ -228,7 +229,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
         <label>Actividad del crédito manual<select aria-label="Actividad del crédito manual" className={controlClass} value={draft.activity} onChange={event => setDraft({ ...draft, activity: event.target.value as ManualCreditIntent['activity'] })}>
           <option value="">Seleccionar actividad</option>{Object.entries(CREDIT_ACTIVITY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
-        <label>Cantidad de clases manuales<input aria-label="Cantidad de clases manuales" className={controlClass} type="number" min="1" step="1" value={draft.quantity} onChange={event => setDraft({ ...draft, quantity: event.target.value })} /></label>
+        <label>Cantidad de clases manuales<input aria-label="Cantidad de clases manuales" className={controlClass} type="number" min="1" step="1" value={draft.quantity} onChange={event => setDraft({ ...draft, quantity: event.target.value })} />{creditCeiling && <span role="alert" className="mt-1 block text-[12px] text-[#9C4235]">{creditCeiling}</span>}</label>
         <p>{draft.mode === 'reconcile_legacy' ? `Indique las ${legacyBalance ?? 'desconocido'} clases anteriores completas, la actividad y las fechas.` : 'Indique la cantidad, la actividad y las fechas.'}</p>
         <label>Inicio del crédito manual<DateField aria-label="Inicio del crédito manual" className={controlClass} value={draft.startsOn} onChange={startsOn => setDraft({ ...draft, startsOn })} /></label>
         <label>Fin del crédito manual<DateField aria-label="Fin del crédito manual" className={controlClass} value={draft.endsOn} onChange={endsOn => setDraft({ ...draft, endsOn })} /></label>
@@ -360,6 +361,8 @@ const StudentList: React.FC<StudentListProps> = ({
   const [pendingDuplicate, setPendingDuplicate] = useState<Student | null>(null);
   const [pendingPaymentConfirm, setPendingPaymentConfirm] = useState(false);
   const skipDuplicateCheck = useRef(false);
+  const skipPastExpiry = useRef(false);
+  const [pendingPastExpiry, setPendingPastExpiry] = useState(false);
   const [form, setForm] = useState({
     name: '',
     surname: '',
@@ -539,6 +542,15 @@ const StudentList: React.FC<StudentListProps> = ({
         return;
       }
     }
+    if (form.expiryDate && form.expiryDate < '2000-01-01') {
+      setFieldErrors({ notes: 'La fecha «Válido hasta» no puede ser anterior al año 2000.' });
+      return;
+    }
+    if (form.expiryDate && form.expiryDate < today && !skipPastExpiry.current) {
+      setPendingPastExpiry(true);
+      return;
+    }
+    skipPastExpiry.current = false;
     if (!skipDuplicateCheck.current) {
       const duplicate = duplicateStudentContact({ id: editingStudent?.id, email: form.email, phone: form.phone }, students);
       if (duplicate) {
@@ -907,7 +919,7 @@ const StudentList: React.FC<StudentListProps> = ({
                 </div>
               </fieldset>}
                </>}
-              <label className="block text-[12px] font-medium text-[#7B3F22]">Válido hasta<DateField disabled={managedEdit || (!editingStudent && form.studentCategory === 'membresia')} value={form.expiryDate} onChange={expiryDate => setForm({ ...form, expiryDate })} aria-label="Fecha de vencimiento de membresía" className="mt-1 h-10 w-full max-w-xs px-2.5 bg-white border border-[#E7B899] rounded-md text-[13px] text-[#7B3F22] outline-none focus:border-[#C68952] disabled:cursor-not-allowed disabled:opacity-60" /><span className="mt-1 block text-[11px] text-[#8B6B5E]">{form.studentCategory === 'membresia' ? 'El período de membresía incluye este día. Un inicio el 21/11 es válido hasta el 20/12.' : 'El día indicado está incluido.'}</span></label>
+              <label className="block text-[12px] font-medium text-[#7B3F22]">Válido hasta<DateField disabled={managedEdit || (!editingStudent && form.studentCategory === 'membresia')} value={form.expiryDate} onChange={expiryDate => setForm({ ...form, expiryDate })} aria-label="Fecha de vencimiento de membresía" className="mt-1 h-10 w-full max-w-xs px-2.5 bg-white border border-[#E7B899] rounded-md text-[13px] text-[#7B3F22] outline-none focus:border-[#C68952] disabled:cursor-not-allowed disabled:opacity-60" /><span className="mt-1 block text-[11px] text-[#8B6B5E]">{form.studentCategory === 'membresia' ? 'El período de membresía incluye este día. Un inicio el 21/11 es válido hasta el 20/12.' : 'El día indicado está incluido.'}</span>{fieldErrors.notes && <span role="alert" className="mt-1 block text-[12px] text-[#9C4235]">{fieldErrors.notes}</span>}</label>
               {!editingStudent && <section className="border-t border-[#E6D8CB] pt-3"><h4 className="text-[14px] font-bold text-[#7B3F22] mb-3">Observaciones internas</h4><textarea value={form.observations} onChange={(e) => setForm({ ...form, observations: e.target.value })} placeholder="Preferencias, nivel o avisos relevantes" aria-label="Observaciones internas" className="w-full min-h-[120px] p-3 bg-white border border-[#DDBFA4] rounded-md text-[13px] text-[#7B3F22] placeholder:text-[#8B6B5E] outline-none resize-y focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/15" /></section>}
               {managedEdit && <p className="text-sm">Use las acciones de período para cambiar el plan, las fechas, las clases o el pago.</p>}
             </div>
@@ -991,8 +1003,18 @@ const StudentList: React.FC<StudentListProps> = ({
           <div className="absolute bottom-0 left-0 right-0 px-4 sm:px-7 py-3 bg-[#FDFBF9]/95 backdrop-blur border-t border-[#E6D8CB] flex items-center justify-end gap-3 shrink-0 z-10"><button type="button" onClick={() => setShowModal(false)} className="h-10 px-3 text-[11px] font-bold uppercase tracking-[0.1em] text-[#8B6B5E] hover:text-[#7B3F22]">Cancelar</button><button onClick={handleSubmit} disabled={isSubmitting} className="h-10 px-4 sm:px-5 bg-[#7B3F22] text-white rounded-md text-[11px] font-bold uppercase tracking-[0.1em] hover:bg-[#63321C] transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? 'Guardando...' : (editingStudent ? 'Guardar cambios' : 'Guardar alumno')}</button></div>
         </div>
       </div>}
+        <ConfirmModal isOpen={pendingPastExpiry} title="La vigencia ya pasó" message={`«Válido hasta» es ${formatDate(form.expiryDate)}. Puede guardarla si esa fecha es correcta.`} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipPastExpiry.current = true; setPendingPastExpiry(false); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingPastExpiry(false)} />
         <ConfirmModal isOpen={!!pendingDuplicate} title="Contacto ya registrado" message={pendingDuplicate ? duplicateContactMessage('alumno', personLabel(pendingDuplicate), form.email && pendingDuplicate.email && form.email.trim().toLocaleLowerCase('es-ES') === pendingDuplicate.email.trim().toLocaleLowerCase('es-ES') ? form.email : undefined, form.phone && pendingDuplicate.phone && form.phone.replace(/\s/g, '') === pendingDuplicate.phone.replace(/\s/g, '') ? form.phone : form.phone || form.email) : ''} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipDuplicateCheck.current = true; setPendingDuplicate(null); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingDuplicate(null)} />
-        <ConfirmModal isOpen={pendingPaymentConfirm} title="¿Confirmar pago?" message={liveEditingStudent ? `Va a confirmar el pago${liveEditingStudent.price ? ` de ${liveEditingStudent.price} €` : ''}${liveEditingStudent.membershipActivatedAt || liveEditingStudent.expiryDate ? ` del período ${liveEditingStudent.membershipActivatedAt ? formatDate(liveEditingStudent.membershipActivatedAt) : 'sin inicio'} — ${liveEditingStudent.expiryDate ? formatDate(liveEditingStudent.expiryDate) : 'sin vencimiento'}` : ''}.` : 'Va a confirmar el pago.'} confirmText="Confirmar pago" isDestructive={false} onConfirm={() => { setPendingPaymentConfirm(false); void confirmVisiblePayment(); }} onCancel={() => setPendingPaymentConfirm(false)} />
+        <ConfirmModal isOpen={pendingPaymentConfirm} title="¿Confirmar pago?" message={(() => {
+          if (!liveEditingStudent) return 'Va a confirmar el pago.';
+          const periodId = selectConfirmablePaymentPeriodId(liveEditingStudent);
+          const period = liveEditingStudent.membershipPeriods?.find(item => item.id === periodId);
+          const amount = period?.price ?? liveEditingStudent.price;
+          const start = period?.startsOn;
+          const end = period?.endsOn;
+          const when = start || end ? ` del período ${start ? formatDate(start) : 'sin inicio'} — ${end ? formatDate(end) : 'sin vencimiento'}` : '';
+          return `Va a confirmar el pago${amount ? ` de ${amount} €` : ''}${when}.`;
+        })()} confirmText="Confirmar pago" isDestructive={false} onConfirm={() => { setPendingPaymentConfirm(false); void confirmVisiblePayment(); }} onCancel={() => setPendingPaymentConfirm(false)} />
         <ConfirmModal isOpen={!!pendingCategory} title="¿Cambiar categoría?" message={`Vas a cambiar este alumno a ${pendingCategory ? studentCategoryLabel(pendingCategory) : ''}. Se ajustarán sus clases y la renovación automática.`} confirmText="Cambiar categoría" isDestructive={false} onConfirm={() => { if (pendingCategory) applyCategoryChange(pendingCategory); }} onCancel={() => setPendingCategory(null)} />
         <ConfirmModal isOpen={!!pendingMembershipTier} title="¿Cambiar nivel?" message={`Vas a cambiar la membresía a ${pendingMembershipTier ? MEMBERSHIP_PLANS[pendingMembershipTier].label : ''}. Se actualizarán el precio y las clases contratadas.`} confirmText="Cambiar nivel" isDestructive={false} onConfirm={() => { if (pendingMembershipTier) applyMembershipTierChange(pendingMembershipTier); }} onCancel={() => setPendingMembershipTier(null)} />
         <ConfirmModal isOpen={!!studentToArchive} title="¿Archivar alumno?" message="El alumno dejará de aparecer entre los activos. Podrás reactivarlo con la acción Reactivar alumno manualmente, sin renovar ni confirmar un pago." confirmText="Archivar" isDestructive={false} onConfirm={async () => { if (studentToArchive && !isSubmitting) { setIsSubmitting(true); try { await onUpdate(studentToArchive, { archivedAt: getWorkshopDate() }); setStudentToArchive(null); setShowModal(false); setEditingStudent(null); } catch (error: any) { showError(error.message || 'No se pudo archivar.'); } finally { setIsSubmitting(false); } } }} onCancel={() => setStudentToArchive(null)} />

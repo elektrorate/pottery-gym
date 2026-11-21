@@ -3,7 +3,7 @@ import { includesFolded, compareEs } from '../utils/textSearch';
 import { lengthError, LIMITS } from '../utils/fieldLimits';
 import { duplicateContactMessage, duplicateTeacherContact, personLabel } from '../utils/duplicateContact';
 import { mapUserFacingError } from '../utils/userFacingError';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Teacher, ClassSession } from '../types';
 import { AdvancedDetails } from './shared/AdvancedDetails';
@@ -12,7 +12,7 @@ import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
 import { activityTypeLabel, sessionTypeLabel } from '../utils/classTypeLabels';
 import { pluralize } from '../utils/pluralize';
-import { teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
+import { sessionAssignedToTeacher, teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
 import { formatDate, formatTime } from '../utils/dateFormat';
 import { presentDisplayName, presentPersonName } from '../utils/displayName';
 import { emailError, phoneError } from '../utils/contactValidation';
@@ -42,6 +42,13 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingTeacherDuplicate, setPendingTeacherDuplicate] = useState<Teacher | null>(null);
   const skipTeacherDuplicate = useRef(false);
+
+  useEffect(() => {
+    if (!showModal || isSubmitting || pendingTeacherDuplicate || teacherToDelete) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowModal(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showModal, isSubmitting, pendingTeacherDuplicate, teacherToDelete]);
 
   const filteredTeachers = useMemo(() => {
     return [...teachers].filter(t => includesFolded(`${t.name} ${t.surname || ''} ${t.specialty || ''} ${t.email || ''} ${t.phone || ''}`, searchQuery))
@@ -303,10 +310,9 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                 description={`Eliminar a ${presentPersonName(editingTeacher.name, editingTeacher.surname)} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}
                 actionLabel="Eliminar profesor"
                 onAction={() => {
-                  const scheduled = teacherSessions(sessions, editingTeacher.id, false);
-                  const substitutions = sessions.filter(session => session.teacherSubstituteId === editingTeacher.id && session.teacherId !== editingTeacher.id && !session.completedAt);
-                  if (scheduled.length || substitutions.length) {
-                    showError(`No se puede eliminar todavía: hay ${scheduled.length} ${scheduled.length === 1 ? 'sesión programada' : 'sesiones programadas'}${substitutions.length ? ` y ${substitutions.length} ${substitutions.length === 1 ? 'reemplazo' : 'reemplazos'}` : ''}. Reasigne esas clases antes de borrar la ficha.`);
+                  const linked = sessions.filter(session => sessionAssignedToTeacher(session, editingTeacher.id));
+                  if (linked.length) {
+                    showError(`No se puede eliminar a ${presentPersonName(editingTeacher.name, editingTeacher.surname)}: tiene ${linked.length} ${linked.length === 1 ? 'clase vinculada' : 'clases vinculadas'}, incluidas las ya concluidas. Reasigne esas clases antes de borrar la ficha.`);
                     return;
                   }
                   setTeacherToDelete(editingTeacher.id);

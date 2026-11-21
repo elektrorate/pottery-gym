@@ -20,7 +20,8 @@ import { AdvancedDetails, isInternalId } from './shared/AdvancedDetails';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
-import { presentDisplayName, presentPersonName } from '../utils/displayName';
+import { presentDisplayName, presentPersonName, presentPlanName } from '../utils/displayName';
+import { isPaymentPendingToday } from '../utils/paymentPending';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
 import { defaultSessionFundingLabel, studentBalanceLabel, studentEffectiveRemainingClasses, studentMatchesSessionAudience } from '../utils/studentPresentation';
 import { pluralWord, sesionLabel } from '../utils/pluralize';
@@ -124,8 +125,26 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const acknowledgedOverlap = useRef(false);
   const acknowledgedPast = useRef(false);
   const acknowledgedCategory = useRef(false);
+  const clearAcknowledgements = () => {
+    acknowledgedOverlap.current = false;
+    acknowledgedPast.current = false;
+    acknowledgedCategory.current = false;
+  };
+  useEffect(() => {
+    if (!showSessionModal) clearAcknowledgements();
+  }, [showSessionModal]);
   const [refreshConflict, setRefreshConflict] = useState<{ kind: Exclude<SaveAttempt['kind'], 'recovery'>; id: string; revision?: number } | null>(null);
   const formLocked = readOnly || isSubmitting || !!pendingSave || !!refreshConflict;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || isSubmitting) return;
+      if (overlapWarning || pastDateWarning || categoryWarning || cancelPrompt) return;
+      if (showAttendanceModal) { setShowAttendanceModal(false); return; }
+      if (showSessionModal && !formLocked) { clearAcknowledgements(); setShowSessionModal(false); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isSubmitting, overlapWarning, pastDateWarning, categoryWarning, cancelPrompt, showAttendanceModal, showSessionModal, formLocked]);
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [businessForms, setBusinessForms] = useState<Record<string, { reason: string; kind: 'membership_override' | 'no_credit'; cancellationReason: string; waiverReason: string }>>({});
   const policy2 = attendanceSession?.attendancePolicyVersion === 2;
@@ -334,6 +353,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
   // Abrir modal de Edición/Creación de Sesión
   const handleOpenSessionModal = (session?: ClassSession, onlyRoster = false) => {
+    clearAcknowledgements();
     setRosterOnly(onlyRoster);
     if (formLocked) return;
     if (restorePendingOperation(session)) return;
@@ -465,6 +485,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
         setIsEditingAttendance(false);
         setAttendanceEditBaseline(null);
       } else {
+        clearAcknowledgements();
         setShowSessionModal(false);
       }
     } catch (error: any) {
@@ -477,7 +498,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       if (rolledBack && error?.code === '40001' && attempt.id) {
         setRefreshConflict({ kind, id: attempt.id, revision });
       }
-      setSaveError(`${mapUserFacingError(error, sessionBusinessErrorMessage(error))}${rolledBack
+      const mapped = mapUserFacingError(error, sessionBusinessErrorMessage(error));
+      const blockedNames = attempt.kind === 'attendance' && attempt.updates.completedAt && attendanceSession?.studentIds
+        ? attendanceSession.studentIds.filter(id => {
+            if (isCancelled(attendanceSession, id)) return false;
+            const status = getAttendanceStatus(attendanceSession, id);
+            if (status === 'pending') return false;
+            const person = students.find(student => student.id === id);
+            return !!person && isPaymentPendingToday(person, today);
+          }).map(id => presentDisplayName(getStudentName(id, attendanceSession)))
+        : [];
+      const named = blockedNames.length ? ` Afecta a: ${blockedNames.join(', ')}.` : '';
+      setSaveError(`${mapped}${named}${rolledBack
         ? error.code === '40001' ? ' La sesión cambió. Revisa los datos recargados antes de guardar.' : ''
         : ' Resultado sin confirmar. Reintenta los mismos datos antes de editar o cerrar.'}`);
     } finally {
@@ -1639,7 +1671,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                 {s.groupName && <span className="ml-1.5 text-[11px] font-normal opacity-65">{s.groupName}</span>}
                               </span>
                               <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
-                                {cancelled ? 'Cancelada' : isTemporary ? studentCategoryLabel(cat) : getStudentLifecycle(s, today) === 'active' ? 'Activa' : getStudentLifecycle(s, today) === 'expired' ? 'Vencida' : 'Pendiente'}
+                                {cancelled ? 'Cancelada' : isTemporary ? studentCategoryLabel(cat) : (presentPlanName(s.membershipTier) || 'Plan por confirmar')}
                               </span>
                             </button>
                             <AdvancedDetails className="shrink-0"><p>Identificador del alumno: {s.id}</p></AdvancedDetails>
@@ -1751,10 +1783,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
           </section>
         </div>
       )}
-    {detailsDialog && <SessionDetailsDialog session={detailsDialog.session} mode={detailsDialog.mode} teachers={[...teachers].sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname)))} schedule={workshopSchedule} exceptions={workshopScheduleExceptions} readOnly={readOnly} onSave={onUpdateSession} onClose={() => setDetailsDialog(null)}/>}
-    <ConfirmModal isOpen={!!overlapWarning} title="El profesor ya tiene clase" message={overlapWarning} confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedOverlap.current = true; setOverlapWarning(''); void handleSessionSubmit(); }} onCancel={() => setOverlapWarning('')} />
-    <ConfirmModal isOpen={pastDateWarning} title="La fecha ya pasó" message="Va a crear una sesión en una fecha pasada. Después no podrá eliminarla; solo podrá corregir la asistencia." confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedPast.current = true; setPastDateWarning(false); void handleSessionSubmit(); }} onCancel={() => setPastDateWarning(false)} />
-    <ConfirmModal isOpen={!!categoryWarning} title="La actividad no coincide" message={categoryWarning} confirmText="Inscribir de todos modos" isDestructive={false} onConfirm={() => { acknowledgedCategory.current = true; setCategoryWarning(''); void handleSessionSubmit(); }} onCancel={() => setCategoryWarning('')} />
+    {detailsDialog && <SessionDetailsDialog session={detailsDialog.session} mode={detailsDialog.mode} sessions={sessions} teachers={[...teachers].sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname)))} schedule={workshopSchedule} exceptions={workshopScheduleExceptions} readOnly={readOnly} onSave={onUpdateSession} onClose={() => setDetailsDialog(null)}/>}
+    <ConfirmModal isOpen={!!overlapWarning} title="El profesor ya tiene clase" message={overlapWarning} confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedOverlap.current = true; setOverlapWarning(''); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setOverlapWarning(''); }} />
+    <ConfirmModal isOpen={pastDateWarning} title="La fecha ya pasó" message="Va a crear una sesión en una fecha pasada. Después no podrá eliminarla; solo podrá corregir la asistencia." confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedPast.current = true; setPastDateWarning(false); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setPastDateWarning(false); }} />
+    <ConfirmModal isOpen={!!categoryWarning} title="La actividad no coincide" message={categoryWarning} confirmText="Inscribir de todos modos" isDestructive={false} onConfirm={() => { acknowledgedCategory.current = true; setCategoryWarning(''); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setCategoryWarning(''); }} />
     <ConfirmModal isOpen={!!cancelPrompt} title="¿Cancelar reserva?" message={cancelPrompt?.message || ''} confirmText="Cancelar reserva" isDestructive onConfirm={() => { const prompt = cancelPrompt; setCancelPrompt(null); if (prompt) void handleBusinessOperation(prompt.studentId, 'cancel_reservation'); }} onCancel={() => setCancelPrompt(null)} />
     </div>
   );

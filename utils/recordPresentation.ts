@@ -23,8 +23,15 @@ export const getGiftCardLifecycle = (card: GiftCard, today: string, expiryDate?:
 
 export const sessionBusinessErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String((error as any)?.message || error || 'No se pudo guardar la sesión.');
-  if (/No-credit exception cannot bypass available credit/i.test(message) || /Original scalar pack payment is unpaid or unknown/i.test(message)) {
-    return 'El alumno todavía tiene clases del bono disponibles, pero el pago del bono está pendiente. Confirme el pago o use «Descontar una clase».';
+  if (/No-credit exception cannot bypass available credit/i.test(message)) {
+    const reason = message.split(':').slice(1).join(':').toLowerCase();
+    if (reason.includes('payment is unpaid or unknown') || reason.includes('unpaid or unknown')) {
+      return 'El alumno todavía tiene clases disponibles, pero el pago está pendiente. Confirme el pago o use «Descontar una clase».';
+    }
+    return 'El alumno aún tiene clases disponibles; use Descontar una clase.';
+  }
+  if (/Original scalar pack payment is unpaid or unknown/i.test(message)) {
+    return 'El alumno todavía tiene clases disponibles, pero el pago está pendiente. Confirme el pago o use «Descontar una clase».';
   }
   if (/Membership override requires known original positive credit/i.test(message)) {
     return 'No se puede descontar la clase: la membresía no tiene un saldo positivo conocido. Revise el período o deje asistir sin descontar.';

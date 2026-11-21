@@ -768,6 +768,7 @@ const SettingsView: React.FC = () => {
             <WorkshopRecoveryCopy />
 
             {/* Individual */}
+            <p className="mt-3 text-[12px] leading-relaxed text-neutral-textHelper">«Sesiones del respaldo» cuenta las {sessions.length} sesiones cargadas, feriados incluidos, y coincide con la hoja Excel. En Horario, la lista del periodo no cuenta feriados y puede reducirse con los filtros de actividad y disponibilidad.</p>
             <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 mt-3">
               {[
                 { key: 'students' as const, label: 'Alumnos', count: students.length, color: 'text-[#9E3B2B] bg-[#F8E1DA] border-[#EFC9BE]' },

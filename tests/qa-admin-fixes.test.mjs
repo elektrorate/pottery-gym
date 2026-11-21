@@ -83,7 +83,8 @@ test('search ignores accents and case, including ñ', () => {
 });
 
 test('rpc errors become spanish and unknown sql does not leak', () => {
-  assert.match(mapUserFacingError(new Error('No-credit exception cannot bypass available credit: Original scalar pack payment is unpaid or unknown')), /pago del bono está pendiente/);
+  assert.match(mapUserFacingError(new Error('No-credit exception cannot bypass available credit: Original scalar pack payment is unpaid or unknown')), /pago está pendiente/);
+  assert.equal(mapUserFacingError(new Error('No-credit exception cannot bypass available credit: paid membership still has classes')), 'El alumno aún tiene clases disponibles; use Descontar una clase.');
   assert.match(mapUserFacingError(new Error('violates check constraint "sessions_check"')), /No se pudo guardar/);
   assert.equal(mapUserFacingError(new Error('El nombre es obligatorio.')), 'El nombre es obligatorio.');
 });
