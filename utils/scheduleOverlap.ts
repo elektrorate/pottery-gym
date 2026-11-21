@@ -74,6 +74,23 @@ export type TeacherSlot = TimeRange & {
 const peopleOf = (slot: TeacherSlot) =>
   [...new Set([slot.teacherId, slot.teacherSubstituteId, ...(slot.blockTeacherIds || [])].filter((id): id is string => !!id))];
 
+export type RoomSlot = TimeRange & {
+  id: string;
+  date: string;
+  classType?: string;
+  label: string;
+};
+
+/** Same class type is the same room. A different teacher there still overlaps. */
+export const findRoomOverlaps = (candidate: RoomSlot, existing: RoomSlot[]) => {
+  if (!candidate.classType || candidate.classType === 'feriado') return [];
+  return existing.filter(slot => {
+    if (slot.id === candidate.id || slot.date !== candidate.date) return false;
+    if (!slot.classType || slot.classType === 'feriado' || slot.classType !== candidate.classType) return false;
+    return rangesOverlap(candidate, slot);
+  });
+};
+
 export const findTeacherOverlaps = (candidate: TeacherSlot, existing: TeacherSlot[]) => {
   const people = new Set(peopleOf(candidate));
   if (!people.size) return [];

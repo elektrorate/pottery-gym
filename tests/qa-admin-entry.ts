@@ -1,7 +1,7 @@
 export { parseSpanishQuantity } from '../utils/quantityInput';
-export { findScheduleOverlaps, findTeacherOverlaps, layoutOverlapping, rangesOverlap, visibleHourRange } from '../utils/scheduleOverlap';
+export { findRoomOverlaps, findScheduleOverlaps, findTeacherOverlaps, layoutOverlapping, rangesOverlap, visibleHourRange } from '../utils/scheduleOverlap';
 export { foldAccents, includesFolded } from '../utils/textSearch';
-export { membershipPeriodEnd } from '../utils/studentLifecycle';
+export { membershipPeriodEnd, paymentConfirmMessage } from '../utils/studentLifecycle';
 export { isPaymentPendingToday, scheduledRenewals } from '../utils/paymentPending';
 export { mapUserFacingError } from '../utils/userFacingError';
 export { inventoryAlertLabel, inventoryHealth } from '../utils/inventoryHealth';

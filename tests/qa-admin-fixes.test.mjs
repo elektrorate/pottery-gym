@@ -14,7 +14,7 @@ const loaded = await (async () => {
   const mod = await import(pathToFileURL(file).href);
   return { dir, mod };
 })();
-const { parseSpanishQuantity, findScheduleOverlaps, findTeacherOverlaps, layoutOverlapping, rangesOverlap, visibleHourRange, foldAccents, includesFolded, membershipPeriodEnd, isPaymentPendingToday, scheduledRenewals, mapUserFacingError, inventoryAlertLabel, inventoryHealth, lateCancellationOutcome, cancellationPreview, presentInitials, sessionsForStudent, positiveAmountError } = loaded.mod;
+const { parseSpanishQuantity, findRoomOverlaps, findScheduleOverlaps, findTeacherOverlaps, layoutOverlapping, rangesOverlap, visibleHourRange, foldAccents, includesFolded, membershipPeriodEnd, paymentConfirmMessage, isPaymentPendingToday, scheduledRenewals, mapUserFacingError, inventoryAlertLabel, inventoryHealth, lateCancellationOutcome, cancellationPreview, presentInitials, sessionsForStudent, positiveAmountError } = loaded.mod;
 test.after(() => rm(loaded.dir, { recursive: true, force: true }));
 
 const student = (overrides) => ({
@@ -74,6 +74,53 @@ test('teacher overlaps and side-by-side layout', () => {
     [{ id: 'class', date: '2026-11-21', startTime: '10:30', endTime: '12:00', label: 'Mesa', kind: 'session' }]
   );
   assert.equal(activityHits[0].label, 'Mesa');
+  const sameTeacherOtherType = findTeacherOverlaps(
+    { id: 'new', date: '2026-11-21', startTime: '10:00', endTime: '12:00', teacherId: 'ana', label: 'Mesa' },
+    [{ id: 'old', date: '2026-11-21', startTime: '10:00', endTime: '12:00', teacherId: 'ana', label: 'Torno' }]
+  );
+  assert.equal(sameTeacherOtherType.length, 1);
+  const otherTeacherSameRoom = findRoomOverlaps(
+    { id: 'new', date: '2026-11-21', startTime: '10:00', endTime: '12:00', classType: 'mesa', label: 'Mesa de Luis' },
+    [{ id: 'old', date: '2026-11-21', startTime: '10:30', endTime: '12:30', classType: 'mesa', label: 'Mesa de Ana' }]
+  );
+  assert.equal(otherTeacherSameRoom.length, 1);
+  assert.equal(findRoomOverlaps(
+    { id: 'new', date: '2026-11-21', startTime: '10:00', endTime: '12:00', classType: 'mesa', label: 'Mesa' },
+    [{ id: 'old', date: '2026-11-21', startTime: '10:00', endTime: '12:00', classType: 'torno', label: 'Torno' }]
+  ).length, 0);
+});
+
+test('payment confirmation names the amount and the period being confirmed', () => {
+  const membership = student({
+    price: 90,
+    effectivePeriodId: 'now',
+    membershipPeriods: [
+      { id: 'now', studentId: 's', price: 90, startsOn: '2026-11-21', endsOn: '2026-12-20', paymentStatus: 'pending' },
+      { id: 'next', studentId: 's', price: 120, startsOn: '2026-12-21', endsOn: '2027-01-20', paymentStatus: 'pending' }
+    ]
+  });
+  const current = paymentConfirmMessage(membership, 'now');
+  const renewal = paymentConfirmMessage(membership, 'next');
+  assert.match(current, /90 €/);
+  assert.match(current, /21\/11\/2026/);
+  assert.match(current, /20\/12\/2026/);
+  assert.doesNotMatch(current, /120 €/);
+  assert.match(renewal, /120 €/);
+  assert.match(renewal, /21\/12\/2026/);
+  assert.match(renewal, /20\/01\/2027/);
+  const bono = paymentConfirmMessage(student({
+    studentCategory: 'temporal', price: 120, membershipActivatedAt: '2026-11-21', expiryDate: '2026-12-20', paymentStatus: 'pending'
+  }));
+  assert.match(bono, /120 €/);
+  assert.match(bono, /válido desde/);
+  assert.match(bono, /21\/11\/2026/);
+  assert.match(bono, /20\/12\/2026/);
+  const group = paymentConfirmMessage(student({
+    studentCategory: 'grupo_temporal', price: 40, expiryDate: '2026-12-01', paymentStatus: 'pending'
+  }));
+  assert.match(group, /40 €/);
+  assert.match(group, /válido hasta/);
+  assert.match(group, /01\/12\/2026/);
 });
 
 test('search ignores accents and case, including ñ', () => {

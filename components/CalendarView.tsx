@@ -2,7 +2,7 @@ import SessionDetailsDialog from './SessionDetailsDialog';
 import { sessionBusinessErrorMessage } from '../utils/recordPresentation';
 import { showError, showSuccess } from '../context/toast';
 import { ConfirmModal } from './shared/ConfirmModal';
-import { findTeacherOverlaps, layoutOverlapping, visibleHourRange, type TeacherSlot } from '../utils/scheduleOverlap';
+import { findRoomOverlaps, findTeacherOverlaps, layoutOverlapping, visibleHourRange, type TeacherSlot } from '../utils/scheduleOverlap';
 import { getScheduleIntervalsForDate } from '../utils/workshopSchedule';
 import { lateCancellationOutcome, cancellationPreview } from '../utils/lateCancellationCopy';
 import { compareEs } from '../utils/textSearch';
@@ -702,7 +702,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
           && s.classType === sessionForm.classType;
       });
       if (duplicate) {
-        showError(`Ya existe una sesión con el mismo horario y tipo el ${showDate(date)}.`);
+        showError(`Ya existe una sesión con el mismo horario y tipo el ${showDate(date)}. No se puede crear otra igual.`);
         return;
       }
     }
@@ -717,15 +717,27 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       label: `${getSessionLabel(session)} · ${formatTime(session.startTime)}–${formatTime(session.endTime)} · ${getTeacherName(session.teacherId)}`
     }));
     if (!acknowledgedOverlap.current && sessionForm.classType !== 'feriado') {
-      const hits = repeatDates.flatMap(date => findTeacherOverlaps({
-        id: editingSessionId || 'nueva', date, startTime: sessionForm.startTime, endTime: sessionForm.endTime,
+      const candidate = {
+        id: editingSessionId || 'nueva', date: '', startTime: sessionForm.startTime, endTime: sessionForm.endTime,
         teacherId: sessionForm.classType === 'mixto' ? undefined : sessionForm.teacherId || undefined,
         blockTeacherIds: sessionForm.classType === 'mixto' ? sessionForm.activityBlocks.map(block => block.teacherId).filter((id): id is string => !!id) : [],
+        classType: sessionForm.classType,
         label: 'Esta sesión'
-      }, teacherSlots));
-      if (hits.length) {
-        const names = [...new Set(hits.map(hit => hit.label))].slice(0, 4).join('; ');
-        setOverlapWarning(`El profesor ya tiene otra clase en ese horario: ${names}. Un mismo profesor no debería impartir dos sesiones a la vez.`);
+      };
+      const roomSlots = sessions.filter(session => session.classType !== 'feriado').map(session => ({
+        id: session.id, date: session.date, startTime: session.startTime, endTime: session.endTime,
+        classType: session.classType,
+        label: `${getSessionLabel(session)} · ${formatTime(session.startTime)}–${formatTime(session.endTime)} · ${getTeacherName(session.teacherId)}`
+      }));
+      const teacherHits = repeatDates.flatMap(date => findTeacherOverlaps({ ...candidate, date }, teacherSlots));
+      const roomHits = repeatDates.flatMap(date => findRoomOverlaps({ ...candidate, date }, roomSlots))
+        .filter(hit => !teacherHits.some(teacherHit => teacherHit.id === hit.id));
+      if (teacherHits.length || roomHits.length) {
+        const teacherNames = [...new Set(teacherHits.map(hit => hit.label))].slice(0, 4).join('; ');
+        const roomNames = [...new Set(roomHits.map(hit => hit.label))].slice(0, 4).join('; ');
+        const teacherSentence = teacherHits.length ? `El profesor ya tiene otra clase en ese horario: ${teacherNames}. Un mismo profesor no debería impartir dos sesiones a la vez.` : '';
+        const roomSentence = roomHits.length ? `Esa sala ya tiene otra sesión del mismo tipo: ${roomNames}.` : '';
+        setOverlapWarning(`${teacherSentence} ${roomSentence} Puede crearla de todos modos.`.replace(/\s+/g, ' ').trim());
         return;
       }
     }
@@ -1784,7 +1796,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
         </div>
       )}
     {detailsDialog && <SessionDetailsDialog session={detailsDialog.session} mode={detailsDialog.mode} sessions={sessions} teachers={[...teachers].sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname)))} schedule={workshopSchedule} exceptions={workshopScheduleExceptions} readOnly={readOnly} onSave={onUpdateSession} onClose={() => setDetailsDialog(null)}/>}
-    <ConfirmModal isOpen={!!overlapWarning} title="El profesor ya tiene clase" message={overlapWarning} confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedOverlap.current = true; setOverlapWarning(''); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setOverlapWarning(''); }} />
+    <ConfirmModal isOpen={!!overlapWarning} title="Ese horario se solapa" message={overlapWarning} confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedOverlap.current = true; setOverlapWarning(''); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setOverlapWarning(''); }} />
     <ConfirmModal isOpen={pastDateWarning} title="La fecha ya pasó" message="Va a crear una sesión en una fecha pasada. Después no podrá eliminarla; solo podrá corregir la asistencia." confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedPast.current = true; setPastDateWarning(false); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setPastDateWarning(false); }} />
     <ConfirmModal isOpen={!!categoryWarning} title="La actividad no coincide" message={categoryWarning} confirmText="Inscribir de todos modos" isDestructive={false} onConfirm={() => { acknowledgedCategory.current = true; setCategoryWarning(''); void handleSessionSubmit(); }} onCancel={() => { clearAcknowledgements(); setCategoryWarning(''); }} />
     <ConfirmModal isOpen={!!cancelPrompt} title="¿Cancelar reserva?" message={cancelPrompt?.message || ''} confirmText="Cancelar reserva" isDestructive onConfirm={() => { const prompt = cancelPrompt; setCancelPrompt(null); if (prompt) void handleBusinessOperation(prompt.studentId, 'cancel_reservation'); }} onCancel={() => setCancelPrompt(null)} />

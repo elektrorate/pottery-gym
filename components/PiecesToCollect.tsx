@@ -9,6 +9,7 @@ import { EmptyState } from './shared/EmptyState';
 import DateField from './shared/DateField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
 import { presentDisplayName, presentPersonName } from '../utils/displayName';
+import { foldAccents, includesFolded } from '../utils/textSearch';
 import { formatDate, madridDateKey, weekRangeForDateKey } from '../utils/dateFormat';
 
 // ─── Category visual helpers ───
@@ -299,10 +300,11 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
     return Array.from(names).sort();
   }, [pieces, students]);
 
+  const pieceSearchText = (piece: CeramicPiece) => `${piece.owner} ${piece.description || ''} ${piece.notes || ''} ${piece.extraCommentary || ''}`;
+
   const suggestions = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    return ownerNames.filter(n => n.toLowerCase().includes(q)).slice(0, 8);
+    if (!searchQuery.trim()) return [];
+    return ownerNames.filter(name => includesFolded(name, searchQuery)).slice(0, 8);
   }, [ownerNames, searchQuery]);
 
   // ─── Separate active vs history pieces ───
@@ -313,11 +315,8 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   const filteredPieces = useMemo(() => {
     return activePieces.filter(p => {
       if (filterStatus !== 'all' && p.status !== filterStatus) return false;
-      if (selectedOwner && p.owner.toUpperCase() !== selectedOwner.toUpperCase()) return false;
-      if (searchQuery.trim() && !selectedOwner) {
-        const q = searchQuery.trim().toLowerCase();
-        if (!`${p.owner} ${p.description || ''} ${p.notes || ''}`.toLocaleLowerCase('es-ES').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return false;
-      }
+      if (selectedOwner && foldAccents(p.owner) !== foldAccents(selectedOwner)) return false;
+      if (searchQuery.trim() && !includesFolded(pieceSearchText(p), searchQuery)) return false;
       if (categoryFilter !== 'todos') {
         const student = getStudentForPiece(p);
         const cat = student?.studentCategory || 'membresia';
@@ -335,11 +334,8 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   // ─── Filtered HISTORY pieces ───
   const filteredHistoryPieces = useMemo(() => {
     return historyPieces.filter(p => {
-      if (selectedOwner && p.owner.toUpperCase() !== selectedOwner.toUpperCase()) return false;
-      if (searchQuery.trim() && !selectedOwner) {
-        const q = searchQuery.trim().toLowerCase();
-        if (!`${p.owner} ${p.description || ''} ${p.notes || ''}`.toLocaleLowerCase('es-ES').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return false;
-      }
+      if (selectedOwner && foldAccents(p.owner) !== foldAccents(selectedOwner)) return false;
+      if (searchQuery.trim() && !includesFolded(pieceSearchText(p), searchQuery)) return false;
       if (categoryFilter !== 'todos') {
         const student = getStudentForPiece(p);
         const cat = student?.studentCategory || 'membresia';
@@ -413,10 +409,15 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
         <svg className="w-4 h-4 text-neutral-textHelper ml-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
         <input
           value={searchQuery}
-          onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); if (!e.target.value.trim()) setSelectedOwner(null); }}
+          onChange={(e) => {
+            const value = e.target.value;
+            setSearchQuery(value);
+            setShowSuggestions(true);
+            if (!value.trim() || (selectedOwner && foldAccents(value) !== foldAccents(selectedOwner))) setSelectedOwner(null);
+          }}
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-          placeholder="Buscar por nombre de alumno..."
+          placeholder="Buscar por alumno o pieza"
           className="w-full min-h-[36px] px-3 bg-transparent text-[12px] text-neutral-textMain outline-none placeholder:text-neutral-textHelper"
         />
         {(searchQuery || selectedOwner) && (
@@ -640,7 +641,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
           <EmptyState
             title={pieceFiltersActive ? 'Ninguna pieza coincide con estos filtros' : 'Todavía no hay piezas en proceso'}
             body={pieceFiltersActive
-              ? (selectedOwner ? `${selectedOwner} no tiene piezas en proceso con estos filtros.` : 'Prueba a quitar el estado, la fecha o el nombre.')
+              ? (selectedOwner ? `${selectedOwner} no tiene piezas en proceso con estos filtros.` : 'Prueba a quitar el estado, la fecha, el alumno o el texto de la pieza.')
               : 'Registra la primera obra para seguir la quema, el esmalte y la recogida.'}
             actionLabel={pieceFiltersActive ? undefined : 'Añadir la primera pieza'}
             onAction={pieceFiltersActive ? undefined : handleCreateClick}

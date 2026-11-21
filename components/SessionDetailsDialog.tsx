@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ClassSession, Teacher, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
-import { findTeacherOverlaps } from '../utils/scheduleOverlap';
+import { findRoomOverlaps, findTeacherOverlaps } from '../utils/scheduleOverlap';
 import { formatDate, formatTime } from '../utils/dateFormat';
 import { presentPersonName } from '../utils/displayName';
 import { compareEs } from '../utils/textSearch';
@@ -34,19 +34,27 @@ export default function SessionDetailsDialog({ session, mode, sessions = [], tea
         const changed = form.date !== session.date || form.startTime !== session.startTime || form.endTime !== session.endTime;
         const conflict = changed && getScheduleConflictReason({ ...session, ...form }, schedule, exceptions);
         if (conflict) { setError(conflict + '. Revisa el horario del taller.'); return; }
-        const hits = findTeacherOverlaps({
-          id: session.id, date: form.date, startTime: form.startTime, endTime: form.endTime,
-          teacherId: session.teacherId, teacherSubstituteId: session.teacherSubstituteId,
-          blockTeacherIds: (session.activityBlocks || []).map(block => block.teacherId).filter((id): id is string => !!id),
-          label: 'Este horario'
-        }, sessions.filter(item => item.id !== session.id && item.classType !== 'feriado').map(item => ({
-          id: item.id, date: item.date, startTime: item.startTime, endTime: item.endTime,
+        const others = sessions.filter(item => item.id !== session.id && item.classType !== 'feriado');
+        const exact = others.some(item => item.date === form.date && item.startTime === form.startTime && item.endTime === form.endTime && item.classType === session.classType);
+        if (exact) { setError(`Ya existe una sesión con el mismo horario y tipo el ${formatDate(form.date)}. No se puede guardar otra igual.`); return; }
+        const slots = others.map(item => ({
+          id: item.id, date: item.date, startTime: item.startTime, endTime: item.endTime, classType: item.classType,
           teacherId: item.teacherId, teacherSubstituteId: item.teacherSubstituteId,
           blockTeacherIds: (item.activityBlocks || []).map(block => block.teacherId).filter((id): id is string => !!id),
           label: `${formatTime(item.startTime)}–${formatTime(item.endTime)}`
-        })));
-        if (hits.length && !overlapAck.current) {
-          setOverlapText(hits.map(hit => hit.label).join(', '));
+        }));
+        const candidate = {
+          id: session.id, date: form.date, startTime: form.startTime, endTime: form.endTime, classType: session.classType,
+          teacherId: session.teacherId, teacherSubstituteId: session.teacherSubstituteId,
+          blockTeacherIds: (session.activityBlocks || []).map(block => block.teacherId).filter((id): id is string => !!id),
+          label: 'Este horario'
+        };
+        const teacherHits = findTeacherOverlaps(candidate, slots);
+        const roomHits = findRoomOverlaps(candidate, slots).filter(hit => !teacherHits.some(teacherHit => teacherHit.id === hit.id));
+        if ((teacherHits.length || roomHits.length) && !overlapAck.current) {
+          const teacherSentence = teacherHits.length ? `El profesor ya tiene otra clase en ese horario: ${teacherHits.map(hit => hit.label).join(', ')}.` : '';
+          const roomSentence = roomHits.length ? `Esa sala ya tiene otra sesión del mismo tipo: ${roomHits.map(hit => hit.label).join(', ')}.` : '';
+          setOverlapText(`${teacherSentence} ${roomSentence} Puede guardarlo de todos modos.`.replace(/\s+/g, ' ').trim());
           return;
         }
       }
@@ -75,6 +83,6 @@ export default function SessionDetailsDialog({ session, mode, sessions = [], tea
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
       <div className="mt-5 flex justify-end gap-2"><button disabled={busy} type="button" onClick={onClose} className="min-h-10 rounded-lg border border-neutral-border px-3 text-sm">{locked ? 'Cerrar y conservar intento' : 'Cancelar'}</button><button disabled={busy || readOnly} type="submit" className="min-h-10 rounded-lg bg-brand px-4 text-sm font-semibold text-white">{busy ? 'Guardando…' : locked ? 'Reintentar el mismo guardado' : 'Guardar'}</button></div>
     </form>
-    <ConfirmModal isOpen={!!overlapText} title="El profesor ya tiene clase" message={`Ese horario coincide con: ${overlapText}.`} confirmText="Guardar de todos modos" isDestructive={false} onCancel={() => { overlapAck.current = false; setOverlapText(''); }} onConfirm={() => { overlapAck.current = true; setOverlapText(''); void submit({ preventDefault() {} } as React.FormEvent); }} />
+    <ConfirmModal isOpen={!!overlapText} title="Ese horario se solapa" message={overlapText} confirmText="Guardar de todos modos" isDestructive={false} onCancel={() => { overlapAck.current = false; setOverlapText(''); }} onConfirm={() => { overlapAck.current = true; setOverlapText(''); void submit({ preventDefault() {} } as React.FormEvent); }} />
   </div>;
 }
