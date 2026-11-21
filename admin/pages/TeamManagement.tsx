@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { supabase } from '../../supabaseClient';
 import { Button, Input, Modal } from '../components/UI';
+import { presentDisplayName } from '../../utils/displayName';
 
 /* ───────────────────────────────────────────────
    Tipos auxiliares
@@ -300,7 +301,7 @@ export const TeamManagement: React.FC = () => {
                 action: 'delete',
                 staffUserId: deleteMember.id
             });
-            showToast(`${deleteMember.full_name} eliminado correctamente`, 'success');
+            showToast(`${presentDisplayName(deleteMember.full_name)} eliminado correctamente`, 'success');
             setDeleteMember(null);
             setDeleteConfirmText('');
             await loadTeam();
@@ -438,10 +439,10 @@ export const TeamManagement: React.FC = () => {
                             <div key={member.id}
                                 className="flex flex-col md:flex-row md:items-center gap-4 p-4 md:p-6 bg-neutral-sec hover:bg-neutral-alt rounded-2xl transition-colors group">
                                 <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 bg-white">
-                                    <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${member.email}`} alt={member.full_name} className="w-full h-full" />
+                                    <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${member.email}`} alt={presentDisplayName(member.full_name)} className="w-full h-full" />
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-[16px] font-semibold text-neutral-textMain truncate leading-tight">{member.full_name}</p>
+                                    <p className="text-[16px] font-semibold text-neutral-textMain truncate leading-tight">{presentDisplayName(member.full_name)}</p>
                                     <p className="text-[13px] text-neutral-textSec truncate mt-0.5">{member.email}</p>
                                     {member.phone && <p className="text-[13px] text-neutral-textSec mt-0.5">📞 {member.phone}</p>}
                                     <div className="flex flex-wrap gap-2 mt-2">
@@ -491,7 +492,7 @@ export const TeamManagement: React.FC = () => {
                             <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${editMember?.email}`} alt="" className="w-full h-full" />
                         </div>
                         <div>
-                            <p className="text-[15px] font-semibold text-neutral-textMain">{editMember?.full_name}</p>
+                            <p className="text-[15px] font-semibold text-neutral-textMain">{editMember ? presentDisplayName(editMember.full_name) : ''}</p>
                             <p className="text-[13px] text-neutral-textSec">{editMember?.email} <span className="text-[12px] text-neutral-textHelper">(no editable)</span></p>
                         </div>
                     </div>
@@ -531,7 +532,7 @@ export const TeamManagement: React.FC = () => {
                             <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${deleteMember?.email}`} alt="" className="w-full h-full" />
                         </div>
                         <div>
-                            <p className="text-[15px] font-semibold text-neutral-textMain">{deleteMember?.full_name}</p>
+                            <p className="text-[15px] font-semibold text-neutral-textMain">{deleteMember ? presentDisplayName(deleteMember.full_name) : ''}</p>
                             <p className="text-[13px] text-neutral-textSec">{deleteMember?.email}</p>
                             <span className={`inline-block mt-1 px-2.5 py-1 rounded-lg text-[12px] font-semibold ${deleteMember?.role === 'tallerista' ? 'bg-white text-brand' : 'bg-white text-neutral-textMain'}`}>
                                 {roleLabel(deleteMember?.role || '')}

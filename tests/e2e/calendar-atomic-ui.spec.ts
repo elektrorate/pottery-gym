@@ -337,7 +337,7 @@ test('mobile homonyms, explicit funding and aligned snapshots remain usable', as
   await expect(sessionDialog(page)).toHaveCount(0);
   await fixture(page, 'remove-students');
   await openAttendance(page);
-  await expect(attendanceRow(page, memberId)).toContainText('alex perez');
+  await expect(attendanceRow(page, memberId)).toContainText(/Alex Perez/);
   await attendanceRow(page, temporaryId).locator('summary').click();
   await expect(attendanceRow(page, temporaryId)).toContainText('00000002');
   await mark(page, memberId, false);

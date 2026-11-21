@@ -18,38 +18,38 @@ test.beforeEach(async ({ page }) => {
 
 test('single lifecycle tabs and dashboard share the same membership counts', async ({ page }) => {
   await page.getByRole('tab', { name: 'Al día', exact: true }).click();
-  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Activo Sin Clases/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Temporal Sin Clases/ })).toHaveCount(0);
   await page.getByRole('tab', { name: /Pendientes/ }).click();
-  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /INACTIVO DIA SEIS/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Pendiente Dia Cinco/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Inactivo Dia Seis/ })).toHaveCount(0);
   await page.getByRole('tab', { name: 'Vencidas', exact: true }).click();
-  await expect(page.getByRole('button', { name: /INACTIVO DIA SEIS/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Inactivo Dia Seis/ })).toBeVisible();
   await page.getByRole('button', { name: /^Bonos de clases\s+1$/i }).click();
-  await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Temporal Sin Clases/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Temporal Historico/ })).toHaveCount(0);
   await expect(page.locator('button.ui-list')).toHaveCount(1);
   await expect(page.getByRole('tablist', { name: 'Estado de membresías', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
   await expect(page.locator('button.ui-list')).toHaveCount(2);
-  await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /MEMBRESIA ARCHIVADA/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Temporal Historico/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Membresia Archivada/ })).toBeVisible();
   await page.getByRole('button', { name: /^Membresía\s+3$/i }).click();
   await page.getByRole('tab', { name: 'Todos', exact: true }).click();
   await expect(page.locator('button.ui-list')).toHaveCount(3);
-  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /INACTIVO DIA SEIS/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Activo Sin Clases/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Pendiente Dia Cinco/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Inactivo Dia Seis/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Temporal Sin Clases/ })).toHaveCount(0);
   const summary = page.locator('[aria-label="Resumen de alumnos"]');
   await expect(summary.getByText('membresías', { exact: true }).locator('..')).toHaveText(/^3\s*membresías$/i);
   await expect(summary.getByText('bonos de clases', { exact: true }).locator('..')).toHaveText(/^1\s*bonos de clases$/i);
   await expect(summary.getByText('grupales', { exact: true }).locator('..')).toHaveText(/^1\s*grupales$/i);
   await expect(summary.getByText('grupo temporal', { exact: true }).locator('..')).toHaveText(/^1\s*grupo temporal$/i);
   await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
-  await expect(page.getByRole('button', { name: /GRUPAL VISIBLE/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Grupal Visible/ })).toBeVisible();
   await page.getByRole('button', { name: /^Grupo temporal\s+1$/i }).click();
-  await expect(page.getByRole('button', { name: /GRUPO TEMPORAL VISIBLE/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Grupo Temporal Visible/ })).toBeVisible();
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
   await expect(page.getByText('Activos de membresía').locator('..')).toContainText('3');
   await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
@@ -60,9 +60,9 @@ test('search persists while secondary filters stay scoped to the selected tab', 
   await search.fill('SIN CLASES');
   await page.getByRole('tab', { name: 'Al día', exact: true }).click();
   await expect(search).toHaveValue('SIN CLASES');
-  await expect(page.locator('button.ui-list').filter({ hasText: 'ACTIVO SIN CLASES' })).toBeVisible();
+  await expect(page.locator('button.ui-list').filter({ hasText: 'Activo Sin Clases' })).toBeVisible();
   await page.getByRole('button', { name: /^Bonos de clases\s+1$/i }).click();
-  await expect(page.locator('button.ui-list').filter({ hasText: 'TEMPORAL SIN CLASES' })).toBeVisible();
+  await expect(page.locator('button.ui-list').filter({ hasText: 'Temporal Sin Clases' })).toBeVisible();
   await expect(search).toHaveValue('SIN CLASES');
   await expect(page.getByRole('combobox', { name: /^Elegir plan\b/i })).toHaveCount(0);
 
@@ -70,17 +70,17 @@ test('search persists while secondary filters stay scoped to the selected tab', 
   await page.getByRole('button', { name: /^Membresía\s+3$/i }).click();
   const plan = page.getByRole('combobox', { name: /^Elegir plan\b/i });
   await expect(plan).toBeVisible();
-  await expect(page.getByRole('button', { name: /TEMPORAL SIN CLASES/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Temporal Sin Clases/ })).toHaveCount(0);
   await plan.selectOption('gold');
   await expect(plan).toHaveValue('gold');
   await page.getByRole('tab', { name: 'Al día', exact: true }).click();
-  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Activo Sin Clases/ })).toBeVisible();
   await expect(page.locator('button.ui-list')).toHaveCount(1);
   await page.getByRole('tab', { name: /Pendientes/ }).click();
   await expect(plan).toBeVisible();
   await expect(plan).toHaveValue('gold');
-  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Pendiente Dia Cinco/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Activo Sin Clases/ })).toHaveCount(0);
   await expect(page.locator('button.ui-list')).toHaveCount(1);
 });
 
@@ -89,7 +89,7 @@ test('mobile layout keeps tabs and row state visible', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Al día', exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Vencidas', exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Al día', exact: true }).click();
-  await expect(page.getByRole('button', { name: /ACTIVO SIN CLASES/ })).toContainText('Activo');
+  await expect(page.getByRole('button', { name: /Activo Sin Clases/ })).toContainText('Activo');
 });
 
 test('new temporary can raise the contracted class count above 1', async ({ page }) => {
@@ -106,8 +106,8 @@ test('new temporary can raise the contracted class count above 1', async ({ page
 
 test('grupal profile opens and payment status can be confirmed', async ({ page }) => {
   await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
-  await page.getByRole('button', { name: /GRUPAL VISIBLE/ }).click();
-  await expect(page.getByRole('heading', { name: 'GRUPAL VISIBLE' })).toBeVisible();
+  await page.getByRole('button', { name: /Grupal Visible/ }).click();
+  await expect(page.getByRole('heading', { name: /^Grupal Visible$/ })).toBeVisible();
   await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('4');
   await expect(page.getByLabel('Clases restantes', { exact: true })).toHaveValue('4');
   await page.getByLabel('Estado del pago').selectOption('paid');
@@ -118,7 +118,7 @@ test('grupal profile opens and payment status can be confirmed', async ({ page }
 
 test('editing legacy temporary preserves already assigned classes', async ({ page }) => {
   await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
-  await page.getByRole('button', { name: /TEMPORAL HISTORICO/ }).click();
+  await page.getByRole('button', { name: /Temporal Historico/ }).click();
   await expect(page.getByLabel('Clases contratadas', { exact: true })).toHaveValue('3');
   await expect(page.getByLabel('Clases restantes', { exact: true })).toHaveValue('3');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
@@ -130,34 +130,34 @@ test('editing legacy temporary preserves already assigned classes', async ({ pag
 
 test('sixth-day transition updates an already open screen', async ({ page }) => {
   await page.getByRole('tab', { name: /Pendientes/ }).click();
-  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Pendiente Dia Cinco/ })).toBeVisible();
   await page.clock.setSystemTime(new Date('2026-10-16T22:01:00Z'));
   await page.clock.runFor(31_000);
-  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Pendiente Dia Cinco/ })).toHaveCount(0);
   await page.getByRole('tab', { name: 'Vencidas', exact: true }).click();
-  await expect(page.getByRole('button', { name: /PENDIENTE DIA CINCO/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Pendiente Dia Cinco/ })).toBeVisible();
 });
 
 test('deleting still requires confirmation and does not archive', async ({ page }) => {
   await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
-  await page.getByRole('button', { name: /TEMPORAL HISTORICO/ }).click();
+  await page.getByRole('button', { name: /Temporal Historico/ }).click();
   const dangerZone = page.getByRole('region', { name: 'Zona de peligro' });
   await expect(dangerZone).toBeVisible();
   await expect(dangerZone.getByRole('button', { name: 'Archivar alumno manualmente' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Eliminar alumno', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '¿Eliminar alumno?' });
-  await expect(dialog).toContainText('TEMPORAL HISTORICO');
+  await expect(dialog).toContainText(/Temporal Historico/);
   await expect(dialog).toContainText('Esta acción no se puede deshacer');
   await expect(dialog).toContainText('Archivar');
   await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await page.getByRole('button', { name: 'Eliminar alumno', exact: true }).click();
   await dialog.getByRole('button', { name: 'Eliminar', exact: true }).click();
-  await expect(page.getByRole('button', { name: /TEMPORAL HISTORICO/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Temporal Historico/ })).toHaveCount(0);
 });
 
 test('pending payment can be confirmed from the profile and the dashboard counter follows', async ({ page }) => {
   await page.getByRole('tab', { name: /Pendientes/ }).click();
-  await page.getByRole('button', { name: /PENDIENTE DIA CINCO/ }).click();
+  await page.getByRole('button', { name: /Pendiente Dia Cinco/ }).click();
   await expect(page.getByRole('button', { name: 'Confirmar pago', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
   await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
@@ -169,7 +169,7 @@ test('pending payment can be confirmed from the profile and the dashboard counte
 
 test('manual class balance changes wait for a reason and confirmation', async ({ page }) => {
   await page.getByRole('button', { name: /^Grupal\s+1$/i }).click();
-  await page.getByRole('button', { name: /GRUPAL VISIBLE/ }).click();
+  await page.getByRole('button', { name: /Grupal Visible/ }).click();
   await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
   await expect(page.getByRole('button', { name: 'Archivar alumno manualmente' })).toBeVisible();
   const dangerZone = page.getByRole('region', { name: 'Zona de peligro' });
@@ -194,7 +194,7 @@ test('manual class balance changes wait for a reason and confirmation', async ({
 
 test('scalar pending payment confirms without a membership period', async ({ page }) => {
   await page.getByRole('button', { name: /^Grupo temporal\s+1$/i }).click();
-  await page.getByRole('button', { name: /GRUPO TEMPORAL VISIBLE/ }).click();
+  await page.getByRole('button', { name: /Grupo Temporal Visible/ }).click();
   await page.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
   await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
   await expect(page.getByTestId('saved')).toContainText('"paymentStatus":"paid"');
@@ -202,13 +202,13 @@ test('scalar pending payment confirms without a membership period', async ({ pag
 
 test('period payment fields are protected and expired member can be reactivated explicitly', async ({ page }) => {
   await page.getByRole('tab', { name: 'Vencidas', exact: true }).click();
-  await page.getByRole('button', { name: /INACTIVO DIA SEIS/ }).click();
+  await page.getByRole('button', { name: /Inactivo Dia Seis/ }).click();
   await expect(page.getByLabel('Estado del pago')).toBeDisabled();
   await expect(page.getByText(/El perfil no modifica categoría, plan, fechas, precio, clases ni pagos/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reactivar alumno manualmente' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await page.getByRole('button', { name: /^Archivados\s+2$/i }).click();
-  await page.getByRole('button', { name: /MEMBRESIA ARCHIVADA/ }).click();
+  await page.getByRole('button', { name: /Membresia Archivada/ }).click();
   await page.getByRole('button', { name: 'Reactivar alumno manualmente' }).click();
   await expect(page.getByTestId('saved')).toContainText('"archivedAt":""');
 });
@@ -216,12 +216,12 @@ test('period payment fields are protected and expired member can be reactivated 
 test('linked gift cards show contracted classes, buyer details and type in the student ficha', async ({ page }) => {
   await page.getByRole('button', { name: 'Cargar bono vinculado' }).click();
   await page.getByRole('button', { name: /^Bonos de clases\s+2$/i }).click();
-  const row = page.getByRole('button').filter({ hasText: 'PAULA BONO' });
+  const row = page.getByRole('button').filter({ hasText: 'Paula Bono' });
   await expect(row).toBeVisible();
   await expect(row).toContainText('2 clases');
   await expect(row).toContainText('Modelado');
   await row.click();
-  await expect(page.getByRole('heading', { name: 'PAULA BONO' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Paula Bono$/ })).toBeVisible();
   await expect(page.getByLabel('Clases contratadas')).toHaveValue('2');
   await expect(page.getByLabel('Clases restantes')).toHaveValue('2');
   await expect(page.getByText('CR-796024D9E0 · Modelado')).toBeVisible();

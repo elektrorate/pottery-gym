@@ -1,4 +1,5 @@
 import type { CapacityActivity, ClassSession, Student } from '../types';
+import { presentPersonName } from './displayName.ts';
 
 /** Canonical Spanish labels for session/activity types across admin screens. */
 export const SESSION_TYPE_LABELS: Record<ClassSession['classType'], string> = {
@@ -45,6 +46,34 @@ export const studentCategoryLabel = (category: Student['studentCategory'] | stri
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(' ');
+};
+
+/**
+ * Short category beside a person's name.
+ * `temporal` reads «Temporal» here; filters and badges keep «Bonos de clases».
+ */
+const INLINE_CATEGORY_LABELS: Record<string, string> = {
+  membresia: STUDENT_CATEGORY_LABELS.membresia,
+  temporal: 'Temporal',
+  grupal: STUDENT_CATEGORY_LABELS.grupal,
+  grupo_temporal: STUDENT_CATEGORY_LABELS.grupo_temporal
+};
+
+export const studentCategoryInlineLabel = (category: Student['studentCategory'] | string | null | undefined) => {
+  const key = String(category || 'membresia');
+  return INLINE_CATEGORY_LABELS[key] || studentCategoryLabel(category);
+};
+
+/** Dropdown label: «Ignacia Rosas · Membresía». Email replaces the category only when it exists. */
+export const studentOptionLabel = (student: {
+  name?: string | null;
+  surname?: string | null;
+  email?: string | null;
+  studentCategory?: string | null;
+}) => {
+  const person = presentPersonName(student.name, student.surname) || 'Alumno';
+  const detail = student.email?.trim() || studentCategoryInlineLabel(student.studentCategory);
+  return `${person} · ${detail}`;
 };
 
 export const sessionTypeLabel = (type: ClassSession['classType'] | string | undefined) =>

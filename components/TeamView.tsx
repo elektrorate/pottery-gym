@@ -6,6 +6,7 @@ import { EmptyState } from './shared/EmptyState';
 import { pluralize } from '../utils/pluralize';
 import { supabase } from '../supabaseClient';
 import { formatDate } from '../utils/dateFormat';
+import { presentDisplayName } from '../utils/displayName';
 
 interface StaffMember {
     id: string;
@@ -221,11 +222,11 @@ const TeamView: React.FC = () => {
                                 >
                                     <div className="flex items-center gap-3 mb-5">
                                         <div className="w-12 h-12 rounded-xl bg-brand flex items-center justify-center text-white font-bold text-[18px] shrink-0">
-                                            {member.name.charAt(0).toUpperCase()}
+                                            {presentDisplayName(member.name).charAt(0)}
                                         </div>
                                         <div className="overflow-hidden">
                         <h4 className="ui-card-title text-neutral-textMain truncate">
-                                                {member.name}
+                                                {presentDisplayName(member.name)}
                                                 {isMe && <span className="text-[13px] ml-2 text-brand font-semibold">(tú)</span>}
                                             </h4>
                                             <p className="text-[13px] text-neutral-textSec truncate mt-0.5">{member.email}</p>
@@ -247,7 +248,7 @@ const TeamView: React.FC = () => {
 
                                     {!isMe && (
                                         <DangerZone
-                                          description={`Quitar a ${member.name} del equipo cierra su acceso. No se puede deshacer desde aquí.`}
+                                          description={`Quitar a ${presentDisplayName(member.name)} del equipo cierra su acceso. No se puede deshacer desde aquí.`}
                                           actionLabel="Eliminar del equipo"
                                           disabled={actionLoading}
                                           onAction={() => handleDeleteStaff(member.id, member.name)}
@@ -320,8 +321,8 @@ const TeamView: React.FC = () => {
 
             <ConfirmModal
                 isOpen={!!staffToDelete}
-                title={staffToDelete ? `¿Eliminar a ${staffToDelete.name} del equipo?` : '¿Eliminar colaborador?'}
-                message={staffToDelete ? `${staffToDelete.name} dejará de tener acceso al taller. Esta acción no se puede deshacer.` : 'Esta acción no se puede deshacer.'}
+                title={staffToDelete ? `¿Eliminar a ${presentDisplayName(staffToDelete.name)} del equipo?` : '¿Eliminar colaborador?'}
+                message={staffToDelete ? `${presentDisplayName(staffToDelete.name)} dejará de tener acceso al taller. Esta acción no se puede deshacer.` : 'Esta acción no se puede deshacer.'}
                 isDestructive={true}
                 loading={actionLoading}
                 onConfirm={() => { if (staffToDelete) executeStaffDeletion(staffToDelete.id); }}

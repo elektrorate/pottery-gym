@@ -10,6 +10,7 @@ import { activityTypeLabel, sessionTypeLabel } from '../utils/classTypeLabels';
 import { pluralize } from '../utils/pluralize';
 import { teacherBlockActivities, teacherSessions } from '../utils/teacherCalendar';
 import { formatDate, formatTime } from '../utils/dateFormat';
+import { presentDisplayName, presentPersonName } from '../utils/displayName';
 
 interface TeachersViewProps {
   teachers: Teacher[];
@@ -48,7 +49,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
     if (!teacherId) return 'Sin profesor';
     const teacher = teachers.find(t => t.id === teacherId);
     if (!teacher) return 'Sin profesor';
-    return `${teacher.name} ${teacher.surname || ''}`.trim();
+    return presentPersonName(teacher.name, teacher.surname);
   };
 
   const formatSessionDate = (dateValue: string) => formatDate(dateValue, 'long');
@@ -103,7 +104,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
 
   const teacherPendingName = (() => {
     const teacher = teachers.find(item => item.id === teacherToDelete);
-    return teacher ? `${teacher.name} ${teacher.surname || ''}`.trim() : 'este profesor';
+    return teacher ? presentPersonName(teacher.name, teacher.surname) : 'este profesor';
   })();
 
   return (
@@ -139,7 +140,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
               onAction={searchQuery.trim() ? undefined : handleOpenNew}
             />
           ) : filteredTeachers.map(teacher => {
-            const fullName = `${teacher.name} ${teacher.surname || ''}`.trim();
+            const fullName = presentPersonName(teacher.name, teacher.surname);
             const scheduledSessions = teacherSessions(sessions, teacher.id, false);
             const concludedSessions = teacherSessions(sessions, teacher.id, true);
             const isExpanded = expandedTeacherId === teacher.id;
@@ -149,7 +150,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
               <React.Fragment key={teacher.id}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-3 md:gap-4 items-center px-3 md:px-4 py-3 border-b border-neutral-border hover:bg-neutral-base transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-full bg-brand-soft text-brand flex items-center justify-center font-bold text-[12px] shrink-0">{teacher.name.charAt(0)}</div>
+                    <div className="w-8 h-8 rounded-full bg-brand-soft text-brand flex items-center justify-center font-bold text-[12px] shrink-0">{presentDisplayName(teacher.name).charAt(0)}</div>
                      <div className="min-w-0"><h3 className="ui-card-title text-neutral-textMain truncate">{fullName}</h3><p className="ui-meta truncate mt-0.5">{teacher.specialty || 'Sin especialidad'}{(teacher.phone || teacher.email) ? ` · ${teacher.phone || teacher.email}` : ''}</p></div>
                   </div>
                   <span className="hidden md:inline-flex justify-self-start px-2 py-1 rounded-md bg-neutral-sec text-neutral-textSec text-[12px] font-semibold truncate max-w-full">{teacher.specialty || 'Sin especialidad'}</span>
@@ -277,7 +278,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
             {editingTeacher && <AdvancedDetails><p>Identificador del profesor: {editingTeacher.id}</p></AdvancedDetails>}
             {editingTeacher && (
               <DangerZone
-                description={`Eliminar a ${`${editingTeacher.name} ${editingTeacher.surname || ''}`.trim()} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}
+                description={`Eliminar a ${presentPersonName(editingTeacher.name, editingTeacher.surname)} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}
                 actionLabel="Eliminar profesor"
                 onAction={() => setTeacherToDelete(editingTeacher.id)}
               />
