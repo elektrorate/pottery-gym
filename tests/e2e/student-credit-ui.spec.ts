@@ -48,7 +48,7 @@ test.beforeEach(async ({ page }) => {
       .flex-1 { flex: 1; } .shrink-0 { flex-shrink: 0; } .min-h-0 { min-height: 0; } .min-w-0 { min-width: 0; }
       .grid { display: grid; gap: 12px; } .grid-cols-2 { grid-template-columns: 1fr 1fr; }
       .grid-cols-3 { grid-template-columns: repeat(3, 1fr); } .h-full { height: 100%; } .w-full { width: 100%; }
-      .h-10 { height: 40px; } .h-11 { height: 44px; } .hidden { display: none; }
+      .h-1 { height: 4px; } .h-10 { height: 40px; } .h-11 { height: 44px; } .hidden { display: none; }
       .overflow-hidden { overflow: hidden; } .overflow-y-auto { overflow-y: auto; } .overflow-x-auto { overflow-x: auto; }
       .fixed { position: fixed; inset: 0; z-index: 100; background: #eee; justify-content: center; }
       .fixed > div { width: min(100%, 1024px); height: 100dvh; background: white; }
@@ -184,10 +184,16 @@ test('reconciliation captures the known raw balance and approval never fabricate
 for (const fixture of ['unknown', 'missing-observation', 'zero', 'managed', 'historical-membership', 'historical-membership-allowed', 'reconcile-blocked', 'reconciled-allowed']) test(`${fixture} never invents a reconcilable legacy observation`, async ({ page }) => {
   await configure(page, { fixture }); await open(page);
   await expect(panel(page).getByLabel('Modo del crédito manual').locator('option[value="reconcile_legacy"]')).toHaveAttribute('disabled', '');
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('No hay clases anteriores por registrar');
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText(fixture === 'reconciled-allowed'
+    ? 'Esas clases anteriores ya están registradas' : 'No hay clases anteriores por registrar');
   await fillCredit(page); await panel(page).getByRole('button', { name: 'Aprobar crédito manual' }).click();
-  expect((await output(page, 'calls'))[0].input.expectedLegacyBalance).toBe(['unknown', 'missing-observation'].includes(fixture) ? null : fixture === 'zero' ? 0 : 4);
+  const sentBalance = (await output(page, 'calls'))[0].input.expectedLegacyBalance;
+  const rawBalance = (await output(page, 'students'))[0].legacyManualBalance ?? null;
+  expect(sentBalance).toBe(['unknown', 'missing-observation'].includes(fixture) ? null : fixture === 'zero' ? 0 : 4);
+  expect(sentBalance).toBe(rawBalance);
   if (fixture === 'managed') {
+    expect(rawBalance).toBe(4);
+    expect(sentBalance).toBe(4);
     expect((await output(page, 'students'))[0].paymentStatus).toBe('pending');
     await expect(page.getByRole('button', { name: 'Aplicar ajuste / reintentar' })).toHaveCount(0);
   }
@@ -500,7 +506,8 @@ test('stale SQL rejection clears only the old attempt and a new approval capture
   await start(page, 'approve_manual', 'transport'); await configure(page, { fixture: 'unmount' });
   await configure(page, { fixture: 'remount', mode: 'stale' }); await open(page);
   await panel(page).getByRole('button', { name: 'Reintentar operación pendiente' }).click();
-  await expect(panel(page).getByRole('alert')).toContainText('Revisa los datos recargados');
+  await expect(panel(page).getByRole('alert')).toContainText('Los datos del alumno han cambiado. Se han recargado; vuelva a intentarlo.');
+  await expect(page.locator('body > [role="alert"]')).toContainText('Los datos del alumno han cambiado. Se han recargado; vuelva a intentarlo.');
   await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
   await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 2');
   await expect(panel(page).getByTestId('pending-student-credit-operation')).toHaveCount(0);

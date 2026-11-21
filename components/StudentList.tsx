@@ -3,6 +3,7 @@ import { quedanDeClases } from '../utils/pluralize';
 import { emailError, phoneError, positiveAmountError } from '../utils/contactValidation';
 import { pluralWord } from '../utils/pluralize';
 import { showError } from '../context/toast';
+import { creditRejectionMessage, isProvedCreditRejection, STUDENT_CREDIT_REJECTION_EVENT, type RecognizedCreditRejection } from '../context/data/studentCreditOps';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Student, AssignedClass, GiftCard, inferMembershipTier, MEMBERSHIP_PLANS, MembershipTier, RenewalIntent, ClassAdjustmentIntent, ScalarClassAdjustment } from '../types';
 import { AdvancedDetails } from './shared/AdvancedDetails';
@@ -12,7 +13,7 @@ import { DangerZone } from './shared/DangerZone';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { capitalizeEs, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
-import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, previousClassesMessage, previousClassesToRegister, cuotaDefaultForCategory } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getStudentLifecycle, getStudentPaymentStatus, getWorkshopDate, isStudentArchived, addMembershipMonth, DEFAULT_STUDENT_PAYMENT_STATUS, getStudentReactivationUpdates, isManagedMembership, isNonMembershipCategory, studentHasPendingPayment, selectConfirmablePaymentPeriodId, previousClassesMessage, previousClassesToRegister, observedLegacyBalance, cuotaDefaultForCategory } from '../utils/studentLifecycle';
 import { createRenewalIntent, createClassAdjustmentIntent, PendingMembershipIntentStore } from '../context/data/membershipOps';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel } from '../utils/classTypeLabels';
@@ -53,7 +54,7 @@ interface StudentListProps {
   onWaivePendingPenalty?: (intent: SessionBusinessIntent) => Promise<void>;
   canManageStudentCredits?: (student: Student) => boolean;
   getPendingStudentCreditOperation?: (studentId: string) => PendingStudentCreditOperation | null;
-  onRetryPendingStudentCreditOperation?: (studentId: string) => Promise<void>;
+  onRetryPendingStudentCreditOperation?: (studentId: string, observedLegacyBalance?: number | null) => Promise<void>;
 }
 
 const CREDIT_ACTIVITY_LABELS = { mesa: 'Modelado / mesa', torno: 'Torno', coworking: 'Coworking', workshop: 'Workshop', privada: 'Privada' };
@@ -79,6 +80,19 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
   const recoveryAvailable = !!getPendingStudentCreditOperation && !!onRetryPendingStudentCreditOperation;
   const legacyBalance = previousClassesToRegister(student);
   const canReconcile = legacyBalance != null;
+  const rawLegacyBalance = observedLegacyBalance(student);
+  useEffect(() => {
+    const onRejection = (event: Event) => {
+      const detail = (event as CustomEvent<RecognizedCreditRejection>).detail;
+      if (!detail || detail.studentId !== latest.current.student.id) return;
+      // The reload may still be running. Leave «Procesando» as soon as the rejection is known.
+      setBusy(false);
+      setError(detail.message);
+      showError(detail.message);
+    };
+    window.addEventListener(STUDENT_CREDIT_REJECTION_EVENT, onRejection);
+    return () => window.removeEventListener(STUDENT_CREDIT_REJECTION_EVENT, onRejection);
+  }, []);
   const validDraft = Number.isSafeInteger(Number(draft.quantity)) && Number(draft.quantity) > 0
     && !!draft.activity && Object.hasOwn(CREDIT_ACTIVITY_LABELS, draft.activity)
     && /^\d{4}-\d{2}-\d{2}$/.test(draft.startsOn) && /^\d{4}-\d{2}-\d{2}$/.test(draft.endsOn)
@@ -97,12 +111,12 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
     let action: (() => Promise<void>) | undefined;
     if (operation === 'retry') {
       if (!stored || stored.studentId !== current.student.id || !current.onRetryPendingStudentCreditOperation) return;
-      action = () => current.onRetryPendingStudentCreditOperation!(current.student.id);
+      action = () => current.onRetryPendingStudentCreditOperation!(current.student.id, observedLegacyBalance(current.student));
     } else if (operation === 'approve_manual') {
       if (!onApproveManualCredit || !validDraft) return;
-      // Only explicit raw observations are concurrency tokens, never a projected ledger total.
+      // Only the raw classes_remaining observation is a concurrency token, never the projected reconcile total.
       const intent: ManualCreditIntent = Object.freeze({ studentId: current.student.id, requestKey: crypto.randomUUID(),
-        mode: draft.mode, quantity: Number(draft.quantity), expectedLegacyBalance: legacyBalance,
+        mode: draft.mode, quantity: Number(draft.quantity), expectedLegacyBalance: observedLegacyBalance(current.student),
         activity: draft.activity as ManualCreditIntent['activity'], startsOn: draft.startsOn, endsOn: draft.endsOn,
         reason: draft.reason.trim(), evidence: draft.evidence.trim() });
       action = () => onApproveManualCredit(intent);
@@ -137,13 +151,16 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
       else setReasons({});
     } catch (failure: any) {
       const remaining = latest.current.getPendingStudentCreditOperation?.(student.id);
-      const rejected = /^[0-9A-Z]{5}$/.test(failure?.code || '') && !['08000', '08003', '08006', '57014'].includes(failure.code);
+      const rejected = isProvedCreditRejection(failure?.code);
+      if (rejected) showError(creditRejectionMessage(failure.code));
       // Main retains any uncertain write until its receipt/refresh is resolved.
       // No stored intent means pre-write validation or a fully refreshed rejection.
-      setError(`${failure?.message || 'No se pudo completar la operación.'}${remaining
-        ? ' Resultado sin confirmar. Reintenta los mismos datos originales; no crees otro intento.'
-        : rejected ? ' Revisa los datos recargados antes de aprobar un nuevo intento.'
-          : ' Revisa y corrige los datos antes de volver a intentarlo.'}`);
+      setError(failure?.code === '40001' && !remaining
+        ? creditRejectionMessage('40001')
+        : `${failure?.message || 'No se pudo completar la operación.'}${remaining
+          ? ' Resultado sin confirmar. Reintenta los mismos datos originales; no crees otro intento.'
+          : rejected ? ' Revisa los datos recargados antes de aprobar un nuevo intento.'
+            : ' Revisa y corrige los datos antes de volver a intentarlo.'}`);
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -177,7 +194,7 @@ const StudentCreditPanel: React.FC<Pick<StudentListProps, 'onApproveManualCredit
       <h5 className="font-bold text-[#7B3F22]">Clases anteriores</h5>
       <p>{legacySummary}</p>
       <AdvancedDetails>
-        <p>Observación original: {legacyBalance === null ? 'Sin dato' : legacyBalance}.</p>
+        <p>Observación original: {rawLegacyBalance === null ? 'Sin dato' : rawLegacyBalance}.</p>
         <p>No se suma a las clases añadidas ni confirma un pago.</p>
       </AdvancedDetails>
     </div>

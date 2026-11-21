@@ -18,6 +18,13 @@ const approvalFields = ['studentId', 'requestKey', 'mode', 'quantity', 'expected
 const settlementFields = ['penaltyId', 'studentId', 'requestKey', 'expectedRevision', 'reason'];
 const waiverFields = ['operation', 'sessionId', 'studentId', 'requestKey', 'expectedRevision', 'reason'];
 const postgresIntMax = 2147483647;
+const provedSqlClass = /^(?:02|03|09|0A|0B|0F|0L|0P|0Z|20|21|22|23|24|25|26|27|28|2B|2D|2F|34|38|39|3B|3D|3F|40|42|44|53|54|55|P0)[0-9A-Z]{3}$/;
+export const STUDENT_CREDIT_REJECTION_EVENT = 'student-credit-recognized-rejection';
+export const isProvedCreditRejection = (code: unknown): code is string =>
+    typeof code === 'string' && provedSqlClass.test(code);
+export const creditRejectionMessage = (code: string) => code === '40001'
+    ? 'Los datos del alumno han cambiado. Se han recargado; vuelva a intentarlo.'
+    : 'La operación fue rechazada. Se han recargado los datos; vuelva a intentarlo.';
 const validId = (value: unknown): value is string => typeof value === 'string' && Boolean(value.trim());
 const validRevision = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const validInteger = (value: unknown): value is number => Number.isSafeInteger(value)
@@ -118,11 +125,24 @@ export class StudentCreditIntentStore {
 }
 
 const active = new Set<string>();
-export const createStudentCreditOperations = ({ rpc, refresh, store, actorId }: {
+export type RecognizedCreditRejection = { studentId: string; code: string; message: string };
+
+// A stored null token is the projected-balance regression: classes_remaining was a real
+// number, so the write could not pass the CAS check. Rebind that one field and keep the
+// request key. A numeric token stays exact so a committed intent still replays.
+const withFreshLegacyToken = (intent: StoredIntent, observed: number | null | undefined): StoredIntent | null => {
+    if (observed === undefined || intent.operation !== 'approve_manual' || intent.args.p_expected_legacy_balance !== null) return null;
+    if (!validInteger(observed)) return null;
+    return validateStoredIntent({ actorId: intent.actorId, operation: intent.operation, descriptor: intent.descriptor,
+        args: { ...intent.args, p_expected_legacy_balance: observed } }, intent.actorId, intent.descriptor.studentId);
+};
+
+export const createStudentCreditOperations = ({ rpc, refresh, store, actorId, onRecognizedRejection }: {
     rpc: (name: string, args: Record<string, any>) => PromiseLike<{ data: any; error: any }>;
     refresh: () => Promise<void>;
     store: StudentCreditIntentStore;
     actorId: string;
+    onRecognizedRejection?: (rejection: RecognizedCreditRejection) => void;
 }) => {
     if (!validId(actorId)) throw new Error('ID de actor requerido.');
     const createIntent = (operation: Operation, value: unknown, relatedId?: string): StoredIntent => {
@@ -148,7 +168,7 @@ export const createStudentCreditOperations = ({ rpc, refresh, store, actorId }: 
             p_expected_revision: input.expectedRevision, p_reason: input.reason
         } }, actorId, input.studentId);
     };
-    const execute = async (studentId: string, proposed?: StoredIntent): Promise<any> => {
+    const execute = async (studentId: string, proposed?: StoredIntent, observedLegacyBalance?: number | null): Promise<any> => {
         const key = namespace(actorId, studentId);
         if (active.has(key)) throw new Error('Ya se esta guardando una operacion de este alumno.');
         active.add(key);
@@ -162,6 +182,17 @@ export const createStudentCreditOperations = ({ rpc, refresh, store, actorId }: 
                 store.set(actorId, studentId, proposed); // Persist BEFORE the only write.
                 intent = store.get(actorId, studentId);
                 if (!intent) throw new Error('No se pudo recuperar el intento de credito persistido.');
+            } else if (!proposed) {
+                const rebound = withFreshLegacyToken(intent, observedLegacyBalance);
+                if (rebound) {
+                    // Replace the bad null before the RPC so a reload cannot replay it.
+                    // If the replacement cannot be stored, drop the stale intent instead of looping on it.
+                    store.clear(actorId, studentId);
+                    try { store.set(actorId, studentId, rebound); }
+                    catch (error) { store.clear(actorId, studentId); throw error; }
+                    intent = store.get(actorId, studentId);
+                    if (!intent) throw new Error('No se pudo recuperar el intento de credito persistido.');
+                }
             }
             let response: { data: any; error: any };
             try { response = await rpc(rpcNames[intent.operation], intent.args); }
@@ -169,7 +200,11 @@ export const createStudentCreditOperations = ({ rpc, refresh, store, actorId }: 
             if (response?.error) {
                 const code = response.error.code;
                 // Only recognized SQL rejection classes prove rollback, not transport or server shutdown.
-                if (typeof code === 'string' && /^(?:02|03|09|0A|0B|0F|0L|0P|0Z|20|21|22|23|24|25|26|27|28|2B|2D|2F|34|38|39|3B|3D|3F|40|42|44|53|54|55|P0)[0-9A-Z]{3}$/.test(code)) {
+                if (isProvedCreditRejection(code)) {
+                    // Tell the panel before the full reload so it can leave «Procesando».
+                    // The intent stays until refresh succeeds; a failed refresh still keeps it.
+                    try { onRecognizedRejection?.({ studentId, code, message: creditRejectionMessage(code) }); }
+                    catch { /* A UI notification must not hide the proved rejection. */ }
                     await refresh();
                     store.clear(actorId, studentId);
                 }
@@ -198,6 +233,7 @@ export const createStudentCreditOperations = ({ rpc, refresh, store, actorId }: 
         settle: async (intent: PenaltySettlementIntent, sessionId: string) => execute(intent.studentId, createIntent('settle_penalty', intent, sessionId)),
         waive: async (intent: SessionBusinessIntent, penaltyId: string) => execute(intent.studentId, createIntent('waive_penalty', intent, penaltyId)),
         getPending: (studentId: string): PendingStudentCreditOperation | null => store.get(actorId, studentId)?.descriptor ?? null,
-        retry: (studentId: string): Promise<any> => execute(studentId)
+        retry: (studentId: string, observedLegacyBalance?: number | null): Promise<any> =>
+            execute(studentId, undefined, observedLegacyBalance)
     };
 };
