@@ -24,7 +24,10 @@ export const getGiftCardLifecycle = (card: GiftCard, today: string, expiryDate?:
 export const sessionBusinessErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String((error as any)?.message || error || 'No se pudo guardar la sesión.');
   if (message.startsWith('Presence requires valid original credit')) {
-    return 'No se puede finalizar: confirme el pago o pida al propietario una excepción para esta sesión.';
+    return 'No se puede finalizar la asistencia: confirme el pago o pida al propietario una excepción para esta sesión.';
+  }
+  if (message.startsWith('Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session')) {
+    return 'Solo el propietario del taller puede aprobar esta excepción cuando la membresía está pendiente, vencida o no cubre la sesión.';
   }
   return message;
 };

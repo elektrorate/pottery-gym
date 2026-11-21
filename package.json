@@ -18,6 +18,7 @@
     "test:sql:external-bonos": "node supabase/tests/run-external-bonos-temporal-student.mjs",
     "test:sql:designer-bonos": "node supabase/tests/run-designer-bonos-temporal-student.mjs",
     "test:sql:mixed-sessions": "node supabase/tests/run-atomic-mixed-session-integrity.mjs",
+    "test:sql:unusable-membership": "node supabase/tests/run-unusable-membership-exception.mjs",
     "test:sql:asistonto": "node supabase/tests/run-asistonto-api.mjs",
     "staging:setup": "node scripts/local-staging-setup.mjs",
     "staging:policy-setup": "node scripts/local-staging-policy-setup.mjs",
