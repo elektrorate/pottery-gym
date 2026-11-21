@@ -13,7 +13,7 @@ import { showError } from './toast';
 // Import modular operations
 import { extractTime, withTimeout, traceSupabaseQuery, RELOAD_TIMEOUT_MS, OpsContext, mapGiftCardRowToModel, mapStudentRowToModel, joinStudentMemberships } from './data/shared';
 import { createMembershipOperations } from './data/membershipOps';
-import { createStudentCreditOperations, StudentCreditIntentStore } from './data/studentCreditOps';
+import { createStudentCreditOperations, StudentCreditIntentStore, STUDENT_CREDIT_REJECTION_EVENT, type RecognizedCreditRejection } from './data/studentCreditOps';
 import { readAllRows } from './data/readAllRows';
 import * as studentOps from './data/studentOps';
 import * as sessionOps from './data/sessionOps';
@@ -25,7 +25,7 @@ import { attachAttendanceHistory } from '../utils/attendanceHistory';
 import { isMissingScalarAdjustmentRpc } from '../utils/classAdjustmentAudit';
 import { attachSessionBusinessState } from '../utils/sessionBusiness';
 import { attachStudentCreditProfiles } from '../utils/studentCredits';
-import { getWorkshopDate, isManagedMembership } from '../utils/studentLifecycle';
+import { getWorkshopDate, isManagedMembership, observedLegacyBalance } from '../utils/studentLifecycle';
 import { secondarySections, nextSectionState, describeLoadError, type SecondarySection, type SectionLoads } from '../utils/sectionLoading';
 
 const normalizeAttendanceStatus = (value: unknown): 'present' | 'absent' | undefined => {
@@ -68,7 +68,7 @@ interface DataContextType {
     waiveStudentPenalty: (intent: SessionBusinessIntent) => Promise<void>;
     canManageStudentCredits: (student: Student) => boolean;
     getPendingStudentCreditOperation: (studentId: string) => PendingStudentCreditOperation | null;
-    retryPendingStudentCreditOperation: (studentId: string) => Promise<void>;
+    retryPendingStudentCreditOperation: (studentId: string, observedLegacyBalance?: number | null) => Promise<void>;
 
     // Session CRUD
     addSession: (session: Omit<ClassSession, 'id'>) => Promise<void>;
@@ -627,7 +627,10 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         if (!session?.user.id) throw new Error('Inicia sesion antes de gestionar creditos.');
         studentCreditStoreRef.current ??= new StudentCreditIntentStore();
         return createStudentCreditOperations({ actorId: session.user.id, store: studentCreditStoreRef.current,
-            rpc: (name, args) => { requireBusinessData(); return withTimeout(name, supabase.rpc(name, args)); }, refresh: safeReload });
+            rpc: (name, args) => { requireBusinessData(); return withTimeout(name, supabase.rpc(name, args)); }, refresh: safeReload,
+            onRecognizedRejection: (rejection: RecognizedCreditRejection) => {
+                window.dispatchEvent(new CustomEvent(STUDENT_CREDIT_REJECTION_EVENT, { detail: rejection }));
+            } });
     };
     const canManageStudentCredits = (student: Student) => activeRef.current && scopeRef.current === scope
         && scopeVersionRef.current === scopeVersion && businessReadyRef.current && !!student.sedeId && ownedSedeIdsRef.current.includes(student.sedeId);
@@ -657,10 +660,13 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     };
     const getPendingStudentCreditOperation = (studentId: string) => session?.user.id
         ? studentCreditOperations().getPending(studentId) : null;
-    const retryPendingStudentCreditOperation = async (studentId: string) => {
+    const retryPendingStudentCreditOperation = async (studentId: string, observed?: number | null) => {
         requireBusinessData();
-        // Recovery uses stored arguments, even when a commit changed the loaded incident.
-        await studentCreditOperations().retry(studentId);
+        const student = studentsRef.current.find(item => item.id === studentId);
+        const token = observed !== undefined ? observed : student ? observedLegacyBalance(student) : undefined;
+        // A stored null from the projected balance is replaced with this raw observation.
+        // Any numeric token is replayed exactly.
+        await studentCreditOperations().retry(studentId, token);
     };
 
     const addSession = async (s: Omit<ClassSession, 'id'>) => sessionOps.addSession(getOpsContext(), s);

@@ -140,16 +140,27 @@ export const cuotaDefaultForCategory = (
 ): number | null => (category ?? 'membresia') === 'membresia' ? planPrice : null;
 
 /**
+ * Raw `students.classes_remaining`. Membership projections overwrite `classesRemaining`
+ * and must not be used as the compare-and-swap token.
+ */
+export const observedLegacyBalance = (
+  student: Pick<Student, 'legacyManualBalance'> | null | undefined
+): number | null => {
+  const balance = student?.legacyManualBalance;
+  return typeof balance === 'number' && Number.isFinite(balance) ? balance : null;
+};
+
+/**
  * Previous classes are an unassigned legacy balance. A class pack whose assigned
  * size covers classes_remaining is the bono itself, including a student just created.
+ * This projection is only for reconcile eligibility and copy, never the CAS token.
  */
 export const previousClassesToRegister = (student: Student): number | null => {
   if ((student.manualCredits || []).some(credit => credit.mode === 'reconcile_legacy')) return null;
   if (assignedPackCoversBalance(student)) return null;
   if (student.canReconcileLegacy === false) return null;
   if (isManagedMembership(student) || student.effectivePeriodId || student.materializedPeriodId || student.membershipPeriods?.length) return null;
-  const balance = typeof student.legacyManualBalance === 'number' && Number.isFinite(student.legacyManualBalance)
-    ? student.legacyManualBalance : null;
+  const balance = observedLegacyBalance(student);
   if (balance == null || !Number.isSafeInteger(balance) || balance <= 0) return null;
   return balance;
 };
