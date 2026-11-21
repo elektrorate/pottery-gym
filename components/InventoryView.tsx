@@ -1,5 +1,9 @@
 import { showError, showWarning } from '../context/toast';
 import { nonNegativeAmountError, positiveAmountError } from '../utils/contactValidation';
+import { parseSpanishQuantity } from '../utils/quantityInput';
+import { inventoryAlertLabel, inventoryHealth } from '../utils/inventoryHealth';
+import { includesFolded } from '../utils/textSearch';
+import { lengthError, LIMITS } from '../utils/fieldLimits';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, InventoryItemStatus, MovementType, InventoryMovement, StructuredFormula, FormulaComponent, ColorFamily, GlazeFinish } from '../types';
@@ -34,6 +38,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
   const [isSubmittingItem, setIsSubmittingItem] = useState(false);
   const [isSubmittingMovement, setIsSubmittingMovement] = useState(false);
   const movementRequest = useRef<{ fingerprint: string; key: string; expectedQuantity: number } | null>(null);
+  const [quantityText, setQuantityText] = useState({ current: '0', min: '0' });
   const [itemForm, setItemForm] = useState({
     category: 'glaze' as InventoryCategory,
     name: '',
@@ -55,8 +60,8 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
   const [showMovementForm, setShowMovementForm] = useState(false);
   const [movementForm, setMovementForm] = useState({
     type: 'in' as MovementType,
-    quantity: 0,
-    new_quantity: 0,
+    quantity: '',
+    new_quantity: '',
     unit: 'kg',
     reason: '',
     date: madridDateKey(),
@@ -77,18 +82,12 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
     }));
   }, [selectedItem]);
 
-  const getItemHealth = (item: InventoryItem): 'ok' | 'low' | 'critical' => {
-    if (!item.min_quantity) return 'ok';
-    if (item.current_quantity <= 0) return 'critical';
-    if (item.current_quantity <= (item.min_quantity * 0.5)) return 'critical';
-    if (item.current_quantity <= item.min_quantity) return 'low';
-    return 'ok';
-  };
+  const getItemHealth = (item: InventoryItem) => inventoryHealth(item);
 
   const filteredItems = useMemo(() => {
     return items.filter(item => {
       const matchCategory = filterCategory === 'all' || item.category === filterCategory;
-      const matchSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || item.code.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchSearch = includesFolded(`${item.name} ${item.code}`, searchQuery);
       const matchHealth = dashboardFilter === 'all' || getItemHealth(item) === dashboardFilter;
       return matchCategory && matchSearch && matchHealth && item.status === 'active';
     }).sort((a, b) => a.name.localeCompare(b.name));
@@ -157,6 +156,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
   const handleEditFromDetail = () => {
     if (!selectedItem) return;
     setEditingItem(selectedItem);
+    setQuantityText({ current: String(selectedItem.current_quantity ?? 0).replace('.', ','), min: String(selectedItem.min_quantity ?? 0).replace('.', ',') });
     setItemForm({
       category: selectedItem.category,
       name: selectedItem.name || '',
@@ -198,8 +198,20 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       showError('Ya existe un material con ese código.');
       return false;
     }
-    const quantityError = nonNegativeAmountError(Number(itemForm.current_quantity), 'La cantidad')
-      || nonNegativeAmountError(Number(itemForm.min_quantity), 'El mínimo');
+    const currentParsed = parseSpanishQuantity(quantityText.current);
+    const minParsed = parseSpanishQuantity(quantityText.min);
+    const quantityError = !currentParsed.ok ? 'La cantidad no es válida. Use una coma para los decimales, por ejemplo 2,5.'
+      : !minParsed.ok ? 'El mínimo no es válido. Use una coma para los decimales, por ejemplo 2,5.'
+      : nonNegativeAmountError(currentParsed.value, 'La cantidad', 'f')
+      || nonNegativeAmountError(minParsed.value, 'El mínimo');
+    if (!itemForm.code.trim()) {
+      showError('El código es obligatorio.');
+      return false;
+    }
+    if (lengthError(itemForm.name, LIMITS.name, 'El nombre')) {
+      showError(lengthError(itemForm.name, LIMITS.name, 'El nombre') || '');
+      return false;
+    }
     if (quantityError) return false;
 
     let parsedFormula: StructuredFormula | undefined;
@@ -226,15 +238,31 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
     const payload = {
       ...restForm,
       code: normalizedCode,
-      current_quantity: Number(itemForm.current_quantity) || 0,
-      min_quantity: Number(itemForm.min_quantity) || 0,
+      current_quantity: currentParsed.ok ? currentParsed.value : 0,
+      min_quantity: minParsed.ok ? minParsed.value : 0,
       formula: parsedFormula,
       formula_unit: formulaUnit,
       color_family: itemForm.color_family || undefined,
       finish: itemForm.finish || undefined
     };
-    if (editingItem) await onUpdateItem(editingItem.id, payload);
-    else await onAddItem(payload);
+    if (editingItem) {
+      const quantityChanged = currentParsed.ok && currentParsed.value !== editingItem.current_quantity;
+      const { current_quantity: _ignored, ...withoutQuantity } = payload;
+      await onUpdateItem(editingItem.id, quantityChanged ? withoutQuantity : payload);
+      if (quantityChanged) {
+        await onAddMovement({
+          requestKey: crypto.randomUUID(),
+          expectedQuantity: editingItem.current_quantity,
+          item_id: editingItem.id,
+          type: 'adjust',
+          new_quantity: currentParsed.value,
+          unit: payload.unit || editingItem.unit,
+          reason: 'Ajuste',
+          date: madridDateKey(),
+          notes: `Cantidad ${editingItem.current_quantity} → ${currentParsed.value}`
+        });
+      }
+    } else await onAddItem(payload);
     return true;
   };
 
@@ -259,28 +287,29 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       showError('El motivo es obligatorio.');
       return;
     }
-    if (movementForm.type === 'adjust' && Number.isNaN(Number(movementForm.new_quantity))) {
-      showError('La cantidad ajustada no es válida.');
+    const parsedMovement = parseSpanishQuantity(movementForm.type === 'adjust' ? movementForm.new_quantity : movementForm.quantity);
+    if (!parsedMovement.ok) {
+      showError('La cantidad no es válida. Use una coma para los decimales, por ejemplo 2,5.');
       return;
     }
     const movementAmountError = movementForm.type === 'adjust'
-      ? nonNegativeAmountError(Number(movementForm.new_quantity), 'La cantidad ajustada')
-      : positiveAmountError(Number(movementForm.quantity), 'La cantidad');
+      ? nonNegativeAmountError(parsedMovement.value, 'La cantidad ajustada', 'f')
+      : positiveAmountError(parsedMovement.value, 'La cantidad', 'f');
     if (movementAmountError) {
       showError(movementAmountError);
       return;
     }
-    const quantity = Number(movementForm.quantity);
+    const quantity = parsedMovement.value;
     if (movementForm.type !== 'adjust' && !Number.isFinite(quantity)) { showError('Indica una cantidad válida.'); return; }
     if (movementForm.type === 'out' && quantity > selectedItem.current_quantity) {
       showError('La salida no puede superar las existencias disponibles.');
       return;
     }
-    if (movementForm.type === 'adjust' && (!Number.isFinite(Number(movementForm.new_quantity)) || Number(movementForm.new_quantity) < 0)) {
+    if (movementForm.type === 'adjust' && parsedMovement.value < 0) {
       showError('El saldo ajustado debe ser un número mayor o igual a cero.'); return;
     }
     const newQuantity = movementForm.type === 'adjust'
-      ? Number(movementForm.new_quantity)
+      ? parsedMovement.value
       : movementForm.type === 'in'
         ? selectedItem.current_quantity + quantity
         : selectedItem.current_quantity - quantity;
@@ -370,7 +399,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
     const formulaUnitLabel = selectedItem.formula_unit === 'weight' ? 'g' : '%';
     const recentMovements = movements
       .filter(m => m.item_id === selectedItem.id)
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      .sort((a, b) => `${(b as InventoryMovement & { created_at?: string }).created_at || ''} ${b.date || ''}`.localeCompare(`${(a as InventoryMovement & { created_at?: string }).created_at || ''} ${a.date || ''}`))
       .slice(0, 10);
 
     return (
@@ -383,7 +412,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
             Volver
           </button>
           <div className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold ${health === 'critical' ? 'bg-[#F8E1DA] text-[#9E3B2B]' : health === 'low' ? 'bg-[#FBEAD2] text-[#8A5517]' : 'bg-[#DFF0E4] text-[#20663B]'}`}>
-            {health === 'critical' ? 'Critico' : health === 'low' ? 'Stock bajo' : 'Stock ok'}
+            {inventoryAlertLabel(health, selectedItem.current_quantity)}
           </div>
         </div>
 
@@ -496,11 +525,11 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                     {movementForm.type === 'adjust' ? 'Cantidad ajustada' : 'Cantidad'}
                   </label>
                    <input
-                     type="number"
-                     step="0.01"
+                     type="text"
+                     inputMode="decimal"
                     value={movementForm.type === 'adjust' ? movementForm.new_quantity : movementForm.quantity}
                     onChange={(e) => {
-                      const val = Number(e.target.value);
+                      const val = e.target.value;
                       setMovementForm(movementForm.type === 'adjust'
                         ? { ...movementForm, new_quantity: val }
                         : { ...movementForm, quantity: val }
@@ -508,7 +537,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                     }}
                     className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                   />
-                  {(movementForm.type === 'adjust' ? Number(movementForm.new_quantity) < 0 : Number(movementForm.quantity) < 0) && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{movementForm.type === 'adjust' ? nonNegativeAmountError(Number(movementForm.new_quantity), 'La cantidad') : positiveAmountError(Number(movementForm.quantity), 'La cantidad')}</p>}
+                  {(() => { const parsed = parseSpanishQuantity(movementForm.type === 'adjust' ? movementForm.new_quantity : movementForm.quantity); if (!String(movementForm.type === 'adjust' ? movementForm.new_quantity : movementForm.quantity).trim()) return null; const message = !parsed.ok ? 'Use una coma decimal, por ejemplo 2,5. No se aceptan cantidades negativas.' : movementForm.type === 'adjust' ? nonNegativeAmountError(parsed.value, 'La cantidad', 'f') : positiveAmountError(parsed.value, 'La cantidad', 'f'); return message ? <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{message}</p> : null; })()}
                 </div>
                 <div>
                   <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Unidad</label>
@@ -688,7 +717,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 </select>
               </div>
               <div>
-                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Código</label>
+                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Código <abbr title="obligatorio" className="text-[#9E3B2B] no-underline">*</abbr></label>
                 <input
                   value={itemForm.code}
                   onChange={(e) => setItemForm({ ...itemForm, code: e.target.value })}
@@ -712,24 +741,24 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
               <div>
                 <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Cantidad actual</label>
                    <input
-                     type="number"
-                     step="0.01"
-                  value={itemForm.current_quantity}
-                  onChange={(e) => setItemForm({ ...itemForm, current_quantity: Number(e.target.value) })}
+                     type="text"
+                     inputMode="decimal"
+                  value={quantityText.current}
+                  onChange={(e) => setQuantityText(current => ({ ...current, current: e.target.value }))}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                 />
-                {nonNegativeAmountError(Number(itemForm.current_quantity), 'La cantidad') && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{nonNegativeAmountError(Number(itemForm.current_quantity), 'La cantidad')}</p>}
+                {(() => { const parsed = parseSpanishQuantity(quantityText.current); const message = !parsed.ok && quantityText.current.trim() ? 'La cantidad no es válida. Use una coma decimal, por ejemplo 2,5.' : parsed.ok ? nonNegativeAmountError(parsed.value, 'La cantidad', 'f') : null; return message ? <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{message}</p> : null; })()}
               </div>
               <div>
                 <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Mínimo</label>
                  <input
-                   type="number"
-                   step="0.01"
-                  value={itemForm.min_quantity}
-                  onChange={(e) => setItemForm({ ...itemForm, min_quantity: Number(e.target.value) })}
+                   type="text"
+                   inputMode="decimal"
+                  value={quantityText.min}
+                  onChange={(e) => setQuantityText(current => ({ ...current, min: e.target.value }))}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                 />
-                {nonNegativeAmountError(Number(itemForm.min_quantity), 'El mínimo') && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{nonNegativeAmountError(Number(itemForm.min_quantity), 'El mínimo')}</p>}
+                {(() => { const parsed = parseSpanishQuantity(quantityText.min); const message = !parsed.ok && quantityText.min.trim() ? 'El mínimo no es válido. Use una coma decimal, por ejemplo 2,5.' : parsed.ok ? nonNegativeAmountError(parsed.value, 'El mínimo') : null; return message ? <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{message}</p> : null; })()}
               </div>
               <div>
                 <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Unidad</label>

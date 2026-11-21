@@ -161,6 +161,7 @@ test('pending payment can be confirmed from the profile and the dashboard counte
   await page.getByRole('button', { name: /Pendiente Dia Cinco/ }).click();
   await expect(page.getByRole('button', { name: 'Confirmar pago', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
+  await page.getByRole('dialog', { name: '¿Confirmar pago?' }).getByRole('button', { name: 'Confirmar pago', exact: true }).click();
   await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
   await expect(page.getByRole('button', { name: 'Confirmar pago', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
@@ -199,6 +200,7 @@ test('scalar pending payment confirms without a membership period', async ({ pag
   await page.getByRole('button', { name: /^Grupo temporal\s+1$/i }).click();
   await page.getByRole('button', { name: /Grupo Temporal Visible/ }).click();
   await page.getByRole('button', { name: 'Confirmar pago', exact: true }).click();
+  await page.getByRole('dialog', { name: '¿Confirmar pago?' }).getByRole('button', { name: 'Confirmar pago', exact: true }).click();
   await expect(page.getByTestId('payment-state')).toHaveText('Pago al día');
   await expect(page.getByTestId('saved')).toContainText('"paymentStatus":"paid"');
 });
