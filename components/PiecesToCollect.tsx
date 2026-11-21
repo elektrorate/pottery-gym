@@ -249,8 +249,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
   };
   const handleCreateClick = () => {
     setEditingPiece(null);
-    const defaultOwner = selectedOwner || (sortedStudents.length > 0 ? `${sortedStudents[0].name} ${sortedStudents[0].surname || ''}`.trim() : '');
-    setForm({ owner: defaultOwner, description: '', status: '1era_quema', glazeType: '', deliveryDate: '', notes: '', extraCommentary: '' });
+    setForm({ owner: selectedOwner || '', description: '', status: '1era_quema', glazeType: '', deliveryDate: '', notes: '', extraCommentary: '' });
     setShowModal(true);
   };
   const handleSubmit = async (e: React.FormEvent) => {
@@ -728,7 +727,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                       onChange={(e) => setForm({ ...form, owner: e.target.value })}
                       className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] text-neutral-textMain appearance-none cursor-pointer focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none"
                     >
-                      <option value="" disabled>Seleccionar alumno</option>
+                      <option value="">Seleccione un alumno</option>
                       {sortedStudents.map(student => (
                         <option key={student.id} value={`${student.name} ${student.surname || ''}`.trim()}>
                           {presentPersonName(student.name, student.surname)} — {studentCategoryLabel(student.studentCategory)}
@@ -773,7 +772,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
 
                 <div className="pt-4 flex gap-3">
                   <button type="submit" disabled={isSubmitting} className="flex-1 min-h-[44px] px-4 py-2.5 bg-brand text-white rounded-[10px] text-[14px] font-semibold hover:bg-brand-hover active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed">
-                    {isSubmitting ? 'Guardando…' : 'Guardar cambios'}
+                    {isSubmitting ? 'Guardando…' : editingPiece ? 'Guardar cambios' : 'Guardar pieza'}
                   </button>
                 </div>
                 {editingPiece && (

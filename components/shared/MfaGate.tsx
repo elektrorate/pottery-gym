@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../supabaseClient';
-import { assessMfaAccess } from '../../utils/mfaSession';
+import { latestTotpVerifiedAtMs, resolveMfaAccess } from '../../utils/mfaSession';
+import { clearMfaTrust, readMfaTrust, writeMfaTrust } from '../../utils/mfaTrust';
 
 const MfaGate: React.FC<{children: React.ReactNode; userId: string; onLogout: () => Promise<void>}> = ({children, userId, onLogout}) => {
   const [ready, setReady] = useState(false);
@@ -22,7 +23,12 @@ const MfaGate: React.FC<{children: React.ReactNode; userId: string; onLogout: ()
       const [assurance, factors] = await Promise.all([supabase.auth.mfa.getAuthenticatorAssuranceLevel(), supabase.auth.mfa.listFactors()]);
       if (!active) return;
       if (assurance.error || factors.error) { setError('No se pudo comprobar el segundo factor. Vuelve a intentarlo.'); setLoading(false); return; }
-      const decision = assessMfaAccess(assurance.data.currentLevel, assurance.data.currentAuthenticationMethods);
+      const decision = resolveMfaAccess(
+        assurance.data.currentLevel,
+        assurance.data.currentAuthenticationMethods,
+        readMfaTrust(userId)
+      );
+      if (decision.status === 'allow') writeMfaTrust(userId, decision.verifiedAtMs);
       if (decision.status === 'reauthenticate') {
         setReady(false);
         setReauth(true);
@@ -61,6 +67,9 @@ const MfaGate: React.FC<{children: React.ReactNode; userId: string; onLogout: ()
     try {
       const result = await supabase.auth.mfa.challengeAndVerify({factorId,code});
       if (result.error) throw result.error;
+      const methods = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      const trustedAt = latestTotpVerifiedAtMs(methods.data?.currentAuthenticationMethods) ?? Date.now();
+      writeMfaTrust(userId, trustedAt);
       if (!mounted.current) return;
       setSecret(null); setQr(null); setCode('');
       // Reload authorized data with the upgraded session; never retain AAL1 caches.

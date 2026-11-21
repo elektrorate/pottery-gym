@@ -95,6 +95,22 @@ test('aal2 without a usable TOTP timestamp requires a full sign-in', async () =>
       ]),
       now
     );
+    assert.equal(
+      mod.assessMfaAccess('aal2', [{ method: 'otp', timestamp: String(now / 1000) }], now).status,
+      'allow'
+    );
+    assert.equal(
+      mod.resolveMfaAccess('aal2', ['otp'], now - day, now).status,
+      'allow'
+    );
+    assert.equal(
+      mod.resolveMfaAccess('aal2', ['otp'], now - 31 * day, now).status,
+      'step-up'
+    );
+    assert.equal(
+      mod.resolveMfaAccess('aal1', ['otp'], now, now).status,
+      'step-up'
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

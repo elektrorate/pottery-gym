@@ -2,7 +2,7 @@ import { isClassesRunningLow, needsStudentReview, studentEffectiveRemainingClass
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { Student, ClassSession, AppView, GiftCard, ClassAdjustmentIntent, WorkshopCapacityDefault, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
-import { countVisibleStudentsByCategory, getPendingMembershipPayments, isStudentArchived } from '../utils/studentLifecycle';
+import { countVisibleStudentsByCategory, getPendingMembershipPayments, isStudentArchived, studentHasPendingPayment } from '../utils/studentLifecycle';
 import { useWorkshopDate } from '../utils/useWorkshopDate';
 import DiagonalPattern from './shared/DiagonalPattern';
 import { capacityDefaultsToMap, enrollmentOnDate, getSessionOccupancy, sessionAvailabilityLabel } from '../utils/sessionCapacity';
@@ -100,8 +100,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
      const pendingStudents = students.filter(s => getPendingMembershipPayments(s).length > 0).length;
      const totalSessions = sessions.length;
      const byCategory = countVisibleStudentsByCategory(students, todayStr);
+     const activeMembership = students.filter(student => !isStudentArchived(student, todayStr)
+       && (student.studentCategory || 'membresia') === 'membresia'
+       && !studentHasPendingPayment(student)).length;
 
-     return { totalStudents, pendingStudents, totalSessions, byCategory, reviewStudents: students.filter(needsStudentReview).length };
+     return { totalStudents, pendingStudents, totalSessions, byCategory, activeMembership, reviewStudents: students.filter(needsStudentReview).length };
     }, [students, sessions, todayStr]);
 
   // ─── TODAY stats ───
@@ -260,7 +263,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
 
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4 lg:grid-cols-5">
           {([
-            ['Activos de membresía', globalStats.byCategory.membresia, 'members', 'students?category=membresia&tab=all'],
+            ['Activos de membresía', globalStats.activeMembership, 'members', 'students?category=membresia&tab=all'],
             ['Pendientes de pago', detailsReady ? pendingPaymentAlertCount : '—', 'payments', 'students?payment=pending'],
             ['Clases agotándose', bonusAlerts.length, 'bonuses', 'students?classes=low'],
             ['Alumnos Hoy', todayStats.totalAlumnos, 'students', `students?enrolled=${todayStr}`],

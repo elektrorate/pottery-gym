@@ -130,7 +130,7 @@ const DateField: React.FC<DateFieldProps> = ({
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <button type="button" aria-label="Mes anterior" className="h-8 w-8 rounded-lg hover:bg-neutral-alt" onClick={() => setView(current => shiftMonth(current.year, current.month, -1))}>‹</button>
-        <p className="text-[13px] font-semibold capitalize">{capitalizeEs(formatDate(`${view.year}-${String(view.month).padStart(2, '0')}-01`, 'monthYear'))}</p>
+        <p className="text-[13px] font-semibold">{capitalizeEs(formatDate(`${view.year}-${String(view.month).padStart(2, '0')}-01`, 'monthYear'))}</p>
         <button type="button" aria-label="Mes siguiente" className="h-8 w-8 rounded-lg hover:bg-neutral-alt" onClick={() => setView(current => shiftMonth(current.year, current.month, 1))}>›</button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-neutral-textHelper">

@@ -51,7 +51,7 @@ test('single lifecycle tabs and dashboard share the same membership counts', asy
   await page.getByRole('button', { name: /^Grupo temporal\s+1$/i }).click();
   await expect(page.getByRole('button', { name: /Grupo Temporal Visible/ })).toBeVisible();
   await page.getByRole('button', { name: 'Cambiar pantalla de prueba' }).click();
-  await expect(page.getByText('Activos de membresía').locator('..')).toContainText('3');
+  await expect(page.getByText('Activos de membresía').locator('..')).toContainText('2');
   await expect(page.getByText('Pendientes de pago', { exact: true }).locator('..')).toContainText('1');
 });
 

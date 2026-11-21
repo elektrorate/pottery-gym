@@ -1,4 +1,5 @@
 import { showError, showWarning } from '../context/toast';
+import { nonNegativeAmountError, positiveAmountError } from '../utils/contactValidation';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { InventoryItem, InventoryCategory, InventoryItemStatus, MovementType, InventoryMovement, StructuredFormula, FormulaComponent, ColorFamily, GlazeFinish } from '../types';
@@ -190,17 +191,16 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       return i.code.trim().toUpperCase() === normalizedCode;
     });
     if (!normalizedCode) {
-      showError('El codigo es obligatorio.');
+      showError('El código es obligatorio.');
       return false;
     }
     if (duplicated) {
-      showError('Ya existe un item con ese codigo.');
+      showError('Ya existe un material con ese código.');
       return false;
     }
-    if (Number(itemForm.current_quantity) < 0 || Number(itemForm.min_quantity) < 0) {
-      showError('Las cantidades no pueden ser negativas.');
-      return false;
-    }
+    const quantityError = nonNegativeAmountError(Number(itemForm.current_quantity), 'La cantidad')
+      || nonNegativeAmountError(Number(itemForm.min_quantity), 'El mínimo');
+    if (quantityError) return false;
 
     let parsedFormula: StructuredFormula | undefined;
     let formulaUnit: 'percent' | 'weight' | undefined;
@@ -211,7 +211,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       if (rows.length > 0) {
         const invalidRow = rows.find(row => Number.isNaN(row.value) || row.value < 0);
         if (invalidRow) {
-          showError('Los valores de la receta deben ser numericos y no negativos.');
+          showError('Los valores de la receta deben ser numéricos y no negativos.');
           return false;
         }
         parsedFormula = {
@@ -260,11 +260,14 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
       return;
     }
     if (movementForm.type === 'adjust' && Number.isNaN(Number(movementForm.new_quantity))) {
-      showError('La cantidad ajustada es invalida.');
+      showError('La cantidad ajustada no es válida.');
       return;
     }
-    if (movementForm.type !== 'adjust' && Number(movementForm.quantity) <= 0) {
-      showError('La cantidad debe ser mayor que 0.');
+    const movementAmountError = movementForm.type === 'adjust'
+      ? nonNegativeAmountError(Number(movementForm.new_quantity), 'La cantidad ajustada')
+      : positiveAmountError(Number(movementForm.quantity), 'La cantidad');
+    if (movementAmountError) {
+      showError(movementAmountError);
       return;
     }
     const quantity = Number(movementForm.quantity);
@@ -399,11 +402,11 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
             <div className="bg-neutral-sec rounded-2xl p-4">
-              <p className="text-[12px] font-semibold text-neutral-textSec">Minimo</p>
+              <p className="text-[12px] font-semibold text-neutral-textSec">Mínimo</p>
               <p className="text-[16px] font-bold text-neutral-textMain mt-1">{selectedItem.min_quantity ?? 'Sin definir'}</p>
             </div>
             <div className="bg-neutral-sec rounded-2xl p-4">
-              <p className="text-[12px] font-semibold text-neutral-textSec">Ubicacion</p>
+              <p className="text-[12px] font-semibold text-neutral-textSec">Ubicación</p>
               <p className="text-[16px] font-bold text-neutral-textMain mt-1">{selectedItem.location || 'Estudio'}</p>
             </div>
             <div className="bg-neutral-sec rounded-2xl p-4">
@@ -414,7 +417,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
             <div className="bg-neutral-sec rounded-2xl p-4">
-              <p className="text-[12px] font-semibold text-neutral-textSec">Codigo proveedor</p>
+              <p className="text-[12px] font-semibold text-neutral-textSec">Código proveedor</p>
               <p className="text-[16px] font-bold text-neutral-textMain mt-1">{selectedItem.supplier_code || 'Sin definir'}</p>
             </div>
             <div className="bg-neutral-sec rounded-2xl p-4">
@@ -495,7 +498,6 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                    <input
                      type="number"
                      step="0.01"
-                     min="0"
                     value={movementForm.type === 'adjust' ? movementForm.new_quantity : movementForm.quantity}
                     onChange={(e) => {
                       const val = Number(e.target.value);
@@ -506,6 +508,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                     }}
                     className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                   />
+                  {(movementForm.type === 'adjust' ? Number(movementForm.new_quantity) < 0 : Number(movementForm.quantity) < 0) && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{movementForm.type === 'adjust' ? nonNegativeAmountError(Number(movementForm.new_quantity), 'La cantidad') : positiveAmountError(Number(movementForm.quantity), 'La cantidad')}</p>}
                 </div>
                 <div>
                   <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Unidad</label>
@@ -673,7 +676,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
           <form onSubmit={handleSubmitItem} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Categoria</label>
+                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Categoría</label>
                 <select
                   value={itemForm.category}
                   onChange={(e) => setItemForm({ ...itemForm, category: e.target.value as InventoryCategory })}
@@ -685,7 +688,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 </select>
               </div>
               <div>
-                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Codigo</label>
+                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Código</label>
                 <input
                   value={itemForm.code}
                   onChange={(e) => setItemForm({ ...itemForm, code: e.target.value })}
@@ -711,22 +714,22 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                    <input
                      type="number"
                      step="0.01"
-                     min="0"
                   value={itemForm.current_quantity}
                   onChange={(e) => setItemForm({ ...itemForm, current_quantity: Number(e.target.value) })}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                 />
+                {nonNegativeAmountError(Number(itemForm.current_quantity), 'La cantidad') && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{nonNegativeAmountError(Number(itemForm.current_quantity), 'La cantidad')}</p>}
               </div>
               <div>
-                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Minimo</label>
+                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Mínimo</label>
                  <input
                    type="number"
                    step="0.01"
-                   min="0"
                   value={itemForm.min_quantity}
                   onChange={(e) => setItemForm({ ...itemForm, min_quantity: Number(e.target.value) })}
                   className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
                 />
+                {nonNegativeAmountError(Number(itemForm.min_quantity), 'El mínimo') && <p role="alert" className="mt-1 text-[12px] text-[#9E3B2B]">{nonNegativeAmountError(Number(itemForm.min_quantity), 'El mínimo')}</p>}
               </div>
               <div>
                 <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Unidad</label>
@@ -741,7 +744,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Ubicacion</label>
+                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Ubicación</label>
                 <input
                   value={itemForm.location}
                   onChange={(e) => setItemForm({ ...itemForm, location: e.target.value })}
@@ -750,7 +753,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                 />
               </div>
               <div>
-                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Proveedor / Codigo</label>
+                <label className="block text-[12px] font-semibold text-neutral-textSec mb-2">Proveedor / Código</label>
                 <input
                   value={itemForm.supplier_code}
                   onChange={(e) => setItemForm({ ...itemForm, supplier_code: e.target.value })}
@@ -845,7 +848,6 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                       <input
                         type="number"
                         step="0.01"
-                        min="0"
                         value={row.value}
                         onChange={(e) => updateFormulaRow(idx, { value: Number(e.target.value) })}
                         className="w-full min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[15px] focus:border-brand focus:ring-2 focus:ring-brand/15 outline-none placeholder:text-neutral-textHelper"
@@ -875,7 +877,7 @@ const InventoryView: React.FC<InventoryViewProps> = ({ items, movements, onAddIt
                   onClick={addFormulaRow}
                   className="mt-3 min-h-[44px] px-4 py-2.5 bg-white border border-neutral-border rounded-[10px] text-[14px] font-semibold text-neutral-textMain hover:border-arena hover:text-brand transition-colors"
                 >
-                  Anadir material
+                  Añadir material
                 </button>
               </div>
             )}

@@ -12,6 +12,7 @@ import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
 import { pluralWord } from '../utils/pluralize';
+import { emailError, phoneError, positiveAmountError } from '../utils/contactValidation';
 import { studentOptionLabel } from '../utils/classTypeLabels';
 import DiagonalPattern from './shared/DiagonalPattern';
 
@@ -157,6 +158,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
   const [cardToConfirmPayment, setCardToConfirmPayment] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState<GiftCardForm>(createInitialForm);
+  const [priceText, setPriceText] = useState('');
   const [activeTab, setActiveTab] = useState<GiftCardTab>('active');
   const [searchQuery, setSearchQuery] = useState('');
   const [recipientSearch, setRecipientSearch] = useState('');
@@ -234,10 +236,11 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
       paymentStatus: card.paymentStatus || 'pending', status: lifecycleStatus === 'consumed' ? 'consumed' : card.status || 'active', sessionsUsed: card.sessionsUsed || 0,
       issuedDate: card.issuedDate?.slice(0, 10) || '', internalNotes: card.extraCommentary || ''
     });
+    setPriceText(card.price ? String(card.price) : '');
     setShowModal(true);
   };
 
-  const handleCreateClick = () => { setEditingCard(null); setRecipientSearch(''); setForm(createInitialForm()); setShowModal(true); };
+  const handleCreateClick = () => { setEditingCard(null); setRecipientSearch(''); setForm(createInitialForm()); setPriceText(''); setShowModal(true); };
 
   const setField = <K extends keyof GiftCardForm>(key: K, value: GiftCardForm[K]) => setForm(current => {
     if (key === 'status' || key === 'sessionsUsed' || (editingCard && key === 'paymentStatus')) return current;
@@ -273,6 +276,11 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
     }
     if (!form.buyer.trim() || !form.buyerPhone.trim() || !form.buyerEmail.trim() || !form.recipient.trim()) {
       showError('Completa comprador, teléfono, email y destinatario.');
+      return;
+    }
+    if (phoneError(form.buyerPhone) || emailError(form.buyerEmail) || emailError(form.recipientEmail)) return;
+    if (!priceText.trim() || positiveAmountError(Number(priceText), 'El importe')) {
+      if (!priceText.trim()) setPriceText('0');
       return;
     }
     if ((!editingCard && ![1, 2, 4].includes(form.numClasses)) || !form.validityMonths) {
@@ -420,7 +428,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
       </div>
 
        {showModal && <div className="fixed inset-0 z-[100] flex items-end bg-[#2F1E17]/45 p-0 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-5"><form onSubmit={handleSubmit} className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[#FFFCF8] text-[#2F211B] shadow-[0_24px_70px_rgba(59,35,24,0.2)] sm:h-auto sm:max-h-[94dvh] sm:max-w-3xl sm:rounded-[24px] sm:border sm:border-[#E8D9CC]"><header className="flex shrink-0 items-start justify-between border-b border-[#E8D9CC] px-5 py-4 sm:px-8"><div><p className="ui-label uppercase tracking-[0.16em] text-[#B07D4E]">Gestión de bono regalo</p><h2 className="ui-section-title mt-1 font-['Playfair_Display'] text-[#7B3F22]">{editingCard ? 'Editar bono regalo' : 'Nuevo bono regalo'}</h2><p className="ui-meta mt-1">Las clases se descuentan al pasar lista.</p></div><button type="button" onClick={() => setShowModal(false)} className="flex h-10 w-10 items-center justify-center rounded-full text-[#8B6B5E] hover:bg-[#F3E7DC]" aria-label="Cerrar"><svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M6 18 18 6M6 6l12 12" /></svg></button></header><div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 custom-scrollbar sm:px-8">
-          <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">01 · Comprador</legend><div className="grid gap-3 md:grid-cols-2"><Field label="Nombre del comprador" required value={form.buyer} onChange={value => setField('buyer', value)} placeholder="Nombre completo" /><Field label="Teléfono" required type="tel" value={form.buyerPhone} onChange={value => setField('buyerPhone', value)} placeholder="+34 600 000 000" /><Field label="Email" required type="email" value={form.buyerEmail} onChange={value => setField('buyerEmail', value)} placeholder="comprador@email.com" /></div></fieldset>
+          <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">01 · Comprador</legend><div className="grid gap-3 md:grid-cols-2"><Field label="Nombre del comprador" required value={form.buyer} onChange={value => setField('buyer', value)} placeholder="Nombre completo" /><Field label="Teléfono" required type="tel" value={form.buyerPhone} onChange={value => setField('buyerPhone', value)} placeholder="+34 600 000 000" error={phoneError(form.buyerPhone)} /><Field label="Email" required type="email" value={form.buyerEmail} onChange={value => setField('buyerEmail', value)} placeholder="comprador@email.com" error={emailError(form.buyerEmail)} /></div></fieldset>
           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4">
             <legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">02 · Destinatario</legend>
             <div className="grid gap-3 md:grid-cols-2">
@@ -436,11 +444,11 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
               {form.recipientStudentId && <AdvancedDetails className="md:col-span-2"><p>Identificador del alumno: {form.recipientStudentId}</p></AdvancedDetails>}
               {termsLocked && <p className="md:col-span-2 text-[12px] text-[#6E5145]">El destinatario y las condiciones no se pueden cambiar tras un movimiento.</p>}
               <Field label="Nombre del destinatario" required value={form.recipient} onChange={value => setField('recipient', value)} placeholder="Nombre mostrado en el bono regalo" />
-              <Field label="Email del destinatario" type="email" value={form.recipientEmail} onChange={value => setField('recipientEmail', value)} placeholder="Opcional" />
+              <Field label="Email del destinatario" type="email" value={form.recipientEmail} onChange={value => setField('recipientEmail', value)} placeholder="Opcional" error={emailError(form.recipientEmail)} />
               <label className="md:col-span-2"><span className="mb-1.5 block text-[11px] font-semibold text-[#6E5145]">Dedicatoria personalizada</span><textarea value={form.dedication} onChange={event => setField('dedication', event.target.value)} maxLength={180} rows={2} className="w-full resize-none rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#C68952]" placeholder="Un mensaje breve para la experiencia..." /></label>
             </div>
           </fieldset>
-           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">03 · Bono regalo</legend><div className="grid gap-3 md:grid-cols-2"><SelectField label="Tipo de clase" value={form.type} disabled={termsLocked} onChange={value => setField('type', value as GiftCard['type'])} options={[['modelado', 'Modelado'], ['torno', 'Torno']]} /><SelectField label="Número de sesiones" value={String(form.numClasses)} disabled={termsLocked} onChange={value => setField('numClasses', Number(value))} options={[...(![1, 2, 4].includes(form.numClasses) ? [[String(form.numClasses), `${form.numClasses} sesiones (existente)`]] : []), ['1', '1 sesión'], ['2', '2 sesiones'], ['4', '4 sesiones']]} /><SelectField label="Formato de entrega" value={form.deliveryFormat} onChange={value => setField('deliveryFormat', value as NonNullable<GiftCard['deliveryFormat']>)} options={[['digital', 'Digital'], ['physical', 'Físico']]} /><Field label="Importe del bono (€)" type="number" value={String(form.price || '')} onChange={value => setField('price', Number(value) || 0)} placeholder="0" /><SelectField label="Vigencia" value={String(form.validityMonths)} disabled={termsLocked} onChange={value => handleValidityChange(Number(value) as NonNullable<GiftCard['validityMonths']>)} options={[['3', '3 meses'], ['6', '6 meses'], ['8', '8 meses'], ['12', '12 meses']]} /><div className="flex items-end rounded-[10px] bg-[#F8EEE5] px-3 py-2"><div><span className="block text-[11px] uppercase tracking-[0.12em] text-[#9B8175]">Regla</span><strong className="text-[12px] text-[#7B3F22]">{editingCard ? `Caducidad guardada: ${formatDateOnly(editingCard.expiryDate)}` : 'La caducidad se calcula al guardar.'}</strong></div></div></div></fieldset>
+           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4"><legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">03 · Bono regalo</legend><div className="grid gap-3 md:grid-cols-2"><SelectField label="Tipo de clase" value={form.type} disabled={termsLocked} onChange={value => setField('type', value as GiftCard['type'])} options={[['modelado', 'Modelado'], ['torno', 'Torno']]} /><SelectField label="Número de sesiones" value={String(form.numClasses)} disabled={termsLocked} onChange={value => setField('numClasses', Number(value))} options={[...(![1, 2, 4].includes(form.numClasses) ? [[String(form.numClasses), `${form.numClasses} sesiones (existente)`]] : []), ['1', '1 sesión'], ['2', '2 sesiones'], ['4', '4 sesiones']]} /><SelectField label="Formato de entrega" value={form.deliveryFormat} onChange={value => setField('deliveryFormat', value as NonNullable<GiftCard['deliveryFormat']>)} options={[['digital', 'Digital'], ['physical', 'Físico']]} /><Field label="Importe del bono (€)" type="text" inputMode="decimal" value={priceText} onChange={value => { setPriceText(value); const parsed = Number(value); if (value.trim() === '') setField('price', 0); else if (Number.isFinite(parsed)) setField('price', parsed); }} placeholder="0" error={priceText.trim() ? positiveAmountError(Number(priceText), 'El importe') : null} /><SelectField label="Vigencia" value={String(form.validityMonths)} disabled={termsLocked} onChange={value => handleValidityChange(Number(value) as NonNullable<GiftCard['validityMonths']>)} options={[['3', '3 meses'], ['6', '6 meses'], ['8', '8 meses'], ['12', '12 meses']]} /><div className="flex items-end rounded-[10px] bg-[#F8EEE5] px-3 py-2"><div><span className="block text-[11px] uppercase tracking-[0.12em] text-[#9B8175]">Regla</span><strong className="text-[12px] text-[#7B3F22]">{editingCard ? `Caducidad guardada: ${formatDateOnly(editingCard.expiryDate)}` : 'La caducidad se calcula al guardar.'}</strong></div></div></div></fieldset>
           <fieldset className="rounded-[14px] border border-[#E8D9CC] bg-white p-4">
             <legend className="px-1 text-[11px] font-bold uppercase tracking-[0.15em] text-[#7B3F22]">04 · Control interno</legend>
             <div className="grid gap-3 md:grid-cols-2">
@@ -470,7 +478,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
   );
 };
 
-const Field: React.FC<{ label: string; value: string; onChange: (value: string) => void; type?: string; required?: boolean; disabled?: boolean; placeholder?: string }> = ({ label, value, onChange, type = 'text', required, disabled, placeholder }) => <label><span className="ui-label mb-1.5 block text-[#6E5145]">{label}{required && <span className="text-[#9C4235]"> *</span>}</span><input aria-label={label} required={required} disabled={disabled} type={type} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="ui-control w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 disabled:opacity-60" /></label>;
+const Field: React.FC<{ label: string; value: string; onChange: (value: string) => void; type?: string; inputMode?: 'text' | 'decimal' | 'tel' | 'email'; required?: boolean; disabled?: boolean; placeholder?: string; error?: string | null }> = ({ label, value, onChange, type = 'text', inputMode, required, disabled, placeholder, error }) => <label><span className="ui-label mb-1.5 block text-[#6E5145]">{label}{required && <span className="text-[#9C4235]"> *</span>}</span><input aria-label={label} aria-invalid={error ? true : undefined} required={required} disabled={disabled} type={type} inputMode={inputMode} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} className="ui-control w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 disabled:opacity-60" />{error && <span role="alert" className="mt-1 block text-[12px] text-[#9C4235]">{error}</span>}</label>;
 
 const SelectField: React.FC<{ label: string; value: string; onChange: (value: string) => void; options: string[][]; disabled?: boolean }> = ({ label, value, onChange, options, disabled }) => (
   <label>
