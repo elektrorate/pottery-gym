@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
@@ -121,6 +121,13 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
     const navigate = useNavigate();
     const { profile } = useAuth();
     const { loadError, loadAllData } = useData();
+
+    useEffect(() => {
+        if (!isMenuOpen) return;
+        const close = () => setIsMenuOpen(false);
+        window.addEventListener('resize', close);
+        return () => window.removeEventListener('resize', close);
+    }, [isMenuOpen]);
 
     const handleLogout = async () => {
         await logoutAndRedirect('/login');
@@ -324,7 +331,7 @@ const TalleristaLayout: React.FC<TalleristaLayoutProps> = ({ children }) => {
                                     onClick={() => { handleLogout(); setIsMenuOpen(false); }}
                                     className="w-full text-left px-4 py-3 text-brand font-semibold text-[14px] hover:opacity-70 transition-opacity"
                                 >
-                                    Cerrar sesión
+                                    Salir
                                 </button>
                             </div>
                         </div>

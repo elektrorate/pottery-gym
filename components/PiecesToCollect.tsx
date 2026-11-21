@@ -164,7 +164,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
     extraCommentary: ''
   });
 
-  const sortedStudents = useMemo(() => [...students].sort((a, b) => a.name.localeCompare(b.name)), [students]);
+  const sortedStudents = useMemo(() => [...students].filter(student => !student.archivedAt || (editingPiece && `${student.name} ${student.surname || ''}`.trim() === editingPiece.owner)).sort((a, b) => `${a.name} ${a.surname || ''}`.localeCompare(`${b.name} ${b.surname || ''}`, 'es')), [students, editingPiece]);
 
   // Map owner name → student for fast lookup
   const ownerStudentMap = useMemo(() => {
@@ -293,7 +293,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
       if (selectedOwner && p.owner.toUpperCase() !== selectedOwner.toUpperCase()) return false;
       if (searchQuery.trim() && !selectedOwner) {
         const q = searchQuery.trim().toLowerCase();
-        if (!p.owner.toLowerCase().includes(q)) return false;
+        if (!`${p.owner} ${p.description || ''} ${p.notes || ''}`.toLocaleLowerCase('es-ES').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return false;
       }
       if (categoryFilter !== 'todos') {
         const student = getStudentForPiece(p);
@@ -315,7 +315,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
       if (selectedOwner && p.owner.toUpperCase() !== selectedOwner.toUpperCase()) return false;
       if (searchQuery.trim() && !selectedOwner) {
         const q = searchQuery.trim().toLowerCase();
-        if (!p.owner.toLowerCase().includes(q)) return false;
+        if (!`${p.owner} ${p.description || ''} ${p.notes || ''}`.toLocaleLowerCase('es-ES').normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) return false;
       }
       if (categoryFilter !== 'todos') {
         const student = getStudentForPiece(p);

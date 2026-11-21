@@ -771,7 +771,7 @@ const SettingsView: React.FC = () => {
             <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 mt-3">
               {[
                 { key: 'students' as const, label: 'Alumnos', count: students.length, color: 'text-[#9E3B2B] bg-[#F8E1DA] border-[#EFC9BE]' },
-                { key: 'sessions' as const, label: 'Sesiones', count: sessions.length, color: 'text-blue-600 bg-blue-50 border-blue-100' },
+                { key: 'sessions' as const, label: 'Sesiones del respaldo', count: sessions.length, color: 'text-blue-600 bg-blue-50 border-blue-100' },
                 { key: 'teachers' as const, label: 'Profes', count: teachers.length, color: 'text-purple-600 bg-purple-50 border-purple-100' },
                 { key: 'pieces' as const, label: 'Piezas', count: pieces.length, color: 'text-amber-700 bg-amber-50 border-amber-100' },
                 { key: 'giftcards' as const, label: 'Bonos regalo', count: giftCards.length, color: 'text-emerald-600 bg-emerald-50 border-emerald-100' },

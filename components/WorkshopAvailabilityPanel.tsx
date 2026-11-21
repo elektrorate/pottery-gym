@@ -431,7 +431,7 @@ const WorkshopAvailabilityPanel = React.forwardRef<WorkshopAvailabilityHandle>(f
         >
           <span>
             <span className="eyebrow block text-brand">C · Disponibilidad por sesión</span>
-            <span className="ui-section-title mt-1 block text-neutral-textMain">Sesiones programadas</span>
+            <span className="ui-section-title mt-1 block text-neutral-textMain">Sesiones programadas en el periodo</span>
           </span>
           <span className="flex items-center gap-3">
             <span className="rounded-full bg-brand-soft px-3 py-1.5 text-[13px] font-semibold text-brand">{sesionLabel(filteredSessions.length)}</span>

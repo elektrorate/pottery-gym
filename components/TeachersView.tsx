@@ -1,5 +1,9 @@
-import { showError, showWarning } from '../context/toast';
-import React, { useMemo, useState } from 'react';
+import { showError, showSuccess, showWarning } from '../context/toast';
+import { includesFolded, compareEs } from '../utils/textSearch';
+import { lengthError, LIMITS } from '../utils/fieldLimits';
+import { duplicateContactMessage, duplicateTeacherContact, personLabel } from '../utils/duplicateContact';
+import { mapUserFacingError } from '../utils/userFacingError';
+import React, { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Teacher, ClassSession } from '../types';
 import { AdvancedDetails } from './shared/AdvancedDetails';
@@ -36,14 +40,12 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
   const [teacherToDelete, setTeacherToDelete] = useState<string | null>(null);
   const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingTeacherDuplicate, setPendingTeacherDuplicate] = useState<Teacher | null>(null);
+  const skipTeacherDuplicate = useRef(false);
 
   const filteredTeachers = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return teachers;
-    return teachers.filter(t => {
-      const full = `${t.name} ${t.surname || ''}`.toLowerCase();
-      return full.includes(query) || (t.specialty || '').toLowerCase().includes(query);
-    });
+    return [...teachers].filter(t => includesFolded(`${t.name} ${t.surname || ''} ${t.specialty || ''} ${t.email || ''} ${t.phone || ''}`, searchQuery))
+      .sort((a, b) => compareEs(`${a.name} ${a.surname || ''}`, `${b.name} ${b.surname || ''}`));
   }, [teachers, searchQuery]);
 
   const getTeacherName = (teacherId?: string) => {
@@ -77,11 +79,17 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    if (!form.name.trim()) {
-      showError('El nombre es obligatorio.');
+    const nameProblem = !form.name.trim() ? 'El nombre es obligatorio.' : lengthError(form.name, LIMITS.name, 'El nombre');
+    if (nameProblem || lengthError(form.surname, LIMITS.name, 'Los apellidos') || lengthError(form.notes, LIMITS.note, 'Las notas') || emailError(form.email) || phoneError(form.phone)) {
+      showError(nameProblem || lengthError(form.surname, LIMITS.name, 'Los apellidos') || lengthError(form.notes, LIMITS.note, 'Las notas') || emailError(form.email) || phoneError(form.phone) || 'Revise el formulario.');
       return;
     }
-    if (emailError(form.email) || phoneError(form.phone)) return;
+    const duplicate = duplicateTeacherContact({ id: editingTeacher?.id, email: form.email, phone: form.phone }, teachers);
+    if (duplicate && !skipTeacherDuplicate.current) {
+      setPendingTeacherDuplicate(duplicate);
+      return;
+    }
+    skipTeacherDuplicate.current = false;
     setIsSubmitting(true);
     // CRITICAL FIX: send empty strings (not undefined) for optional fields.
     // DataContext.updateTeacher converts '' to null so Supabase clears old values.
@@ -97,8 +105,9 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
       if (editingTeacher) await onUpdateTeacher(editingTeacher.id, payload);
       else await onAddTeacher(payload);
       setShowModal(false);
+      showSuccess(editingTeacher ? 'Profesor actualizado.' : 'Profesor creado.');
     } catch (error: any) {
-      showError(error?.message || 'No se pudo guardar. Revisa los datos e inténtalo de nuevo.');
+      showError(mapUserFacingError(error, 'No se pudo guardar. Revise los datos e inténtelo de nuevo.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -147,7 +156,12 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
             const concludedSessions = teacherSessions(sessions, teacher.id, true);
             const isExpanded = expandedTeacherId === teacher.id;
             const calendarHref = `/calendar?teacher=${encodeURIComponent(teacher.id)}`;
-            const studentLabel = (count: number) => pluralize(count, 'alumno', 'alumnos');
+            const studentLabel = (session: ClassSession) => {
+              const count = session.attendancePolicyVersion === 2 && session.studentIds
+                ? session.studentIds.filter(id => session.businessStateByStudentId?.[id]?.reservationState !== 'cancelled').length
+                : session.students.length;
+              return pluralize(count, 'alumno', 'alumnos');
+            };
             return (
               <React.Fragment key={teacher.id}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(220px,1.5fr)_minmax(150px,1fr)_minmax(180px,1.1fr)_128px_minmax(220px,260px)] gap-3 md:gap-4 items-center px-3 md:px-4 py-3 border-b border-neutral-border hover:bg-neutral-base transition-colors">
@@ -156,7 +170,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                      <div className="min-w-0"><h3 className="ui-card-title text-neutral-textMain truncate">{fullName}</h3><p className="ui-meta truncate mt-0.5">{teacher.specialty || 'Sin especialidad'}{(teacher.phone || teacher.email) ? ` · ${teacher.phone || teacher.email}` : ''}</p></div>
                   </div>
                   <span className="hidden md:inline-flex justify-self-start px-2 py-1 rounded-md bg-neutral-sec text-neutral-textSec text-[12px] font-semibold truncate max-w-full">{teacher.specialty || 'Sin especialidad'}</span>
-                   <div className="hidden md:block min-w-0 ui-data text-neutral-textSec truncate">{teacher.email || teacher.phone || 'Sin contacto'}</div>
+                   <div className="hidden md:block min-w-0 ui-data text-neutral-textSec truncate">{[teacher.phone, teacher.email].filter(Boolean).join(' · ') || 'Sin contacto'}</div>
                   <span className="justify-self-end md:justify-self-start text-[14px] font-semibold text-neutral-textMain leading-tight">
                     <span className="block">{pluralize(scheduledSessions.length, 'programada', 'programadas')}</span>
                     <span className="block text-[14px] font-medium text-neutral-textSec">{pluralize(concludedSessions.length, 'concluida', 'concluidas')}</span>
@@ -181,7 +195,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                             return (
                               <Link key={session.id} to={`${calendarHref}&date=${session.date}&sessionId=${encodeURIComponent(session.id)}`} className="p-3 bg-white rounded-xl border border-neutral-border hover:border-brand/40">
                                 <p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {formatTime(session.startTime)} - {formatTime(session.endTime)}</p>
-                                <p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>
+                                <p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session)}</p>
                                 {isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}
                               </Link>
                             );
@@ -199,7 +213,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
                           {concludedSessions.slice(0, 3).map(session => {
                             const blocks = teacherBlockActivities(session, teacher.id);
                             const isSub = session.teacherSubstituteId === teacher.id && session.teacherId !== teacher.id;
-                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {formatTime(session.startTime)} - {formatTime(session.endTime)}</p><p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session.students.length)}</p>{isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
+                            return <div key={session.id} className="p-3 bg-white rounded-xl border border-neutral-border"><p className="text-[13px] font-semibold text-neutral-textMain">{formatSessionDate(session.date)} · {formatTime(session.startTime)} - {formatTime(session.endTime)}</p><p className="text-[14px] text-neutral-textSec mt-1">{sessionTypeLabel(session.classType)}{blocks.length ? ` · ${blocks.map(activityTypeLabel).join(', ')}` : ''} · {studentLabel(session)}</p>{isSub && <p className="text-[13px] font-semibold text-brand mt-1">Reemplazo de {getTeacherName(session.teacherId)}</p>}</div>;
                           })}
                         </div>
                       )}
@@ -218,7 +232,7 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
              <h3 id="teacher-dialog-title" className="ui-section-title text-neutral-textMain mb-5">
               {editingTeacher ? 'Editar profesor' : 'Nuevo profesor'}
             </h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form noValidate onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   value={form.name}
@@ -288,13 +302,22 @@ const TeachersView: React.FC<TeachersViewProps> = ({ teachers, sessions, onAddTe
               <DangerZone
                 description={`Eliminar a ${presentPersonName(editingTeacher.name, editingTeacher.surname)} borra su ficha. Las clases ya concluidas conservan el nombre, pero dejan de estar vinculadas.`}
                 actionLabel="Eliminar profesor"
-                onAction={() => setTeacherToDelete(editingTeacher.id)}
+                onAction={() => {
+                  const scheduled = teacherSessions(sessions, editingTeacher.id, false);
+                  const substitutions = sessions.filter(session => session.teacherSubstituteId === editingTeacher.id && session.teacherId !== editingTeacher.id && !session.completedAt);
+                  if (scheduled.length || substitutions.length) {
+                    showError(`No se puede eliminar todavía: hay ${scheduled.length} ${scheduled.length === 1 ? 'sesión programada' : 'sesiones programadas'}${substitutions.length ? ` y ${substitutions.length} ${substitutions.length === 1 ? 'reemplazo' : 'reemplazos'}` : ''}. Reasigne esas clases antes de borrar la ficha.`);
+                    return;
+                  }
+                  setTeacherToDelete(editingTeacher.id);
+                }}
               />
             )}
           </div>
         </div>
       )}
 
+      <ConfirmModal isOpen={!!pendingTeacherDuplicate} title="Contacto ya registrado" message={pendingTeacherDuplicate ? duplicateContactMessage('profesor', personLabel(pendingTeacherDuplicate), form.email, form.phone) : ''} confirmText="Guardar de todos modos" isDestructive={false} onConfirm={() => { skipTeacherDuplicate.current = true; setPendingTeacherDuplicate(null); void handleSubmit({ preventDefault() {} } as React.FormEvent); }} onCancel={() => setPendingTeacherDuplicate(null)} />
       <ConfirmModal
         isOpen={!!teacherToDelete}
         title={`¿Eliminar a ${teacherPendingName}?`}
