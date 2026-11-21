@@ -1,4 +1,5 @@
--- Rollback for 20261121103000_scalar_pack_discount_exception.sql
+-- This rollback fails if membership_override rows with period_id NULL exist; those must be handled first.
+-- Rollback for 20261121084845_scalar_pack_discount_exception.sql
 -- Restores the membership-override check that requires a period, and the previous
 -- credit-profile flag. Does not rewrite student, session, or exception rows.
 -- After this rollback, approving a discounting exception for a class pack fails again
