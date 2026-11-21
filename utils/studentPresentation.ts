@@ -65,7 +65,28 @@ export function studentMatchesSessionAudience(
   return studentHasClassBono(student, giftCards);
 }
 
-/** Manual credits are a separate ledger. This line explains them without adding them to the counter. */
+export function manualCreditRemaining(student: Pick<Student, 'manualCredits'>, mode?: 'added' | 'previous') {
+  return (student.manualCredits || [])
+    .filter(credit => mode === 'previous' ? credit.mode === 'reconcile_legacy' : mode === 'added' ? credit.mode !== 'reconcile_legacy' : true)
+    .reduce((sum, credit) => sum + Math.max(0, credit.remainingClasses || 0), 0);
+}
+
+/**
+ * Pack or membership balance, plus manual classes so the counter matches what can be used.
+ * «Quedan 2 de 4 clases del bono + 1 clase añadida».
+ */
+export function studentClassesAvailableLabel(student: Student, giftCards?: GiftCard[]): string {
+  const base = studentBalanceLabel(student, giftCards);
+  const added = manualCreditRemaining(student, 'added');
+  const previous = manualCreditRemaining(student, 'previous');
+  const extras: string[] = [];
+  if (added > 0) extras.push(`${claseLabel(added)} ${added === 1 ? 'añadida' : 'añadidas'}`);
+  if (previous > 0) extras.push(`${claseLabel(previous)} ${previous === 1 ? 'anterior registrada' : 'anteriores registradas'}`);
+  if (!extras.length) return base;
+  return `${base} + ${extras.join(' + ')}`;
+}
+
+/** Manual credits are a separate ledger. This line explains them beside the counter. */
 export function manualCreditBreakdown(student: Pick<Student, 'manualCredits'>): string {
   const credits = student.manualCredits || [];
   const added = credits.filter(credit => credit.mode !== 'reconcile_legacy')

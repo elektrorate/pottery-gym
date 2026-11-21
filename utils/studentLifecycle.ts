@@ -1,7 +1,7 @@
 import { inferMembershipTier } from '../types';
 import type { Student, MembershipPeriod } from '../types';
 import { isNonMembershipCategory } from './classTypeLabels';
-import { formatDate, madridDateKey } from './dateFormat';
+import { addDaysToDateKey, formatDate, madridDateKey } from './dateFormat';
 import { assignedPackCoversBalance } from './studentPresentation';
 
 export type StudentLifecycle = 'active' | 'pending' | 'expired' | 'temporary' | 'archived';
@@ -199,6 +199,16 @@ export const addMembershipMonth = (date: string): string => {
   const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   return new Date(Date.UTC(year, month, Math.min(day, lastDay))).toISOString().slice(0, 10);
 };
+
+/**
+ * Inclusive last day of a membership period. Matches
+ * private.membership_month_end: (start + 1 month) - 1 day.
+ * A membership that starts on 21/11 is valid through 20/12.
+ */
+export const membershipPeriodEnd = (start: string): string => addDaysToDateKey(addMembershipMonth(start.slice(0, 10)), -1);
+
+export const validityUntilLabel = (date?: string | null) =>
+  date ? `Válido hasta ${formatDate(date)}` : 'Válido hasta: sin fecha';
 
 export const assertOrdinaryStudentUpdate = (student: Student, updates: Partial<Student>) => {
   if (!isManagedMembership(student)) return;

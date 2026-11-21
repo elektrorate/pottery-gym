@@ -23,8 +23,17 @@ export const getGiftCardLifecycle = (card: GiftCard, today: string, expiryDate?:
 
 export const sessionBusinessErrorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String((error as any)?.message || error || 'No se pudo guardar la sesión.');
+  if (/No-credit exception cannot bypass available credit/i.test(message) || /Original scalar pack payment is unpaid or unknown/i.test(message)) {
+    return 'El alumno todavía tiene clases del bono disponibles, pero el pago del bono está pendiente. Confirme el pago o use «Descontar una clase».';
+  }
+  if (/Membership override requires known original positive credit/i.test(message)) {
+    return 'No se puede descontar la clase: la membresía no tiene un saldo positivo conocido. Revise el período o deje asistir sin descontar.';
+  }
+  if (/Session exception is stale/i.test(message)) {
+    return 'La excepción quedó desactualizada. Vuelva a aprobarla de forma explícita antes de finalizar.';
+  }
   if (message.startsWith('Presence requires valid original credit')) {
-    return 'No se puede finalizar la asistencia: confirme el pago o pida al propietario una excepción para esta sesión.';
+    return 'No se puede finalizar la asistencia: confirme el pago o apruebe una excepción para esta sesión.';
   }
   if (message.startsWith('Only this workshop owner may approve an exception when the original membership is unpaid, expired or does not cover the session')) {
     return 'Solo el propietario del taller puede aprobar esta excepción cuando la membresía está pendiente, vencida o no cubre la sesión.';

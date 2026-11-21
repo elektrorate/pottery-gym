@@ -60,11 +60,16 @@ export const presentPersonName = (...parts: Array<string | null | undefined>) =>
   return joined ? presentDisplayName(joined) : '';
 };
 
-/** First letter of the given name and, when present, of the surname. */
+/**
+ * First letters of the first two words. Dashes and other punctuation split
+ * words, so «Ana-María López» is AM. A single word stays one letter.
+ */
 export const presentInitials = (name?: string | null, surname?: string | null) => {
-  const first = presentDisplayName((name ?? '').trim()).charAt(0);
-  const second = (surname ?? '').trim() ? presentDisplayName(surname!.trim()).charAt(0) : '';
-  return `${first}${second}`.toLocaleUpperCase(LOCALE);
+  const words = `${name ?? ''} ${surname ?? ''}`.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return words.slice(0, 2).map(word => {
+    const letter = Array.from(presentDisplayName(word)).find(isLetter);
+    return letter ? letter.toLocaleUpperCase(LOCALE) : '';
+  }).join('');
 };
 
 /** Capitalized plan name for display. Unknown tiers are title-cased; empty stays empty. */
