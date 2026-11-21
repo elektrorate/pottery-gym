@@ -12,6 +12,7 @@ import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
 import { pluralWord } from '../utils/pluralize';
+import { studentOptionLabel } from '../utils/classTypeLabels';
 import DiagonalPattern from './shared/DiagonalPattern';
 
 interface GiftCardViewProps {
@@ -427,7 +428,7 @@ const GiftCardView: React.FC<GiftCardViewProps> = ({ giftCards, students = [], o
               <SelectField label="Alumno destinatario" value={form.recipientStudentId} onChange={handleRecipientChange} disabled={termsLocked} options={[
                 ['', 'Seleccione un alumno'],
                 ...(!recipientAvailable && form.recipientStudentId ? [[form.recipientStudentId, 'Alumno ya vinculado']] : []),
-                ...matchingStudents.map(student => [student.id, `${student.name} ${student.surname || ''} | ${student.email || student.studentCategory || 'Alumno'}`])
+                ...matchingStudents.map(student => [student.id, studentOptionLabel(student)])
               ]} />
               <p className={`md:col-span-2 text-[12px] ${identityRequired && !recipientValid ? 'text-[#9C4235]' : 'text-[#6E5145]'}`} role="status">
                 {identityRequired && !recipientValid ? 'Seleccione un alumno antes de guardar.' : form.recipientStudentId ? 'Alumno vinculado. Si cambia el nombre, el alumno sigue siendo el mismo.' : 'Seleccione el alumno antes de cambiar el destinatario o confirmar el pago.'}

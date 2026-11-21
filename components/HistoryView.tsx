@@ -3,6 +3,7 @@ import { claseLabel } from '../utils/pluralize';
 import { getStudentSessionStatus } from '../utils/recordPresentation';
 import { formatDate, formatTime, madridDateKey, parseDateOnly } from '../utils/dateFormat';
 import { STUDENT_CATEGORY_LABELS, studentCategoryLabel, isNonMembershipCategory } from '../utils/classTypeLabels';
+import { presentDisplayName, presentPersonName } from '../utils/displayName';
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Student, ClassSession, CeramicPiece, GiftCard } from '../types';
@@ -276,7 +277,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                         className={`w-full text-left p-4 rounded-2xl transition-all border flex items-center justify-between group ${selectedStudentId === s.id ? (isTemporary ? 'bg-amber-500 text-white border-amber-500' : 'bg-brand text-white border-brand') + ' soft-shadow' : 'bg-transparent border-transparent text-neutral-textSec hover:bg-neutral-alt'}`}
                       >
                         <div className="overflow-hidden flex-1">
-                          <p className={`font-semibold text-[14px] truncate ${selectedStudentId === s.id ? 'text-white' : 'text-neutral-textMain'}`}>{s.name} {s.surname || ''}</p>
+                          <p className={`font-semibold text-[14px] truncate ${selectedStudentId === s.id ? 'text-white' : 'text-neutral-textMain'}`}>{presentPersonName(s.name, s.surname)}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className={`text-[11px] font-semibold ${selectedStudentId === s.id ? 'text-white/80' : 'text-neutral-textHelper'}`}>
                               {studentCategoryLabel(cat)}
@@ -329,7 +330,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({ students, sessions, pieces, g
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                       <div>
                         <span className="eyebrow mb-2 block">Registro integral</span>
-                         <h3 className="ui-section-title text-neutral-textMain">{studentDetails.fullName}</h3>
+                         <h3 className="ui-section-title text-neutral-textMain">{presentDisplayName(studentDetails.fullName)}</h3>
                         <div className="flex flex-wrap gap-2 mt-3">
                           <span className={`px-3 py-1.5 rounded-[10px] text-[12px] font-semibold ${CATEGORY_COLORS[cat] || CATEGORY_COLORS.membresia}`}>
                             {studentCategoryLabel(cat)}

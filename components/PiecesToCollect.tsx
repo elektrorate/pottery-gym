@@ -8,6 +8,7 @@ import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
 import DateField from './shared/DateField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
+import { presentDisplayName, presentPersonName } from '../utils/displayName';
 import { formatDate, madridDateKey, weekRangeForDateKey } from '../utils/dateFormat';
 
 // ─── Category visual helpers ───
@@ -63,11 +64,11 @@ const PieceCard: React.FC<PieceCardProps> = ({ piece, studentCategory, groupName
 
       <div className="min-w-0 flex items-center gap-3 pt-1">
         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-[12px] shrink-0 ${getStatusColor(piece.status)}`}>
-          {piece.owner.charAt(0)}
+          {presentDisplayName(piece.owner).charAt(0)}
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <h3 className="font-semibold text-neutral-textMain text-[14px] leading-tight truncate">{piece.owner}</h3>
+            <h3 className="font-semibold text-neutral-textMain text-[14px] leading-tight truncate">{presentDisplayName(piece.owner)}</h3>
              <AdvancedDetails className="hidden shrink-0 sm:block"><p>Identificador de la pieza: {piece.id}</p></AdvancedDetails>
           </div>
           <div className="flex flex-wrap gap-1.5 mt-1">
@@ -109,7 +110,7 @@ const PieceCard: React.FC<PieceCardProps> = ({ piece, studentCategory, groupName
            <span className={`inline-flex px-2 py-1 rounded-md text-[12px] font-semibold ${getStatusColor(piece.status)} text-white`}>{progress}%</span>
            <span className="ui-meta">{getStatusLabel(piece.status)}</span>
         </div>
-        <button onClick={() => onEdit(piece)} aria-label={`Editar pieza de ${piece.owner}`} className="w-8 h-8 flex items-center justify-center rounded-[8px] text-neutral-textHelper hover:text-brand hover:bg-brand-soft transition-colors shrink-0">
+        <button onClick={() => onEdit(piece)} aria-label={`Editar pieza de ${presentDisplayName(piece.owner)}`} className="w-8 h-8 flex items-center justify-center rounded-[8px] text-neutral-textHelper hover:text-brand hover:bg-brand-soft transition-colors shrink-0">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
         </button>
         <button
@@ -419,7 +420,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                 className="w-full text-left px-3 py-2 hover:bg-neutral-sec transition-colors flex items-center justify-between gap-3"
               >
                 <span className="min-w-0">
-                  <span className="block text-[12px] font-semibold text-neutral-textMain truncate">{name}</span>
+                  <span className="block text-[12px] font-semibold text-neutral-textMain truncate">{presentDisplayName(name)}</span>
                   <span className={`text-[11px] font-semibold ${cat === 'membresia' ? 'text-brand' : 'text-caramelo'}`}>{studentCategoryLabel(cat)}</span>
                 </span>
                 <span className="text-[11px] font-semibold text-neutral-textHelper shrink-0">{pieceCount} pieza{pieceCount !== 1 ? 's' : ''}</span>
@@ -730,7 +731,7 @@ const PiecesToCollect: React.FC<PiecesToCollectProps> = ({ pieces, students, onA
                       <option value="" disabled>Seleccionar alumno</option>
                       {sortedStudents.map(student => (
                         <option key={student.id} value={`${student.name} ${student.surname || ''}`.trim()}>
-                          {`${student.name} ${student.surname || ''}`.trim()} — {studentCategoryLabel(student.studentCategory)}
+                          {presentPersonName(student.name, student.surname)} — {studentCategoryLabel(student.studentCategory)}
                         </option>
                       ))}
                     </select>

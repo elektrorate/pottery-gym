@@ -1,4 +1,5 @@
 import { designerStorageKey, clearDesignerCaches, removeUnscopedDesignerCaches, type DesignerScope } from './lib/cacheScope';
+import { presentDisplayName } from '../utils/displayName';
 ﻿
 import React, { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
@@ -1106,7 +1107,7 @@ const AdminApp: React.FC = () => {
                 <option value="">Crear alumno de bonos de clases con el nombre del destinatario</option>
                 {students.map((student) => (
                   <option key={student.id} value={student.id}>
-                    {student.name}{student.category === 'temporal' ? ' (bonos de clases)' : ''}
+                    {presentDisplayName(student.name)}{student.category === 'temporal' ? ' (bonos de clases)' : ''}
                   </option>
                 ))}
               </select>

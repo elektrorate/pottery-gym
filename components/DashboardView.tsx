@@ -9,6 +9,7 @@ import { capacityDefaultsToMap, enrollmentOnDate, getSessionOccupancy, sessionAv
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
 import { studentCategoryLabel, sessionTypeLabel } from '../utils/classTypeLabels';
 import { formatDate, formatTime } from '../utils/dateFormat';
+import { presentPersonName } from '../utils/displayName';
 
 
 interface DashboardViewProps {
@@ -135,7 +136,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({ students, sessions, activ
     const list: DashboardAlert[] = [];
     // Keep expiration and payment as separate causes so the dashboard is actionable.
     students.forEach(student => {
-      const fullName = `${student.name} ${student.surname || ''}`.trim();
+      const fullName = presentPersonName(student.name, student.surname);
       const isMembership = (student.studentCategory || 'membresia') === 'membresia';
       const isExpired = Boolean(student.expiryDate && student.expiryDate < todayStr);
       getPendingMembershipPayments(student).forEach(period => list.push({

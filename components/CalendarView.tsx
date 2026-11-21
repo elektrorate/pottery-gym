@@ -14,6 +14,7 @@ import { AdvancedDetails, isInternalId } from './shared/AdvancedDetails';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
+import { presentDisplayName, presentPersonName } from '../utils/displayName';
 import { billingKindLabel, billingStateLabel, businessReasonLabel } from '../utils/businessReasonLabels';
 import { studentEffectiveRemainingClasses } from '../utils/studentPresentation';
 import { sesionLabel } from '../utils/pluralize';
@@ -210,7 +211,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     if (!teacherId) return 'Sin profesor';
     const teacher = teachers.find(t => t.id === teacherId);
     if (!teacher) return 'Sin profesor';
-    return `${teacher.name} ${teacher.surname || ''}`.trim();
+    return presentPersonName(teacher.name, teacher.surname);
   };
 
   const getTeacherSpecialty = (teacherId?: string) => {
@@ -299,7 +300,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const recoveryAlert = pendingSave?.kind === 'recovery' && (
     <p role="alert" data-testid="pending-session-operation" data-operation={pendingSave.descriptor.operation} className="mx-5 mt-3 rounded-[10px] bg-[#F8EEE5] px-4 py-3 text-[12px] text-[#7B3F22] sm:mx-8">
       Operación pendiente: {pendingOperationLabels[pendingSave.descriptor.operation]}.
-      {pendingSave.descriptor.studentId && ` Alumno: ${getStudentName(pendingSave.descriptor.studentId, attendanceSession || undefined)}.`}
+      {pendingSave.descriptor.studentId && ` Alumno: ${presentDisplayName(getStudentName(pendingSave.descriptor.studentId, attendanceSession || undefined))}.`}
       {pendingSave.descriptor.reason && ` Motivo: ${pendingSave.descriptor.reason}.`}
       {' Reintenta el intento guardado antes de editar, cerrar o iniciar otra operación. Se conservarán sus datos originales.'}
     </p>
@@ -770,7 +771,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const teacherFilterBanner = teacherFilterId ? (
     <div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-neutral-border bg-white px-4 py-3 text-[13px] text-neutral-textSec md:mx-10">
       <p>
-        <span className="font-semibold text-neutral-textMain">Calendario de {filteredTeacher ? `${filteredTeacher.name} ${filteredTeacher.surname || ''}`.trim() : 'este profesor'}</span>
+        <span className="font-semibold text-neutral-textMain">Calendario de {filteredTeacher ? presentPersonName(filteredTeacher.name, filteredTeacher.surname) : 'este profesor'}</span>
         <span className="block text-[12px] text-neutral-textHelper">Clases en las que figura como titular, reemplazo o profesor de un bloque.</span>
       </p>
       <button type="button" onClick={clearTeacherFilter} className="min-h-[36px] rounded-[8px] border border-neutral-border px-3 text-[12px] font-semibold text-brand">Ver todas las clases</button>
@@ -927,7 +928,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                           return (
                             <div key={studentId || idx} data-student-id={studentId} data-attendance-status={att} data-reservation-state={cancelled ? 'cancelled' : 'reserved'} className="flex items-center gap-2.5">
                               <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`}></div>
-                              <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${cancelled ? 'text-neutral-textHelper line-through' : att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{studentName.toLowerCase()}</span>
+                              <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${cancelled ? 'text-neutral-textHelper line-through' : att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{presentDisplayName(studentName)}</span>
                               {att === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
                               {studentId && <AdvancedDetails className="shrink-0"><p>Identificador del alumno: {studentId}</p></AdvancedDetails>}
                               {cancelled && <span className="shrink-0 text-[11px] text-neutral-textHelper">Cancelada</span>}
@@ -1115,7 +1116,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 >
                   <option value="">Sin reemplazo</option>
                   {teachers.map(t => (
-                    <option key={t.id} value={t.id}>{`${t.name} ${t.surname || ''}`.trim()}</option>
+                    <option key={t.id} value={t.id}>{presentPersonName(t.name, t.surname)}</option>
                   ))}
                 </select>
                   <svg className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8B6B5E]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="m7 10 5 5 5-5" /></svg>
@@ -1134,7 +1135,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 </div>
               ) : (
                 attendanceSession.studentIds!.map(studentId => {
-                  const studentName = getStudentName(studentId, attendanceSession);
+                  const studentName = presentDisplayName(getStudentName(studentId, attendanceSession));
                   const status = getAttendanceStatus(attendanceSession, studentId);
                   const studentObj = students.find(s => s.id === studentId);
                   const isBonusStudent = !!studentObj;
@@ -1150,7 +1151,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       <div className="flex min-h-[62px] items-center justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className={`truncate text-[14px] font-medium capitalize text-[#3F2E27] ${status === 'absent' && !cancelled ? 'line-through decoration-[#9C4235]' : ''}`}>{studentName.toLowerCase()}</p>
+                          <p className={`truncate text-[14px] font-medium text-[#3F2E27] ${status === 'absent' && !cancelled ? 'line-through decoration-[#9C4235]' : ''}`}>{studentName}</p>
                           {status === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
                           {isBonusStudent && (
                             <span className={`shrink-0 rounded-[6px] px-1.5 py-0.5 text-[12px] font-semibold ${bonos <= 0 ? 'bg-[#F7E3DF] text-[#9C4235]'
@@ -1444,7 +1445,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   >
                     <option value="">Sin asignar</option>
                     {teachers.map(t => (
-                      <option key={t.id} value={t.id}>{`${t.name} ${t.surname || ''}`.trim()}</option>
+                      <option key={t.id} value={t.id}>{presentPersonName(t.name, t.surname)}</option>
                     ))}
                   </select>
                     </div>
@@ -1485,8 +1486,8 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       <legend className="ui-label px-1 uppercase tracking-[0.14em] text-[#7B3F22]">Actividades y profesores</legend>
                       {sessionForm.activityBlocks.map((block, blockIndex) => <div key={block.activityType} className="rounded-[10px] border border-[#E1C9B5] bg-white p-3">
                         <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-bold uppercase tracking-[0.12em] text-[#7B3F22]">{block.activityType === 'mesa' ? 'Mesa' : 'Torno'}</span><input aria-label={`Cupo ${block.activityType}`} type="number" min="1" max="100" value={block.capacity} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, capacity: Number(event.target.value) } : item) })} className="h-8 w-20 rounded border border-[#DDBFA4] px-2 text-[12px]" /></div>
-                        <select aria-label={`Profesor de ${block.activityType}`} value={block.teacherId || ''} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, teacherId: event.target.value || undefined } : item) })} className="mb-2 h-9 w-full rounded border border-[#DDBFA4] bg-white px-2 text-[12px]"><option value="">Sin profesor</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{`${teacher.name} ${teacher.surname || ''}`.trim()}</option>)}</select>
-                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => { const cat = student.studentCategory || 'membresia'; const matchesAudience = sessionForm.sessionAudience === 'ambos' || (sessionForm.sessionAudience === 'membresia' ? cat === 'membresia' : isNonMembershipCategory(cat)); return !isStudentArchived(student, today) && matchesAudience; }).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{student.name} {student.surname || ''}</span><span className="ml-auto text-[10px] opacity-60">{isNonMembershipCategory(student.studentCategory) ? studentCategoryLabel(student.studentCategory) : 'Membresía'}</span></label>; })}</div>
+                        <select aria-label={`Profesor de ${block.activityType}`} value={block.teacherId || ''} onChange={event => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, teacherId: event.target.value || undefined } : item) })} className="mb-2 h-9 w-full rounded border border-[#DDBFA4] bg-white px-2 text-[12px]"><option value="">Sin profesor</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{presentPersonName(teacher.name, teacher.surname)}</option>)}</select>
+                        <div className="max-h-36 overflow-y-auto rounded border border-[#E8D9CC] p-1">{students.filter(student => { const cat = student.studentCategory || 'membresia'; const matchesAudience = sessionForm.sessionAudience === 'ambos' || (sessionForm.sessionAudience === 'membresia' ? cat === 'membresia' : isNonMembershipCategory(cat)); return !isStudentArchived(student, today) && matchesAudience; }).map(student => { const selected = block.studentIds.includes(student.id); const otherSelected = sessionForm.activityBlocks.some((item, index) => index !== blockIndex && item.studentIds.includes(student.id)); return <label key={student.id} className={`flex items-center gap-2 rounded px-2 py-1 text-[12px] ${otherSelected ? 'opacity-40' : 'hover:bg-[#F8EEE5]'}`}><input type="checkbox" checked={selected} disabled={otherSelected || (!!editingReservation && isCancelled(editingReservation, student.id))} onChange={() => setSessionForm({ ...sessionForm, activityBlocks: sessionForm.activityBlocks.map((item, index) => index === blockIndex ? { ...item, studentIds: selected ? item.studentIds.filter(id => id !== student.id) : [...item.studentIds, student.id] } : item) })} /><span className="truncate">{presentPersonName(student.name, student.surname)}</span><span className="ml-auto text-[10px] opacity-60">{isNonMembershipCategory(student.studentCategory) ? studentCategoryLabel(student.studentCategory) : 'Membresía'}</span></label>; })}</div>
                       </div>)}
                     </fieldset>}
                     <fieldset>
@@ -1559,7 +1560,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         }
 
                         return filtered.map(s => {
-                          const fullName = `${s.name} ${s.surname || ''}`.trim();
+                          const fullName = presentPersonName(s.name, s.surname);
                           const studentKey = s.id;
                            const isSelected = selectedRoster.includes(studentKey);
                            const cat = s.studentCategory || 'membresia';
@@ -1599,7 +1600,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                             const cat = studentObj?.studentCategory || 'membresia';
                             const isTemporary = isNonMembershipCategory(cat);
                             const persistedSession = sessions.find(session => session.id === editingSessionId);
-                            const displayName = getStudentName(studentId, persistedSession);
+                            const displayName = presentDisplayName(getStudentName(studentId, persistedSession));
                              const selectedCardId = sessionForm.giftCardIdByStudentId[studentId] || '';
                              const selectedManualId = sessionForm.manualCreditIdByStudentId[studentId] || '';
                              const fundingCards = getFundingCards(studentId);

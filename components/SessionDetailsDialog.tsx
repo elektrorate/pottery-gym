@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import type { ClassSession, Teacher, WorkshopScheduleDay, WorkshopScheduleException } from '../types';
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
 import { formatDate, formatTime } from '../utils/dateFormat';
+import { presentPersonName } from '../utils/displayName';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 
@@ -39,7 +40,7 @@ export default function SessionDetailsDialog({ session, mode, teachers, schedule
       <h2 className="text-lg font-semibold text-neutral-textMain">{mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}</h2>
       <p className="my-3 text-sm text-neutral-textHelper">{formatDate(session.date)} · {formatTime(session.startTime)}–{formatTime(session.endTime)}. Los alumnos, el saldo y la asistencia se conservan.</p>
       <fieldset disabled={readOnly || busy || locked} className="space-y-3">
-        {mode === 'teacher' ? <label className="block text-sm">Profesor<select value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} className={inputClass}><option value="">Sin asignar</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name} {teacher.surname}</option>)}</select></label> : <>
+        {mode === 'teacher' ? <label className="block text-sm">Profesor<select value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} className={inputClass}><option value="">Sin asignar</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{presentPersonName(teacher.name, teacher.surname)}</option>)}</select></label> : <>
           <label className="block text-sm">Fecha<DateField required aria-label="Fecha" value={form.date} onChange={date => setForm({ ...form, date })} className={inputClass}/></label>
           <div className="grid grid-cols-2 gap-3"><label className="text-sm">Inicio<TimeField required aria-label="Inicio" value={form.startTime} onChange={startTime => setForm({ ...form, startTime })} className={inputClass}/></label><label className="text-sm">Fin<TimeField required aria-label="Fin" value={form.endTime} onChange={endTime => setForm({ ...form, endTime })} className={inputClass}/></label></div>
         </>}
