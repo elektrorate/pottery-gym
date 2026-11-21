@@ -124,7 +124,7 @@ test('funding requires an explicit recipient-ID match and never chooses the late
   await expect(selector).toHaveValue('');
   await expect(selector.locator('option')).toHaveCount(3);
   expect(await selector.locator('option').evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))).toEqual(['', newCardId, oldCardId]);
-  await expect(selector.locator(`option[value="${oldCardId}"]`)).toHaveText('Bono regalo de Alex Perez (00000001)');
+  await expect(selector.locator(`option[value="${oldCardId}"]`)).toHaveText('Bono regalo de Etiqueta antigua: le quedan 2 clases');
   await selector.selectOption(oldCardId);
   await sessionDialog(page).getByRole('button', { name: 'Crear sesión', exact: true }).click();
   await expect(sessionDialog(page)).toHaveCount(0);
@@ -288,10 +288,10 @@ test('edited reservation uses persisted IDs and refreshes its baseline after a s
 for (const invalid of ['legacy', 'misaligned']) test(`${invalid} roster cannot be guessed from homonym display names`, async ({ page }) => {
   await fixture(page, invalid);
   await openAttendance(page);
-  await expect(page.getByRole('alert')).toContainText('IDs persistidos y alineados');
+  await expect(page.getByRole('alert')).toContainText('no se puede identificar al alumno solo por el nombre');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.locator(`[data-session-id="${sessionId}"]`).click();
-  await expect(page.getByRole('alert')).toContainText('no se identificarán alumnos por nombre');
+  await expect(page.getByRole('alert')).toContainText('no se puede identificar al alumno solo por el nombre');
   expect(await output(page, 'calls')).toEqual([]);
 });
 
@@ -307,7 +307,7 @@ test('pending statuses and missing revisions fail before callbacks', async ({ pa
   await mark(page, memberId, true);
   await mark(page, temporaryId, false);
   await attendanceDialog(page).getByRole('button', { name: 'Finalizar control', exact: true }).click();
-  await expect(attendanceDialog(page).getByRole('alert')).toContainText('revisión');
+  await expect(attendanceDialog(page).getByRole('alert')).toContainText('Recargue la sesión');
   expect(await output(page, 'calls')).toEqual([]);
 });
 
@@ -338,7 +338,8 @@ test('mobile homonyms, explicit funding and aligned snapshots remain usable', as
   await fixture(page, 'remove-students');
   await openAttendance(page);
   await expect(attendanceRow(page, memberId)).toContainText('alex perez');
-  await expect(attendanceRow(page, temporaryId)).toContainText('ID 00000002');
+  await attendanceRow(page, temporaryId).locator('summary').click();
+  await expect(attendanceRow(page, temporaryId)).toContainText('00000002');
   await mark(page, memberId, false);
   await mark(page, temporaryId, true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

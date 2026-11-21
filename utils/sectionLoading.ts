@@ -6,7 +6,7 @@ export type SectionLoads = Partial<Record<SecondarySection, SectionLoadState>>;
 export function describeLoadError(error: unknown): string {
   const value = error as { message?: string; code?: string; name?: string };
   if (value?.code === '42501' || /permission denied|row.level security/i.test(value?.message || '')) return 'No tienes permiso para consultar esta sección.';
-  if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(value?.code || '')) return 'Esta sección requiere una versión compatible del backend.';
+  if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(value?.code || '')) return 'Esta sección no está disponible en esta versión. Avise a quien administra el taller.';
   if (/timeout|tiempo|abort|fetch|network/i.test(value?.message || '') || value?.name === 'AbortError') return 'No se pudo completar la conexión. Reintenta la carga.';
   return 'No se pudieron cargar los datos de esta sección. Reintenta la carga.';
 }

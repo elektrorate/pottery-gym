@@ -54,7 +54,9 @@ export function studentBalanceLabel(student: Student, giftCards?: GiftCard[]): s
     return claseLabel(student.classesRemaining ?? 0);
   }
   if (hasVerifiedMembership(student)) return `${student.classesRemaining} / ${student.bonosAsignados}`;
-  return student.legacyManualBalance == null ? 'Saldo por verificar' : `Saldo importado: ${claseLabel(student.legacyManualBalance)}`;
+  if (student.legacyManualBalance == null) return 'Clases por confirmar';
+  const count = student.legacyManualBalance;
+  return `Le ${count === 1 ? 'queda' : 'quedan'} ${claseLabel(count)}`;
 }
 
 /** Same rule as the «Clases agotándose» alert. Archive is checked by the caller. */

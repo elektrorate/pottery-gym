@@ -10,6 +10,7 @@ import { useWorkshopDate } from '../utils/useWorkshopDate';
 import { capacityDefaultsToMap, getSessionOccupancy } from '../utils/sessionCapacity';
 import { getScheduleConflictReason, madridDateKey, MAX_WEEKLY_SESSIONS, weeklyDatesUntil } from '../utils/workshopSchedule';
 import { formatCalendarDate, formatDate, formatDateTime, formatTime } from '../utils/dateFormat';
+import { AdvancedDetails, isInternalId } from './shared/AdvancedDetails';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 import { studentCategoryLabel } from '../utils/classTypeLabels';
@@ -63,6 +64,15 @@ const getAttendanceStatus = (session: ClassSession, studentId?: string): Attenda
 const isCancelled = (session: ClassSession, studentId: string) => session.attendancePolicyVersion === 2
   && session.businessStateByStudentId?.[studentId]?.reservationState === 'cancelled';
 const shortId = (id: string) => id.slice(-8);
+const quedan = (count: number) => count === 1 ? 'le queda 1 clase' : `le quedan ${count} clases`;
+const giftFundingLabel = (card: GiftCard, name: string) => {
+  const who = card.code ? `Bono regalo ${card.code}` : `Bono regalo de ${card.recipient || name}`;
+  return `${who}: ${quedan(card.sessionsRemaining ?? 0)}`;
+};
+const actorPhrase = (prefix: string, actor?: string) => {
+  if (!actor || isInternalId(actor)) return null;
+  return `${prefix}: ${actor}`;
+};
 
 const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions, onAddSession, onUpdateSession, onApproveSessionException, onCancelSessionReservation, onWaiveSessionPenalty, getPendingSessionOperation, onRetryPendingSessionOperation, canWaiveSessionPenalty, giftCards, students, teachers, workshopSchedule, workshopScheduleExceptions, capacityDefaults }) => {
   const capacityMap = useMemo(() => capacityDefaultsToMap(capacityDefaults), [capacityDefaults]);
@@ -151,7 +161,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     const student = students.find(item => item.id === studentId);
     if (student) return `${student.name} ${student.surname || ''}`.trim();
     const index = session && hasPersistedRoster(session) ? session.studentIds!.indexOf(studentId) : -1;
-    return index >= 0 ? session!.students[index] : `Alumno (${shortId(studentId)})`;
+    return index >= 0 ? session!.students[index] : 'Alumno';
   };
   const getSessionRoster = (session: ClassSession) => hasPersistedRoster(session)
     ? session.studentIds!.map(id => ({ id, name: getStudentName(id, session) }))
@@ -259,7 +269,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       }
       const latest = sessions.find(item => item.id === descriptor.sessionId);
       if (!descriptor.isNewSession && (!latest || !hasPersistedRoster(latest))) {
-        showError('Recarga el roster de la sesión pendiente antes de recuperar su intento.');
+        showError('Recargue la lista de alumnos de la sesión pendiente antes de recuperar el intento.');
         return true;
       }
       setSaveError('');
@@ -289,7 +299,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const recoveryAlert = pendingSave?.kind === 'recovery' && (
     <p role="alert" data-testid="pending-session-operation" data-operation={pendingSave.descriptor.operation} className="mx-5 mt-3 rounded-[10px] bg-[#F8EEE5] px-4 py-3 text-[12px] text-[#7B3F22] sm:mx-8">
       Operación pendiente: {pendingOperationLabels[pendingSave.descriptor.operation]}.
-      {pendingSave.descriptor.studentId && ` Alumno: ${getStudentName(pendingSave.descriptor.studentId, attendanceSession || undefined)} (${shortId(pendingSave.descriptor.studentId)}).`}
+      {pendingSave.descriptor.studentId && ` Alumno: ${getStudentName(pendingSave.descriptor.studentId, attendanceSession || undefined)}.`}
       {pendingSave.descriptor.reason && ` Motivo: ${pendingSave.descriptor.reason}.`}
       {' Reintenta el intento guardado antes de editar, cerrar o iniciar otra operación. Se conservarán sus datos originales.'}
     </p>
@@ -301,7 +311,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     if (formLocked) return;
     if (restorePendingOperation(session)) return;
     if (session && !hasPersistedRoster(session)) {
-      showError('La reserva requiere IDs persistidos y alineados. Recarga la sesión; no se identificarán alumnos por nombre.');
+      showError('Recargue la sesión: no se puede identificar al alumno solo por el nombre.');
       return;
     }
     setSaveError('');
@@ -472,7 +482,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       return;
     }
     if (!hasPersistedRoster(attendanceSession) || !Number.isSafeInteger(attendanceSession.revision) || attendanceSession.revision! < 0) {
-      setSaveError('Recarga la sesión para obtener su roster por ID y revisión antes de guardar.');
+      setSaveError('Recargue la sesión antes de guardar.');
       return;
     }
     const attendanceByStudentId = Object.fromEntries(attendanceSession.studentIds!.map(id => [id, getAttendanceStatus(attendanceSession, id)]));
@@ -503,7 +513,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       return;
     }
     if (!Number.isSafeInteger(attendanceSession.revision) || attendanceSession.revision! < 0) {
-      setSaveError('Recarga la sesión para obtener su revisión antes de realizar esta operación.');
+      setSaveError('Recargue la sesión antes de continuar.');
       return;
     }
     const form = businessForms[studentId];
@@ -629,14 +639,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     }
     const current = editingSessionId ? sessions.find(session => session.id === editingSessionId) : undefined;
     if (editingSessionId && (!current || !hasPersistedRoster(current) || !Number.isSafeInteger(sessionForm.revision) || sessionForm.revision! < 0)) {
-      setSaveError('Recarga la sesión para obtener su roster por ID y revisión antes de guardar.');
+      setSaveError('Recargue la sesión antes de guardar.');
       return;
     }
     const studentIds: string[] = sessionForm.classType === 'feriado' ? [] : sessionForm.classType === 'mixto'
       ? [...selectedRoster]
       : [...sessionForm.selectedStudents];
     if (current?.studentIds?.some(id => isCancelled(current, id) && !studentIds.includes(id))) {
-      setSaveError('Las reservas canceladas se conservan por ID en el historial. No se pueden quitar ni reactivar.');
+      setSaveError('Las reservas canceladas se quedan en el historial. No se pueden quitar ni reactivar.');
       return;
     }
     const giftCardIdByStudentId = Object.fromEntries(studentIds
@@ -646,7 +656,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       .filter(id => !!sessionForm.manualCreditIdByStudentId[id])
       .map(id => [id, sessionForm.manualCreditIdByStudentId[id]]));
     if (Object.keys(manualCreditIdByStudentId).some(id => !!giftCardIdByStudentId[id])) {
-      setSaveError('Selecciona una sola fuente de financiacion para cada ID.');
+      setSaveError('Elija una sola forma de pago para cada alumno.');
       return;
     }
     if (current && current.attendancePolicyVersion !== 2 && Object.keys(manualCreditIdByStudentId).length) {
@@ -919,7 +929,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                               <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`}></div>
                               <span className={`text-[15px] md:text-[16.25px] font-medium truncate ${cancelled ? 'text-neutral-textHelper line-through' : att === 'absent' ? 'text-red-400 line-through opacity-60' : (att === 'present' ? 'text-green-600' : 'text-neutral-textMain')}`}>{studentName.toLowerCase()}</span>
                               {att === 'absent' && !cancelled && <span className="shrink-0 rounded-md border border-[#EFC9BE] bg-[#F8E1DA] px-1.5 py-0.5 text-[11px] font-bold text-[#9E3B2B]">Faltó</span>}
-                              {studentId && <span className="shrink-0 text-[11px] text-neutral-textHelper">ID {shortId(studentId)}</span>}
+                              {studentId && <AdvancedDetails className="shrink-0"><p>Identificador del alumno: {studentId}</p></AdvancedDetails>}
                               {cancelled && <span className="shrink-0 text-[11px] text-neutral-textHelper">Cancelada</span>}
                             </div>
                           );
@@ -1059,7 +1069,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
             {saveError && <p role="alert" className="mx-5 mt-3 rounded-[10px] bg-[#F7E3DF] px-4 py-3 text-[12px] text-[#9C4235] sm:mx-8">{saveError}</p>}
             {recoveryAlert}
-            {refreshConflict?.kind === 'business' && <p role="status" className="mx-5 mt-3 text-[12px] text-[#8B6B5E] sm:mx-8">Esperando la revisión actualizada del servidor. No cierres ni repitas otra operación.</p>}
+            {refreshConflict?.kind === 'business' && <p role="status" className="mx-5 mt-3 text-[12px] text-[#8B6B5E] sm:mx-8">Espere a que se actualice. No cierre ni repita la operación.</p>}
             <div className="custom-scrollbar min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-5">
               {rosterOnly && <p className="mb-3 text-sm text-neutral-textHelper">Gestionar alumnos y plazas. El horario y profesor existentes se conservan.</p>}
               <fieldset disabled={formLocked} className="m-0 min-w-0 border-0 p-0">
@@ -1151,8 +1161,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                             </span>
                           )}
                         </div>
-                        <span className="ui-meta mt-1 block">ID {shortId(studentId)}</span>
-                        {attendanceSession.giftCardIdByStudentId?.[studentId] && <span className="ui-meta mt-1 block">Bono regalo vinculado ({shortId(attendanceSession.giftCardIdByStudentId[studentId])})</span>}
+                        <AdvancedDetails>
+                          <p>Identificador del alumno: {studentId}</p>
+                          {attendanceSession.giftCardIdByStudentId?.[studentId] && <p>Bono regalo vinculado: {attendanceSession.giftCardIdByStudentId[studentId]}</p>}
+                        </AdvancedDetails>
                         <span className={`ui-meta mt-1 block font-medium ${status === 'present' ? 'text-[#47704D]' : status === 'absent' ? 'text-[#9C4235]' : 'text-[#9B8175]'}`}>
                           {cancelled ? 'Reserva cancelada (solo lectura)' : status === 'present' ? 'Asistió' : status === 'absent' ? 'Faltó' : 'Pendiente'}
                         </span>
@@ -1194,30 +1206,46 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       </div>
                       </div>
                       {policy2 && <div className="mt-2 space-y-3 border-t border-[#EFE3D8] pt-3 text-[12px] text-[#6E5145]">
-                        {studentObj?.studentCategory === 'membresia' && <p>Pago: {studentObj.paymentStatus === 'paid' ? 'pagado' : studentObj.paymentStatus === 'pending' ? 'pendiente' : 'desconocido'}. La aprobación no confirma ni modifica el pago.</p>}
-                        {cancelled && <p data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: sin consumo' : business?.cancellationKind === 'late' ? 'Cancelación tardía: una clase al finalizar' : 'Cancelación registrada; clasificación pendiente del servidor'}. Motivo: {business?.cancellationReason || 'Registrado en el servidor'}. Cancelada por: {business?.cancelledBy || 'Actor registrado'}.{business?.cancelledAt && ` · Hora registrada: ${business.cancelledAt}`}</p>}
-                        {business?.exceptionId && <p data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Registrado en el servidor'}. Aprobada por: {business.approvedBy || 'Actor registrado'}.{business.approvedAt && ` · Hora registrada: ${formatDateTime(business.approvedAt)}`}</p>}
+                        {studentObj?.studentCategory === 'membresia' && <p>Pago: {studentObj.paymentStatus === 'paid' ? 'pagado' : studentObj.paymentStatus === 'pending' ? 'pendiente' : 'desconocido'}. Aprobar no cambia el pago.</p>}
+                        {cancelled && <div data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: no se descuenta ninguna clase.' : business?.cancellationKind === 'late' ? 'Cancelación tardía: se descuenta una clase al finalizar.' : 'Cancelación registrada. Falta clasificar si descuenta una clase.'} Motivo: {business?.cancellationReason || 'Sin motivo'}.{actorPhrase('Cancelada por', business?.cancelledBy) ? ` ${actorPhrase('Cancelada por', business?.cancelledBy)}.` : ''}{business?.cancelledAt && ` Hora: ${formatDateTime(business.cancelledAt)}.`}
+                          <AdvancedDetails>
+                            {isInternalId(business?.cancelledBy) && <p>Cancelada por: {business?.cancelledBy}</p>}
+                            {!business?.cancelledBy && <p>Cancelada por: el taller</p>}
+                            {business?.cancelledAt && <p>Hora registrada: {business.cancelledAt}</p>}
+                          </AdvancedDetails>
+                        </div>}
+                        {business?.exceptionId && <div data-testid="exception-state">Excepción aprobada: {business.exceptionKind === 'no_credit' ? 'asistencia sin descuento' : 'uso excepcional de membresía'}. Motivo: {business.exceptionReason || 'Sin motivo'}.{actorPhrase('Aprobada por', business?.approvedBy) ? ` ${actorPhrase('Aprobada por', business?.approvedBy)}.` : ''}{business.approvedAt && ` ${formatDateTime(business.approvedAt)}`}
+                          {(isInternalId(business.approvedBy) || !business.approvedBy) && <AdvancedDetails>
+                            {isInternalId(business.approvedBy) && <p>Aprobada por: {business.approvedBy}</p>}
+                            {!business.approvedBy && <p>Aprobada por: el taller</p>}
+                          </AdvancedDetails>}
+                        </div>}
                         {business?.billingState && <p data-testid="billing-state">{billingStateLabel(business.billingState)}{business.billingKind && ` · ${billingKindLabel(business.billingKind)}`}</p>}
                         {business?.penaltyId && <p data-testid="penalty-state">Penalización: {business.penaltyState === 'charged' ? 'una clase consumida' : business.penaltyState === 'waived' ? 'eximida' : 'pendiente de resolución'}.{business.penaltyReason ? ` ${businessReasonLabel(business.penaltyReason)}` : ''}</p>}
-                        {business?.penaltyState === 'waived' && <p data-testid="waiver-state">Motivo de exención: {businessReasonLabel(business.waiverReason) || 'Registrado en el servidor'}. Eximida por: {business.waivedBy || 'Actor registrado'}.{business.waivedAt && ` · Hora registrada: ${formatDateTime(business.waivedAt)}`}</p>}
+                        {business?.penaltyState === 'waived' && <div data-testid="waiver-state">Motivo de exención: {businessReasonLabel(business.waiverReason) || 'Sin motivo'}.{actorPhrase('Eximida por', business.waivedBy) ? ` ${actorPhrase('Eximida por', business.waivedBy)}.` : ''}{business.waivedAt && ` ${formatDateTime(business.waivedAt)}`}
+                          {(isInternalId(business.waivedBy) || !business.waivedBy) && <AdvancedDetails>
+                            {isInternalId(business.waivedBy) && <p>Eximida por: {business.waivedBy}</p>}
+                            {!business.waivedBy && <p>Eximida por: el taller</p>}
+                          </AdvancedDetails>}
+                        </div>}
                         {!cancelled && !attendanceSession.completedAt && onApproveSessionException && <div className="space-y-2">
-                          <label htmlFor={`exception-kind-${studentId}`} className="block">Tipo de excepción para {studentName} ({shortId(studentId)})</label>
-                          <select id={`exception-kind-${studentId}`} value={businessForm.kind} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, kind: event.target.value as 'membership_override' | 'no_credit' } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]">
-                            <option value="membership_override">Usar esta membresía y descontar una clase (pendiente, vencida o no cubre la sesión)</option>
-                            <option value="no_credit">Autorizar asistencia sin descuento (crédito impago, vencido o que no cubre)</option>
+                          <label htmlFor={`exception-kind-${studentId}`} className="block">Tipo de excepción para {studentName}</label>
+                          <select id={`exception-kind-${studentId}`} aria-label={`Tipo de excepción para ${studentName} (${shortId(studentId)})`} value={businessForm.kind} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, kind: event.target.value as 'membership_override' | 'no_credit' } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]">
+                            <option value="membership_override">Descontar una clase de esta membresía, aunque esté pendiente, vencida o no cubra la sesión</option>
+                            <option value="no_credit">Dejar asistir sin descontar una clase, si el bono está impago, vencido o no cubre</option>
                           </select>
-                          <label htmlFor={`exception-reason-${studentId}`} className="block">Motivo de excepción para {studentName} ({shortId(studentId)})</label>
-                          <input id={`exception-reason-${studentId}`} value={businessForm.reason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, reason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
+                          <label htmlFor={`exception-reason-${studentId}`} className="block">Motivo de excepción para {studentName}</label>
+                          <input id={`exception-reason-${studentId}`} aria-label={`Motivo de excepción para ${studentName} (${shortId(studentId)})`} value={businessForm.reason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, reason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
                           <button type="button" onClick={() => handleBusinessOperation(studentId, 'approve_exception')} disabled={attendanceDirty || !businessForm.reason.trim()} className="min-h-10 rounded-[9px] border border-[#DDBFA4] bg-[#F8EEE5] px-3 py-2 text-[12px] font-semibold text-[#7B3F22] disabled:opacity-50">{business?.exceptionId ? 'Reaprobar excepción' : 'Aprobar excepción'}</button>
                         </div>}
                         {!cancelled && !attendanceSession.completedAt && onCancelSessionReservation && <div className="space-y-2">
-                          <label htmlFor={`cancellation-reason-${studentId}`} className="block">Motivo de cancelación para {studentName} ({shortId(studentId)})</label>
-                          <input id={`cancellation-reason-${studentId}`} value={businessForm.cancellationReason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, cancellationReason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
+                          <label htmlFor={`cancellation-reason-${studentId}`} className="block">Motivo de cancelación para {studentName}</label>
+                          <input id={`cancellation-reason-${studentId}`} aria-label={`Motivo de cancelación para ${studentName} (${shortId(studentId)})`} value={businessForm.cancellationReason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, cancellationReason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
                           <button type="button" onClick={() => handleBusinessOperation(studentId, 'cancel_reservation')} disabled={attendanceDirty || !businessForm.cancellationReason.trim()} className="min-h-10 rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[12px] font-semibold text-[#7B3F22] disabled:opacity-50">Cancelar reserva</button>
                         </div>}
                         {canWaive && <div className="space-y-2">
-                          <label htmlFor={`waiver-reason-${studentId}`} className="block">Motivo de exención para {studentName} ({shortId(studentId)})</label>
-                          <input id={`waiver-reason-${studentId}`} value={businessForm.waiverReason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, waiverReason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
+                          <label htmlFor={`waiver-reason-${studentId}`} className="block">Motivo de exención para {studentName}</label>
+                          <input id={`waiver-reason-${studentId}`} aria-label={`Motivo de exención para ${studentName} (${shortId(studentId)})`} value={businessForm.waiverReason} onChange={event => setBusinessForms(prev => ({ ...prev, [studentId]: { ...businessForm, waiverReason: event.target.value } }))} className="h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-3 text-[12px]" />
                           <button type="button" onClick={() => handleBusinessOperation(studentId, 'waive_penalty')} disabled={attendanceDirty || !businessForm.waiverReason.trim()} className="min-h-10 rounded-[9px] border border-[#DDBFA4] bg-white px-3 py-2 text-[12px] font-semibold text-[#7B3F22] disabled:opacity-50">Eximir penalización (propietario)</button>
                         </div>}
                       </div>}
@@ -1539,23 +1567,25 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                            const cancelled = !!editingReservation && isCancelled(editingReservation, studentKey);
                            const capacityReached = !isSelected && activeSelectedCount >= formCapacity;
                            return (
-                              <button type="button" key={s.id} data-student-id={s.id} aria-pressed={isSelected} disabled={sessionForm.classType === 'mixto' || capacityReached || cancelled || !!editingReservation?.completedAt} onClick={() => {
+                              <div key={s.id} className="mb-0.5 flex items-center gap-1 last:mb-0">
+                              <button type="button" data-student-id={s.id} aria-pressed={isSelected} disabled={sessionForm.classType === 'mixto' || capacityReached || cancelled || !!editingReservation?.completedAt} onClick={() => {
                                const newList = isSelected
                                  ? sessionForm.selectedStudents.filter(n => n !== studentKey)
                                  : [...sessionForm.selectedStudents, studentKey];
                                setSessionForm({ ...sessionForm, selectedStudents: newList,
                                   giftCardIdByStudentId: Object.fromEntries(Object.entries(sessionForm.giftCardIdByStudentId).filter(([id]) => newList.includes(id))),
                                   manualCreditIdByStudentId: Object.fromEntries(Object.entries(sessionForm.manualCreditIdByStudentId).filter(([id]) => newList.includes(id))) });
-                             }} className={`mb-0.5 flex min-h-11 w-full items-center justify-between gap-3 rounded-[8px] px-3 py-2 text-left transition last:mb-0 focus:outline-none focus:ring-2 focus:ring-[#C68952] ${isSelected ? 'bg-[#C68952] text-white' : capacityReached ? 'cursor-not-allowed opacity-45' : 'text-[#4E3A31] hover:bg-[#F8EEE5]'}`}>
+                             }} className={`flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 rounded-[8px] px-3 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-[#C68952] ${isSelected ? 'bg-[#C68952] text-white' : capacityReached ? 'cursor-not-allowed opacity-45' : 'text-[#4E3A31] hover:bg-[#F8EEE5]'}`}>
                               <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                                 {fullName}
                                 {s.groupName && <span className="ml-1.5 text-[11px] font-normal opacity-65">{s.groupName}</span>}
                               </span>
-                              <span className="shrink-0 text-[11px] font-normal opacity-65">ID {shortId(s.id)}</span>
                               <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isSelected ? 'bg-white/18 text-white' : isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
                                 {cancelled ? 'Cancelada' : isTemporary ? studentCategoryLabel(cat) : getStudentLifecycle(s, today) === 'active' ? 'Activa' : getStudentLifecycle(s, today) === 'expired' ? 'Vencida' : 'Pendiente'}
                               </span>
                             </button>
+                            <AdvancedDetails className="shrink-0"><p>Identificador del alumno: {s.id}</p></AdvancedDetails>
+                            </div>
                           );
                         });
                       })()}
@@ -1585,7 +1615,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                               <div key={studentId} data-student-id={studentId} className="rounded-[9px] border border-[#E8D9CC] bg-white px-3 py-2">
                                 <div className="flex min-h-10 items-center gap-2">
                                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#3F2E27]">{displayName}</span>
-                                <span className="shrink-0 text-[11px] text-[#8B6B5E]">ID {shortId(studentId)}</span>
+                                <AdvancedDetails className="shrink-0"><p>Identificador del alumno: {studentId}</p></AdvancedDetails>
                                 {cancelled && <span className="text-[11px] text-[#8B6B5E]">Cancelada (historial)</span>}
                                 <span className={`shrink-0 rounded-[6px] px-2 py-1 text-[11px] font-semibold ${isTemporary ? 'bg-[#F4E2D2] text-[#8A5633]' : 'bg-[#EEE5DE] text-[#6E5145]'}`}>
                                   {isTemporary ? studentCategoryLabel(cat) : 'Membresía'}
@@ -1605,7 +1635,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                 </button>
                                 </div>
                                 <label className="mt-2 block text-[11px] text-[#8B6B5E]">
-                                  Financiación de {displayName} ({shortId(studentId)})
+                                  Financiación de {displayName}
                                   <select
                                     aria-label={`Financiación de ${displayName} (${shortId(studentId)})`}
                                     value={selectedManualId ? `manual:${selectedManualId}` : selectedCardId}
@@ -1622,23 +1652,24 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                                     }}
                                     className="mt-1 h-10 w-full rounded-[9px] border border-[#DDBFA4] bg-white px-2 text-[12px] text-[#2F211B] disabled:opacity-55"
                                   >
-                                    <option value="">{cat === 'membresia' ? 'Saldo de membresía (sin bono regalo)' : 'Sin fuente de crédito seleccionada'}</option>
+                                    <option value="">{cat === 'membresia' ? 'Clases de la membresía' : 'Sin bono ni clases añadidas'}</option>
                                     {selectedCardId && !fundingCards.some(card => card.id === selectedCardId) && (
-                                      <option value={selectedCardId} disabled>{linkedCard ? `Bono regalo de ${displayName} (${shortId(selectedCardId)})` : `Vínculo persistido (${shortId(selectedCardId)}): recarga para verificar`}</option>
+                                      <option value={selectedCardId} disabled>{linkedCard ? giftFundingLabel(linkedCard, displayName) : 'Bono regalo ya vinculado: recargue para comprobarlo'}</option>
                                     )}
-                                    {fundingCards.map(card => <option key={card.id} value={card.id}>Bono regalo de {displayName} ({shortId(card.id)})</option>)}
+                                    {fundingCards.map(card => <option key={card.id} value={card.id}>{giftFundingLabel(card, displayName)}</option>)}
                                     {selectedManualId && !manualCredits.some(credit => credit.id === selectedManualId) && (
-                                      <option value={`manual:${selectedManualId}`} disabled>Credito manual original ({shortId(selectedManualId)}): {linkedManual ? 'no disponible para nueva seleccion' : 'no accesible en los datos cargados'}</option>
+                                      <option value={`manual:${selectedManualId}`} disabled>Clases añadidas originales: {linkedManual ? 'no disponibles para elegirlas de nuevo' : 'recargue para comprobarlas'}</option>
                                     )}
-                                    {manualCredits.map(credit => <option key={credit.id} value={`manual:${credit.id}`}>Credito manual ({shortId(credit.id)}): {credit.remainingClasses}/{credit.allocatedClasses} clases, {formatDate(credit.startsOn)} a {formatDate(credit.endsOn)}</option>)}
+                                    {manualCredits.map(credit => <option key={credit.id} value={`manual:${credit.id}`}>Clases añadidas: {quedan(credit.remainingClasses)} de {credit.allocatedClasses}, {formatDate(credit.startsOn)} a {formatDate(credit.endsOn)}</option>)}
                                   </select>
                                 </label>
-                                {selectedManualId && <p data-testid="selected-manual-credit-info" className="mt-2 text-[11px] text-[#8B6B5E] [overflow-wrap:anywhere]">
-                                  ID de credito manual: {selectedManualId}.
-                                  {linkedManual ? ` Saldo cargado: ${linkedManual.remainingClasses}/${linkedManual.allocatedClasses} clases. Vigencia: ${formatDate(linkedManual.startsOn)} a ${formatDate(linkedManual.endsOn)}. Evidencia: ${linkedManual.evidence}.`
-                                    : ' Fuente original no accesible en los datos cargados; no se sustituira automaticamente.'}
-                                  {' La seleccion no autoriza el cargo; el servidor valida identidad, vigencia y saldo de la fuente original.'}
-                                </p>}
+                                {selectedCardId && <AdvancedDetails><p>Bono regalo interno: {selectedCardId}</p></AdvancedDetails>}
+                                {selectedManualId && <div data-testid="selected-manual-credit-info" className="mt-2 text-[11px] text-[#8B6B5E] [overflow-wrap:anywhere]">
+                                  {linkedManual ? <p>Le {linkedManual.remainingClasses === 1 ? 'queda' : 'quedan'} {linkedManual.remainingClasses} de {linkedManual.allocatedClasses} clases, {formatDate(linkedManual.startsOn)} a {formatDate(linkedManual.endsOn)}. Evidencia: {linkedManual.evidence}.</p>
+                                    : <p>Recargue para comprobar estas clases. No se sustituye sola.</p>}
+                                  <p>Elegirlas no descuenta la clase; se comprueba al pasar lista.</p>
+                                  <AdvancedDetails><p>ID de credito manual: {selectedManualId}</p></AdvancedDetails>
+                                </div>}
                               </div>
                             );
                           })}

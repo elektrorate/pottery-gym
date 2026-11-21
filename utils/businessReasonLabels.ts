@@ -30,7 +30,7 @@ const FUNDING_REASON_LABELS: Record<string, string> = {
   'Original scalar pack is expired for the session': 'El bono de clases está vencido para esta sesión',
   'Original scalar pack payment is unpaid or unknown': 'El pago del bono de clases está pendiente o es desconocido',
   'Unsupported temporal/manual funding: legacy balance requires attributable funding or reconciliation':
-    'Saldo legado sin derecho atribuible; requiere regularización',
+    'Hay clases anteriores sin un bono o una membresía. Regístrelas antes de descontar.',
   'Explicit gift card has no valid available credit': 'El bono regalo no tiene crédito disponible válido',
   'Original membership source is unknown': 'La membresía original es desconocida',
   'Original membership balance is no longer current': 'El saldo de membresía ya no es el actual',
@@ -78,7 +78,7 @@ export const businessReasonLabel = (reason: string | null | undefined): string =
   if (unsupported) {
     const detail = unsupported[1].toLowerCase();
     if (detail.includes('legacy balance') || detail.includes('attributable')) {
-      return 'Saldo legado sin derecho atribuible; requiere regularización';
+      return 'Hay clases anteriores sin un bono o una membresía. Regístrelas antes de descontar.';
     }
     return `Financiación temporal/manual no admitida: ${humanizeToken(unsupported[1])}`;
   }

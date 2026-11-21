@@ -31,7 +31,7 @@ test('penalty and funding reasons never surface raw English codes in Spanish UI'
     assert.equal(mod.billingKindLabel('no_show'), 'Falta sin aviso');
     assert.equal(
       mod.businessReasonLabel('Unsupported temporal/manual funding: legacy balance requires attributable funding or reconciliation'),
-      'Saldo legado sin derecho atribuible; requiere regularización'
+      'Hay clases anteriores sin un bono o una membresía. Regístrelas antes de descontar.'
     );
     // Cosmetic: "not usable" must not appear as English even when the pack was usable.
     const notUsable = mod.businessReasonLabel('Original scalar pack is not usable');

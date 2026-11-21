@@ -2,6 +2,7 @@ import { showError, showWarning } from '../context/toast';
 import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { CeramicPiece, PieceStatus, Student } from '../types';
+import { AdvancedDetails } from './shared/AdvancedDetails';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { DangerZone } from './shared/DangerZone';
 import { EmptyState } from './shared/EmptyState';
@@ -67,7 +68,7 @@ const PieceCard: React.FC<PieceCardProps> = ({ piece, studentCategory, groupName
         <div className="min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="font-semibold text-neutral-textMain text-[14px] leading-tight truncate">{piece.owner}</h3>
-             <span className="hidden sm:inline ui-meta font-semibold shrink-0">#ID-{piece.id.slice(-4).toUpperCase()}</span>
+             <AdvancedDetails className="hidden shrink-0 sm:block"><p>Identificador de la pieza: {piece.id}</p></AdvancedDetails>
           </div>
           <div className="flex flex-wrap gap-1.5 mt-1">
              <span className={`inline-flex px-2 py-0.5 rounded-md text-[12px] font-semibold border ${CATEGORY_BADGE[cat] || 'bg-neutral-alt text-neutral-textHelper border-neutral-border'}`}>

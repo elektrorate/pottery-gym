@@ -188,7 +188,7 @@ export const attachStudentCreditProfiles = (
         kind: incident.kind, state: incident.penalty_state, originalPeriodId: periodId, originalGiftCardId: giftId,
         originalManualCreditId: manualId, reason: incident.incident_reason, canSettle,
         blockedReason: canSettle ? undefined : incident.penalty_state === 'pending'
-          ? 'El derecho original no es utilizable. No se permite sustituirlo por otro credito o periodo.'
+          ? 'No se puede descontar de ese bono o esa membresía. No use otro.'
           : 'La incidencia ya esta resuelta; no se puede descontar de nuevo.',
         settlementId: incident.settlement_id ?? undefined, settlementReason: incident.settlement_reason ?? undefined,
         settledBy: incident.settled_by ?? undefined, settledAt: incident.settled_at ?? undefined };

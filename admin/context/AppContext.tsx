@@ -487,7 +487,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       if (!data) {
-        throw new Error('Respuesta vacía del servidor');
+        throw new Error('No se recibió respuesta. Inténtelo de nuevo.');
       }
 
       // Check for error in response body
@@ -505,7 +505,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           Promise.all([fetchUsers(), fetchWorkshops(), fetchOperationalMetrics()]);
           return { userId: data.id };
         }
-        throw new Error('El servidor no devolvió el ID del usuario');
+        throw new Error('No se pudo crear el usuario. Inténtelo de nuevo.');
       }
 
       // Log sede creation result

@@ -52,7 +52,7 @@ const TeamView: React.FC = () => {
             if (res.status === 401) {
                 throw new Error('Sesión no válida. Vuelve a iniciar sesión.');
             }
-            throw new Error(responseData?.error || `Error del servidor (${res.status}).`);
+            throw new Error(responseData?.error || 'No se pudo completar la operación. Inténtelo de nuevo.');
         }
 
         if (responseData?.error) {

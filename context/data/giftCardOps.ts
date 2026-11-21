@@ -9,7 +9,7 @@ const rejectGiftCardValidation = (message: string): never => {
 
 export const addGiftCard = async (ctx: OpsContext, newCard: Omit<GiftCard, 'id' | 'createdAt'>) => {
     if (!ctx.sedeId || !newCard.recipientStudentId) {
-        rejectGiftCardValidation('Selecciona la sede y el destinatario por su identidad. El nombre no identifica a una persona.');
+        rejectGiftCardValidation('Seleccione el taller y el alumno destinatario. El nombre no basta.');
     }
     if (newCard.sessionsUsed || newCard.consumedAt || (newCard.status && !['pending', 'active'].includes(newCard.status))) {
         rejectGiftCardValidation('Un bono regalo nuevo no puede incluir historial de consumo.');
@@ -33,7 +33,7 @@ export const addGiftCard = async (ctx: OpsContext, newCard: Omit<GiftCard, 'id' 
     try {
         const { data, error } = await withTimeout('gift_cards.insert', supabase.from('gift_cards').insert(payload).select().single());
         if (error) throw error;
-        if (!data) throw new Error('El servidor no devolvio el bono regalo creado.');
+        if (!data) throw new Error('No se pudo crear el bono regalo. Inténtelo de nuevo.');
         const mapped = mapGiftCardRowToModel(data);
         ctx.setGiftCards(prev => [mapped, ...prev]);
         await ctx.safeReload();
@@ -44,7 +44,7 @@ export const addGiftCard = async (ctx: OpsContext, newCard: Omit<GiftCard, 'id' 
 };
 
 export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Partial<GiftCard>, giftCards: GiftCard[]) => {
-    if (!id) rejectGiftCardValidation('Se requiere la identidad del bono regalo para actualizarlo.');
+    if (!id) rejectGiftCardValidation('Seleccione el bono regalo que quiere guardar.');
     const previousCard = giftCards.find(gc => gc.id === id);
     const editableUpdates = { ...updates };
     delete editableUpdates.status;
@@ -61,11 +61,11 @@ export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Parti
     if (editableUpdates.code !== undefined) payload.code = editableUpdates.code;
     if ('recipientStudentId' in editableUpdates) {
         if (!editableUpdates.recipientStudentId) {
-            rejectGiftCardValidation('El destinatario requiere una identidad explicita; no se puede desvincular por nombre.');
+            rejectGiftCardValidation('Seleccione el alumno destinatario. No se puede quitar solo cambiando el nombre.');
         }
         payload.recipient_student_id = editableUpdates.recipientStudentId;
     } else if (editableUpdates.recipient !== undefined && !previousCard?.recipientStudentId) {
-        rejectGiftCardValidation('Selecciona el destinatario por su identidad antes de cambiar un bono regalo antiguo sin vinculo.');
+        rejectGiftCardValidation('Seleccione el alumno antes de cambiar un bono regalo antiguo.');
     }
     if (editableUpdates.numClasses !== undefined) payload.num_classes = editableUpdates.numClasses;
     if (editableUpdates.type !== undefined) payload.type = editableUpdates.type;
@@ -76,7 +76,7 @@ export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Parti
     if ('issuedDate' in editableUpdates) payload.scheduled_date = editableUpdates.issuedDate || null;
     if ('expiryDate' in editableUpdates && !('activatedAt' in editableUpdates) && !('validityMonths' in editableUpdates)
         && editableUpdates.expiryDate !== previousCard?.expiryDate) {
-        rejectGiftCardValidation('La caducidad se calcula en el servidor desde la activacion y la vigencia.');
+        rejectGiftCardValidation('La caducidad se calcula al guardar, a partir de la activación y la vigencia.');
     }
     if (editableUpdates.extraCommentary !== undefined) payload.extra_commentary = editableUpdates.extraCommentary || null;
     if (editableUpdates.extraCommentary !== undefined) payload.internal_notes = editableUpdates.extraCommentary || null;
@@ -85,7 +85,7 @@ export const updateGiftCard = async (ctx: OpsContext, id: string, updates: Parti
     try {
         const { data, error } = await withTimeout('gift_cards.update', supabase.from('gift_cards').update(payload).eq('id', id).select().single(), 5000);
         if (error) throw error;
-        if (!data) throw new Error('El servidor no devolvio el bono regalo actualizado.');
+        if (!data) throw new Error('No se pudo guardar el bono regalo. Inténtelo de nuevo.');
         updateGiftCardFromRpc(ctx, data);
         await ctx.safeReload();
     } catch (err: any) {
@@ -185,7 +185,7 @@ export interface GiftCardSessionIntent {
 // Retain this exact intent across uncertain responses. A new correction gets a
 // new key; replaying an old receipt must not resurrect a reversed consumption.
 export const createGiftCardSessionIntent = (giftCardId: string, sessionId: string, studentId: string, reverse = false): GiftCardSessionIntent => {
-    if (!giftCardId || !sessionId || !studentId) throw new Error('Se requieren las identidades del bono regalo, sesion y alumno.');
+    if (!giftCardId || !sessionId || !studentId) throw new Error('Faltan el bono regalo, la sesión o el alumno.');
     return Object.freeze({ giftCardId, sessionId, studentId, reverse, requestKey: crypto.randomUUID() });
 };
 
@@ -197,7 +197,7 @@ export const applyGiftCardSessionIntent = async (ctx: OpsContext, intent: GiftCa
         }
     ));
     if (error) throw error;
-    if (!data) throw new Error('El servidor no devolvio un recibo del bono regalo.');
+    if (!data) throw new Error('No se pudo confirmar el bono regalo. Inténtelo de nuevo.');
     // A stable historical receipt is not today's projection.
     await ctx.safeReload();
     return mapGiftCardRowToModel(data);

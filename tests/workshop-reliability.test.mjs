@@ -14,14 +14,14 @@ test('loading and refreshing preserve the distinction between no read and a veri
   assert.equal(nextSectionState({status:'ready',hasData:true}).hasData,true);
   assert.match(describeLoadError({code:'42501'}),/permiso/);
   assert.match(describeLoadError({message:'network timeout'}),/conexión/);
-  assert.match(describeLoadError({code:'42P01'}),/compatible/);
+  assert.match(describeLoadError({code:'42P01'}),/no está disponible/);
 });
 test('imported credits never invent a plan denominator or establish payment',()=>{
   const imported={id:'student',name:'Alumno',phone:'',status:'membresia',studentCategory:'membresia',classesRemaining:7,legacyManualBalance:7,price:120,paymentStatus:null};
-  assert.equal(studentBalanceLabel(imported),'Saldo importado: 7 clases');
+  assert.equal(studentBalanceLabel(imported),'Le quedan 7 clases');
   assert.equal(hasVerifiedMembership(imported),false);assert.equal(needsStudentReview(imported),true);
   assert.equal(needsStudentReview({...imported,archivedAt:'2026-11-18'}),false);
-  assert.equal(studentBalanceLabel({...imported,legacyManualBalance:null}),'Saldo por verificar');
+  assert.equal(studentBalanceLabel({...imported,legacyManualBalance:null}),'Clases por confirmar');
   const confirmed={...imported,effectivePeriodId:'period',membershipTier:'gold',bonosAsignados:4,classesRemaining:3,paymentStatus:'paid',expiryDate:'2026-12-18'};
   assert.equal(studentBalanceLabel(confirmed),'3 / 4');assert.equal(needsStudentReview(confirmed),false);
 });

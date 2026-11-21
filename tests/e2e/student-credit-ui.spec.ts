@@ -76,7 +76,7 @@ const output = async (page: Page, id: string) => JSON.parse((await page.getByTes
 const configure = (page: Page, detail: { fixture?: string; mode?: string; role?: string; hint?: boolean }) =>
   page.evaluate(detail => window.dispatchEvent(new CustomEvent('credit-test-configure', { detail })), detail);
 const release = (page: Page, event = 'credit-test-release') => page.evaluate(event => window.dispatchEvent(new Event(event)), event);
-const panel = (page: Page) => page.getByRole('region', { name: 'Créditos manuales e incidencias', exact: true });
+const panel = (page: Page) => page.getByRole('region', { name: 'Clases añadidas e incidencias', exact: true });
 const penalty = (page: Page) => panel(page).locator(`[data-penalty-id="${penaltyId}"]`);
 const open = async (page: Page, id = studentId) => {
   const student = (await output(page, 'students')).find((person: { id: string }) => person.id === id);
@@ -148,28 +148,32 @@ test('explicit quantity, activity, dates, reason and evidence are mandatory; the
   const saved = (await output(page, 'calls'))[0]; assertIntent(saved, 'approve_manual');
   expect(saved.input).toMatchObject({ mode: 'new_manual', quantity: 3, expectedLegacyBalance: 4, activity: 'mesa',
     startsOn: '2026-10-15', endsOn: '2026-12-20', reason: 'Revision expresa de origen', evidence: 'Documento local de clases adquiridas' });
-  await expect(panel(page).locator(`[data-manual-credit-id="${saved.input.requestKey}"]`)).toContainText('ID de actor');
+  const savedCard = panel(page).locator(`[data-manual-credit-id="${saved.input.requestKey}"]`);
+  await savedCard.locator('summary').click();
+  await expect(savedCard).toContainText('ID de actor');
   await expect(panel(page)).toBeVisible();
   const people = await output(page, 'students');
   expect(people[0]).toMatchObject({ classesRemaining: 4, paymentStatus: null, studentCategory: 'temporal', legacyManualBalance: 4 });
   expect(people[1].manualCredits).toEqual([]);
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 4');
-  await expect(panel(page).getByTestId('manual-credit-ledger')).toContainText('3 restantes / 3 aprobadas');
+  await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 4');
+  await expect(panel(page).getByTestId('manual-credit-ledger')).toContainText('Le quedan 3 clases (de 3 aprobadas).');
 });
 
 test('reconciliation captures the known raw balance and approval never fabricates payment or a membership', async ({ page }) => {
   await open(page); await fillCredit(page, 'reconcile_legacy');
   await expect(panel(page).getByRole('button', { name: 'Aprobar crédito manual' })).toBeDisabled();
-  await expect(panel(page)).toContainText('saldo legado completo (4 clases)');
+  await expect(panel(page)).toContainText('las 4 clases anteriores completas');
   await panel(page).getByLabel('Cantidad de clases manuales').fill('5');
   await expect(panel(page).getByRole('button', { name: 'Aprobar crédito manual' })).toBeDisabled();
   await panel(page).getByLabel('Cantidad de clases manuales').fill('4');
   await panel(page).getByRole('button', { name: 'Aprobar crédito manual' }).click();
   const call = (await output(page, 'calls'))[0]; assertIntent(call, 'approve_manual');
   expect(call.input).toMatchObject({ mode: 'reconcile_legacy', expectedLegacyBalance: 4, quantity: 4 });
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 4');
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('ya fue conciliado');
-  await expect(panel(page).getByTestId('manual-credit-ledger')).toContainText('4 restantes / 4 aprobadas');
+  await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 4');
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('ya están registradas');
+  await expect(panel(page).getByTestId('manual-credit-ledger')).toContainText('Le quedan 4 clases (de 4 aprobadas).');
   await panel(page).getByLabel('Cantidad de clases manuales').fill('4');
   await expect(panel(page).getByRole('button', { name: 'Aprobar crédito manual' })).toBeDisabled();
   await expect(panel(page).getByLabel('Modo del crédito manual').locator('option[value="reconcile_legacy"]')).toHaveAttribute('disabled', '');
@@ -180,7 +184,7 @@ test('reconciliation captures the known raw balance and approval never fabricate
 for (const fixture of ['unknown', 'missing-observation', 'zero', 'managed', 'historical-membership', 'historical-membership-allowed', 'reconcile-blocked', 'reconciled-allowed']) test(`${fixture} never invents a reconcilable legacy observation`, async ({ page }) => {
   await configure(page, { fixture }); await open(page);
   await expect(panel(page).getByLabel('Modo del crédito manual').locator('option[value="reconcile_legacy"]')).toHaveAttribute('disabled', '');
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('No hay saldo legado conciliable');
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('No hay clases anteriores por registrar');
   await fillCredit(page); await panel(page).getByRole('button', { name: 'Aprobar crédito manual' }).click();
   expect((await output(page, 'calls'))[0].input.expectedLegacyBalance).toBe(['unknown', 'missing-observation'].includes(fixture) ? null : fixture === 'zero' ? 0 : 4);
   if (fixture === 'managed') {
@@ -207,10 +211,12 @@ for (const fixture of ['period', 'manual', 'late']) test(`${fixture} settlement 
   await configure(page, { fixture }); await start(page, 'settle_penalty');
   const call = (await output(page, 'calls'))[0]; assertIntent(call, 'settle_penalty');
   expect(call.input).toMatchObject({ penaltyId, expectedRevision: 7, reason: 'Resolucion expresa del propietario' });
+  await penalty(page).getByTestId('penalty-original-source').locator('summary').click();
   await expect(penalty(page).getByTestId('penalty-original-source')).toContainText(originalId);
   await expect(penalty(page).getByRole('combobox')).toHaveCount(0);
   await expect(penalty(page)).toHaveAttribute('data-penalty-state', 'charged');
   const audit = penalty(page).getByTestId('penalty-settlement-audit');
+  await audit.locator('summary').click();
   await expect(audit).toContainText(call.input.requestKey);
   await expect(audit).toContainText(call.input.reason);
   await expect(audit).toContainText(actorId);
@@ -287,9 +293,11 @@ for (const operation of ['approve_manual', 'settle_penalty', 'waive_penalty']) {
     expect(calls[1].input).toEqual(first.input); expect(calls[1].sameObjectAsPrevious).toBe(true); expect(calls[1].frozen).toBe(true);
     expect(await output(page, 'retry-calls')).toEqual([{ studentId, requestKey: first.input.requestKey }]);
     expect(await output(page, 'ledger')).toEqual(ledger); expect(await output(page, 'pending-operations')).toEqual([]);
+    await penalty(page).locator('details', { hasText: 'Revisión de sesión' }).locator('summary').click();
     await expect(penalty(page)).toContainText(`Revisión de sesión: ${operation === 'approve_manual' ? 11 : 12}`);
     expect((await output(page, 'students'))[0].classesRemaining).toBe(9);
-    await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 2');
+    await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
+    await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 2');
     if (operation === 'approve_manual') expect(calls[1].input.expectedLegacyBalance).toBe(4);
   });
   test(`${operation} prevents duplicate submits and waits for the authoritative refresh`, async ({ page }) => {
@@ -323,7 +331,7 @@ test('closing and reopening restores the pending descriptor rather than acceptin
 test('a restored descriptor without retry support remains read-only and keeps the exact main-owned attempt', async ({ page }) => {
   await start(page, 'settle_penalty', 'transport'); await configure(page, { fixture: 'unmount' });
   await configure(page, { fixture: 'no-retry', mode: 'success' }); await configure(page, { fixture: 'remount' }); await open(page);
-  await expect(panel(page).getByTestId('pending-student-credit-operation')).toContainText('recuperación no está disponible');
+  await expect(panel(page).getByTestId('pending-student-credit-operation')).toContainText('No se puede reintentar');
   await expect(panel(page).getByRole('button', { name: 'Reintentar operación pendiente' })).toHaveCount(0);
   await expect(panel(page).getByLabel('Cantidad de clases manuales')).toBeDisabled();
   expect(await output(page, 'calls')).toHaveLength(1); expect(await output(page, 'pending-operations')).toHaveLength(1);
@@ -333,9 +341,11 @@ for (const fixture of ['charged', 'waived']) test(`${fixture} audit rows do not 
   await configure(page, { fixture }); await open(page);
   await expect(penalty(page)).toHaveAttribute('data-penalty-state', fixture);
   await expect(penalty(page).getByRole('button', { name: 'Aplicar descuento pendiente' })).toHaveCount(0);
-  await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText(settlementId);
-  await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText('Motivo de liquidacion original');
-  await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText(actorId);
+  const chargedAudit = penalty(page).getByTestId('penalty-settlement-audit');
+  await chargedAudit.locator('summary').click();
+  await expect(chargedAudit).toContainText(settlementId);
+  await expect(chargedAudit).toContainText('Motivo de liquidacion original');
+  await expect(chargedAudit).toContainText(actorId);
   await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText('11/10/2026, 22:00');
   if (fixture === 'waived') await expect(penalty(page).locator('input, select, button')).toHaveCount(0);
   else await expect(penalty(page).getByRole('button', { name: 'Eximir incidencia' })).toBeDisabled();
@@ -348,7 +358,8 @@ test('an explicit reconcile hint permits only the entire known balance and survi
   await panel(page).getByRole('button', { name: 'Aprobar crédito manual' }).click();
   await expect(panel(page).getByRole('alert')).toContainText('Resultado sin confirmar');
   await configure(page, { fixture: 'unmount' }); await configure(page, { fixture: 'remount', mode: 'success' }); await open(page);
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 4');
+  await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 4');
   await page.evaluate(() => { crypto.randomUUID = () => { throw new Error('Reconciliation recovery must not generate a UUID'); }; });
   await panel(page).getByRole('button', { name: 'Reintentar operación pendiente' }).click();
   await expect(panel(page).getByTestId('pending-student-credit-operation')).toHaveCount(0);
@@ -363,7 +374,8 @@ test('an explicit reconcile hint permits only the entire known balance and survi
 test('new manual approval is independent of a changed raw observation and never reuses it as a funding source', async ({ page }) => {
   await open(page); await fillCredit(page); await configure(page, { fixture: 'change-raw-without-refresh' });
   await panel(page).getByRole('button', { name: 'Aprobar crédito manual' }).click();
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 2');
+  await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 2');
   expect((await output(page, 'calls'))[0].input).toMatchObject({ mode: 'new_manual', expectedLegacyBalance: 4, quantity: 3 });
   expect(await output(page, 'ledger')).toHaveLength(1);
   await expect(panel(page).getByRole('alert')).toHaveCount(0);
@@ -429,11 +441,13 @@ test('charged owner exemption still uses exact receipt recovery after response l
   const retry = (await output(page, 'calls'))[1]; expect(retry.input).toEqual(original.input); expect(retry.sameObjectAsPrevious).toBe(true);
   expect(retry.input.expectedRevision).toBe(7); expect(await output(page, 'original-source-balance')).toBe(3);
   expect(await output(page, 'ledger')).toHaveLength(1);
+  await penalty(page).locator('details', { hasText: 'Revisión de sesión' }).locator('summary').click();
   await expect(penalty(page)).toContainText('Revisión de sesión: 12');
 });
 
 test('charged audit stays readable without waiver support and missing optional audit is not fabricated', async ({ page }) => {
   await configure(page, { fixture: 'charged' }); await configure(page, { fixture: 'no-waive' }); await open(page);
+  await penalty(page).getByTestId('penalty-settlement-audit').locator('summary').click();
   await expect(penalty(page).getByTestId('penalty-settlement-audit')).toContainText(settlementId);
   await expect(penalty(page).locator('input, select, button')).toHaveCount(0);
   await configure(page, { fixture: 'resolved-no-audit' });
@@ -487,7 +501,8 @@ test('stale SQL rejection clears only the old attempt and a new approval capture
   await configure(page, { fixture: 'remount', mode: 'stale' }); await open(page);
   await panel(page).getByRole('button', { name: 'Reintentar operación pendiente' }).click();
   await expect(panel(page).getByRole('alert')).toContainText('Revisa los datos recargados');
-  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Saldo legado observado: 2');
+  await panel(page).getByTestId('legacy-credit-observation').locator('summary').click();
+  await expect(panel(page).getByTestId('legacy-credit-observation')).toContainText('Observación original: 2');
   await expect(panel(page).getByTestId('pending-student-credit-operation')).toHaveCount(0);
   await configure(page, { mode: 'success' }); await fillCredit(page);
   await panel(page).getByRole('button', { name: 'Aprobar crédito manual' }).click();

@@ -25,11 +25,11 @@ export const createMembershipOperations = ({ rpc, refresh }: MembershipDependenc
         if (result.error) {
             if (result.error.code === '40001') {
                 await refresh();
-                throw Object.assign(new Error('El período o saldo cambió. Revisa los datos y crea un nuevo ajuste.'), { code: '40001' });
+                throw Object.assign(new Error('Las clases o el período cambiaron. Revise los datos y cree un nuevo ajuste.'), { code: '40001' });
             }
             throw Object.assign(new Error(result.error.message || 'La operación de membresía falló.'), { code: result.error.code });
         }
-        if (!result.data) throw new Error('El servidor no devolvió el resultado de membresía.');
+        if (!result.data) throw new Error('No se pudo guardar la membresía. Inténtelo de nuevo.');
         // A historical receipt never overwrites the current effective balance.
         await refresh();
         return result.data;
