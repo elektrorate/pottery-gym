@@ -3,6 +3,7 @@ import type { ClassSession, Teacher, WorkshopScheduleDay, WorkshopScheduleExcept
 import { getScheduleConflictReason } from '../utils/workshopSchedule';
 import { formatDate, formatTime } from '../utils/dateFormat';
 import { presentPersonName } from '../utils/displayName';
+import { compareEs } from '../utils/textSearch';
 import DateField from './shared/DateField';
 import TimeField from './shared/TimeField';
 
@@ -17,6 +18,7 @@ export default function SessionDetailsDialog({ session, mode, teachers, schedule
     e.preventDefault(); if (busyRef.current || readOnly) return;
     if (!frozen.current) {
       if (!Number.isSafeInteger(session.revision)) { setError('Recarga la sesión antes de guardar.'); return; }
+      if (mode === 'teacher' && !form.teacherId) { setError('Seleccione un profesor.'); return; }
       if (mode === 'schedule') {
         if (!form.date || !form.startTime || !form.endTime || form.startTime >= form.endTime) { setError('Indica una fecha y un horario válidos.'); return; }
         const changed = form.date !== session.date || form.startTime !== session.startTime || form.endTime !== session.endTime;
@@ -36,11 +38,11 @@ export default function SessionDetailsDialog({ session, mode, teachers, schedule
   };
   const inputClass = 'mt-1 w-full rounded-lg border border-neutral-border bg-white px-3 py-2.5 text-sm text-neutral-textMain';
   return <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-label={mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}>
-    <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-neutral-border bg-white p-5 shadow-xl">
+    <form noValidate onSubmit={submit} className="w-full max-w-md rounded-2xl border border-neutral-border bg-white p-5 shadow-xl">
       <h2 className="text-lg font-semibold text-neutral-textMain">{mode === 'teacher' ? 'Asignar profesor' : 'Cambiar horario'}</h2>
       <p className="my-3 text-sm text-neutral-textHelper">{formatDate(session.date)} · {formatTime(session.startTime)}–{formatTime(session.endTime)}. Los alumnos, el saldo y la asistencia se conservan.</p>
       <fieldset disabled={readOnly || busy || locked} className="space-y-3">
-        {mode === 'teacher' ? <label className="block text-sm">Profesor<select value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} className={inputClass}><option value="">Sin asignar</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{presentPersonName(teacher.name, teacher.surname)}</option>)}</select></label> : <>
+        {mode === 'teacher' ? <label className="block text-sm">Profesor *<select required value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })} className={inputClass}><option value="">Seleccione un profesor</option>{[...teachers].sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname))).map(teacher => <option key={teacher.id} value={teacher.id}>{presentPersonName(teacher.name, teacher.surname)}</option>)}</select></label> : <>
           <label className="block text-sm">Fecha<DateField required aria-label="Fecha" value={form.date} onChange={date => setForm({ ...form, date })} className={inputClass}/></label>
           <div className="grid grid-cols-2 gap-3"><label className="text-sm">Inicio<TimeField required aria-label="Inicio" value={form.startTime} onChange={startTime => setForm({ ...form, startTime })} className={inputClass}/></label><label className="text-sm">Fin<TimeField required aria-label="Fin" value={form.endTime} onChange={endTime => setForm({ ...form, endTime })} className={inputClass}/></label></div>
         </>}

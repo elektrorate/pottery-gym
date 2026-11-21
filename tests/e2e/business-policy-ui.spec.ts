@@ -89,6 +89,8 @@ const approve = async (page: Page, id: string, kind = 'membership_override', rea
 const cancel = async (page: Page, id: string) => {
   await row(page, id).getByLabel(/Motivo de cancelación/).fill('Alumno avisa de cancelacion');
   await row(page, id).getByRole('button', { name: 'Cancelar reserva', exact: true }).click();
+  const confirm = page.getByRole('dialog', { name: '¿Cancelar reserva?' });
+  if (await confirm.count()) await confirm.getByRole('button', { name: 'Cancelar reserva', exact: true }).click();
 };
 const balance = async (page: Page, id: string) => (await output(page, 'students')).find((student: any) => student.id === id).classesRemaining;
 const assertBusinessIntent = (intent: any, operation: string, id = memberId, revision = 7) => {
@@ -235,7 +237,7 @@ test('stale funding SQL rejection permits explicit same-student reapproval with 
   await configure(page, { fixture: 'changed-payment' });
   expect(await output(page, 'calls')).toHaveLength(1);
   await finalize(page);
-  await expect(dialog(page).getByRole('alert')).toContainText('Session exception is stale; explicit reapproval required');
+  await expect(dialog(page).getByRole('alert')).toContainText('La excepción quedó desactualizada');
   await expect(row(page, memberId)).toContainText('Pago: desconocido');
   await expect(row(page, memberId).getByTestId('exception-state')).toContainText(original.reason);
   await expect(row(page, memberId).getByRole('button', { name: 'Reaprobar excepción', exact: true })).toBeDisabled();
@@ -291,7 +293,7 @@ test('a changed paid source never auto-reapproves a free exception; current kind
   await configure(page, { fixture: 'paid-credit' });
   expect(await output(page, 'calls')).toHaveLength(1);
   await finalize(page);
-  await expect(dialog(page).getByRole('alert')).toContainText('Session exception is stale; explicit reapproval required');
+  await expect(dialog(page).getByRole('alert')).toContainText('La excepción quedó desactualizada');
   await expect(row(page, memberId)).toContainText('Pago: pagado');
   expect(await output(page, 'approval-history')).toEqual([original]);
   expect(await output(page, 'ledger')).toEqual([]);
@@ -300,13 +302,13 @@ test('a changed paid source never auto-reapproves a free exception; current kind
   await open(page);
   await expect(row(page, memberId).getByRole('button', { name: 'Reaprobar excepción', exact: true })).toBeDisabled();
   await approve(page, memberId, 'no_credit', 'Solicito nueva cortesia con credito disponible');
-  await expect(dialog(page).getByRole('alert')).toContainText('No-credit exception cannot bypass available credit');
+  await expect(dialog(page).getByRole('alert')).toContainText('el pago del bono está pendiente');
   const rejected = (await output(page, 'calls'))[3].input;
   assertBusinessIntent(rejected, 'approve_exception', memberId, 9);
   expect(rejected.kind).toBe('no_credit');
   expect(rejected.requestKey).not.toBe(original.requestKey);
   await approve(page, memberId, 'membership_override', 'Revision expresa del tipo de excepcion');
-  await expect(dialog(page).getByRole('alert')).toContainText('Membership override requires known original positive credit');
+  await expect(dialog(page).getByRole('alert')).toContainText('no tiene un saldo positivo conocido');
   const calls = await output(page, 'calls');
   expect(calls).toHaveLength(5);
   expect(calls[4].input).toMatchObject({ operation: 'approve_exception', sessionId, studentId: memberId,

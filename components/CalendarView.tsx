@@ -1,6 +1,12 @@
 import SessionDetailsDialog from './SessionDetailsDialog';
 import { sessionBusinessErrorMessage } from '../utils/recordPresentation';
-import { showError } from '../context/toast';
+import { showError, showSuccess } from '../context/toast';
+import { ConfirmModal } from './shared/ConfirmModal';
+import { findTeacherOverlaps, layoutOverlapping, visibleHourRange, type TeacherSlot } from '../utils/scheduleOverlap';
+import { getScheduleIntervalsForDate } from '../utils/workshopSchedule';
+import { lateCancellationOutcome, cancellationPreview } from '../utils/lateCancellationCopy';
+import { compareEs } from '../utils/textSearch';
+import { mapUserFacingError } from '../utils/userFacingError';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { sessionAssignedToTeacher } from '../utils/teacherCalendar';
@@ -111,6 +117,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingSave, setPendingSave] = useState<SaveAttempt | null>(null);
   const [saveError, setSaveError] = useState('');
+  const [overlapWarning, setOverlapWarning] = useState<string>('');
+  const [pastDateWarning, setPastDateWarning] = useState(false);
+  const [categoryWarning, setCategoryWarning] = useState('');
+  const [cancelPrompt, setCancelPrompt] = useState<{ studentId: string; message: string } | null>(null);
+  const acknowledgedOverlap = useRef(false);
+  const acknowledgedPast = useRef(false);
+  const acknowledgedCategory = useRef(false);
   const [refreshConflict, setRefreshConflict] = useState<{ kind: Exclude<SaveAttempt['kind'], 'recovery'>; id: string; revision?: number } | null>(null);
   const formLocked = readOnly || isSubmitting || !!pendingSave || !!refreshConflict;
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
@@ -245,7 +258,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     return map[session.classType];
   };
 
-  const requiresTeacher = (type: ClassSession['classType']) => type === 'mesa';
+  const requiresTeacher = (type: ClassSession['classType']) => type !== 'feriado' && type !== 'mixto';
   const requiresWorkshopName = (type: ClassSession['classType']) => type === 'workshop';
   const requiresPrivateReason = (type: ClassSession['classType']) => type === 'privada';
 
@@ -382,7 +395,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     if (formLocked) return;
     if (restorePendingOperation(session)) return;
     if (!hasPersistedRoster(session)) {
-      showError('La asistencia requiere IDs persistidos y alineados. Recarga la sesión; no se identificarán alumnos por nombre.');
+      showError('Recargue la sesión: no se puede identificar al alumno solo por el nombre.');
       return;
     }
     setSaveError('');
@@ -464,7 +477,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       if (rolledBack && error?.code === '40001' && attempt.id) {
         setRefreshConflict({ kind, id: attempt.id, revision });
       }
-      setSaveError(`${sessionBusinessErrorMessage(error)}${rolledBack
+      setSaveError(`${mapUserFacingError(error, sessionBusinessErrorMessage(error))}${rolledBack
         ? error.code === '40001' ? ' La sesión cambió. Revisa los datos recargados antes de guardar.' : ''
         : ' Resultado sin confirmar. Reintenta los mismos datos antes de editar o cerrar.'}`);
     } finally {
@@ -496,6 +509,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       if (pendingSave.kind === 'attendance' || pendingSave.kind === 'recovery') await persistSave(pendingSave);
       return;
     }
+    if (finalize && attendanceSession.date > today) {
+      setSaveError('Esta sesión todavía no ha empezado. Puede guardar la asistencia provisional, pero no finalizarla hasta el día de la clase. Cancelar una reserva sí está permitido.');
+      return;
+    }
     if (!hasPersistedRoster(attendanceSession) || !Number.isSafeInteger(attendanceSession.revision) || attendanceSession.revision! < 0) {
       setSaveError('Recargue la sesión antes de guardar.');
       return;
@@ -523,7 +540,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
 
   const handleBusinessOperation = async (studentId: string, operation: SessionBusinessIntent['operation']) => {
     if (submittingRef.current || formLocked || !attendanceSession || !policy2 || !attendanceSession.studentIds?.includes(studentId)) return;
-    if (attendanceDirty) {
+    if (operation === 'cancel_reservation' && !cancelPrompt) {
+      const start = new Date(`${attendanceSession.date}T${attendanceSession.startTime}:00`);
+      const hours = Number.isFinite(start.getTime()) ? (start.getTime() - Date.now()) / 3_600_000 : null;
+      setCancelPrompt({ studentId, message: `${presentDisplayName(getStudentName(studentId, attendanceSession))}. ${cancellationPreview(hours)}` });
+      return;
+    }
+    if (attendanceDirty && operation !== 'cancel_reservation') {
       setSaveError('Guarda primero la asistencia provisional o los cambios antes de realizar esta operación.');
       return;
     }
@@ -648,6 +671,41 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
       });
       if (duplicate) {
         showError(`Ya existe una sesión con el mismo horario y tipo el ${showDate(date)}.`);
+        return;
+      }
+    }
+    if (!editingSessionId && sessionForm.date < today && !acknowledgedPast.current) {
+      setPastDateWarning(true);
+      return;
+    }
+    const teacherSlots: TeacherSlot[] = sessions.filter(session => session.classType !== 'feriado').map(session => ({
+      id: session.id, date: session.date, startTime: session.startTime, endTime: session.endTime,
+      teacherId: session.teacherId, teacherSubstituteId: session.teacherSubstituteId,
+      blockTeacherIds: (session.activityBlocks || []).map(block => block.teacherId).filter((id): id is string => !!id),
+      label: `${getSessionLabel(session)} · ${formatTime(session.startTime)}–${formatTime(session.endTime)} · ${getTeacherName(session.teacherId)}`
+    }));
+    if (!acknowledgedOverlap.current && sessionForm.classType !== 'feriado') {
+      const hits = repeatDates.flatMap(date => findTeacherOverlaps({
+        id: editingSessionId || 'nueva', date, startTime: sessionForm.startTime, endTime: sessionForm.endTime,
+        teacherId: sessionForm.classType === 'mixto' ? undefined : sessionForm.teacherId || undefined,
+        blockTeacherIds: sessionForm.classType === 'mixto' ? sessionForm.activityBlocks.map(block => block.teacherId).filter((id): id is string => !!id) : [],
+        label: 'Esta sesión'
+      }, teacherSlots));
+      if (hits.length) {
+        const names = [...new Set(hits.map(hit => hit.label))].slice(0, 4).join('; ');
+        setOverlapWarning(`El profesor ya tiene otra clase en ese horario: ${names}. Un mismo profesor no debería impartir dos sesiones a la vez.`);
+        return;
+      }
+    }
+    const activityWord = sessionForm.classType === 'torno' ? 'torno' : sessionForm.classType === 'mesa' ? 'modelado' : '';
+    if (!acknowledgedCategory.current && activityWord) {
+      const mismatched = (sessionForm.classType === 'mixto' ? [] : sessionForm.selectedStudents).map(id => students.find(student => student.id === id)).filter((student): student is Student => {
+        const activity = (student?.classType || '').toLocaleLowerCase('es-ES');
+        if (!student || !activity) return false;
+        return activityWord === 'torno' ? activity.includes('model') : activity.includes('torno');
+      });
+      if (mismatched.length) {
+        setCategoryWarning(`${mismatched.map(student => presentPersonName(student.name, student.surname)).join(', ')} no tiene la actividad de esta sesión. Puede inscribirlo si lo confirma.`);
         return;
       }
     }
@@ -797,27 +855,14 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
     const dayLabel = formatCalendarDate(selectedDate, 'long');
     const dayTitle = `${dayLabel.charAt(0).toUpperCase()}${dayLabel.slice(1)}`;
 
-    let startHour = 8;
-    let endHour = 22;
-    if (daySessions.length > 0) {
-      const hoursInDay = daySessions.map(s => parseInt(s.startTime.split(':')[0]));
-      const endHoursInDay = daySessions.map(s => {
-        const parts = s.endTime.split(':');
-        const h = parseInt(parts[0]);
-        return parseInt(parts[1]) > 0 ? h + 1 : h;
-      });
-      startHour = Math.min(...hoursInDay);
-      endHour = Math.max(...endHoursInDay, startHour + 6);
-      if (endHour > 24) endHour = 24;
-    }
+    const opening = getScheduleIntervalsForDate(dateKey, workshopSchedule, workshopScheduleExceptions);
+    const span = visibleHourRange(daySessions, opening.map(interval => ({ startTime: interval.opensAt, endTime: interval.closesAt })));
+    const startHour = span.startHour;
+    const endHour = span.endHour;
 
     const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => i + startHour);
-    const sortedSessions = [...daySessions].sort((a, b) => a.startTime.localeCompare(b.startTime));
-    const sessionsByTime: Record<string, ClassSession[]> = {};
-    sortedSessions.forEach(s => {
-      if (!sessionsByTime[s.startTime]) sessionsByTime[s.startTime] = [];
-      sessionsByTime[s.startTime].push(s);
-    });
+    const sortedSessions = [...daySessions].sort((a, b) => a.startTime.localeCompare(b.startTime) || a.id.localeCompare(b.id));
+    const overlapLayout = layoutOverlapping(sortedSessions.map(session => ({ id: session.id, startTime: session.startTime, endTime: session.endTime })));
 
     return (
       <div className="flex-1 flex flex-col h-full overflow-hidden animate-fade-in bg-neutral-base">
@@ -866,14 +911,13 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 </div>
               ))}
 
-              {Object.keys(sessionsByTime).map(startTime => {
-                const concurrentSessions = sessionsByTime[startTime];
-                const widthPercent = 100 / concurrentSessions.length;
-                return concurrentSessions.map((session, index) => {
+              {sortedSessions.map(session => {
+                  const place = overlapLayout.get(session.id) || { column: 0, columns: 1 };
+                  const widthPercent = 100 / place.columns;
                   const occupancy = getSessionOccupancy(session, capacityMap);
                   const [startH, startM] = session.startTime.split(':').map(Number);
                   const topOffset = ((startH * 60 + startM - startHour * 60) / 60) * HOUR_HEIGHT;
-                  const leftOffset = index * widthPercent;
+                  const leftOffset = place.column * widthPercent;
                   return (
                     <div
                       key={session.id}
@@ -897,10 +941,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                         {session.importedCompleted !== undefined && <p className="mb-2 text-[11px] normal-case text-neutral-textHelper">{session.importedCompleted ? 'Completada según Excel' : 'Sin completar según Excel'} · asistencia sin acreditar</p>}
                         <span>Profesor/a: </span>
                         <span className="text-[#B07D4E] font-semibold">{getTeacherName(session.teacherId)}</span>
-                        {getTeacherSpecialty(session.teacherId) && (
-                           <span className="block text-[12.5px] font-medium text-neutral-textSec uppercase tracking-widest mt-1">
-                            {getTeacherSpecialty(session.teacherId)}
+                        <span className="block text-[12.5px] font-medium text-neutral-textSec uppercase tracking-widest mt-1">
+                            {getSessionLabel(session)}
                           </span>
+                        {session.teacherSubstituteId && (
+                          <span className="block text-[12.5px] font-semibold normal-case tracking-normal text-brand mt-1">Reemplazo: {getTeacherName(session.teacherSubstituteId)}</span>
                         )}
                         {session.classType === 'workshop' && session.workshopName && (
                            <span className="block text-[12.5px] font-medium text-neutral-textSec uppercase tracking-widest mt-1">
@@ -962,8 +1007,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       </button>
                     </div>
                   );
-                });
-              })}
+                })}
             </div>
           </div>
         </div>
@@ -1114,7 +1158,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                 <p>{policy2
                   ? 'Asistió: vino y, al finalizar, descuenta una clase. Faltó sin avisar: no vino y también descuenta una clase. Cancelar la reserva con 8 horas de antelación no descuenta.'
                   : 'Sesión anterior: marca Asistió o Faltó sin avisar. No se aplican penalizaciones nuevas.'}</p>
-                {policy2 && attendanceDirty && <p className="mt-2 font-semibold">Guarda primero la asistencia provisional o los cambios para habilitar las operaciones por alumno.</p>}
+                {policy2 && attendanceDirty && !storedAttendanceSession?.attendanceByStudentId && <p className="mt-2 font-semibold">Guarda primero la asistencia provisional o los cambios para habilitar las operaciones por alumno.</p>}
               </div>
 
               <div className="mb-5">
@@ -1128,7 +1172,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                   className="h-11 w-full appearance-none rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 pr-10 text-[13px] text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20 disabled:cursor-not-allowed disabled:opacity-55"
                 >
                   <option value="">Sin reemplazo</option>
-                  {teachers.map(t => (
+                  {[...teachers].filter(teacher => teacher.id !== attendanceSession.teacherId).sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname))).map(t => (
                     <option key={t.id} value={t.id}>{presentPersonName(t.name, t.surname)}</option>
                   ))}
                 </select>
@@ -1221,7 +1265,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                       </div>
                       {policy2 && <div className="mt-2 space-y-3 border-t border-[#EFE3D8] pt-3 text-[12px] text-[#6E5145]">
                         {studentObj?.studentCategory === 'membresia' && <p>Pago: {studentObj.paymentStatus === 'paid' ? 'pagado' : studentObj.paymentStatus === 'pending' ? 'pendiente' : 'desconocido'}. Aprobar no cambia el pago.</p>}
-                        {cancelled && <div data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: no se descuenta ninguna clase.' : business?.cancellationKind === 'late' ? 'Cancelación tardía: se descuenta una clase al finalizar.' : 'Cancelación registrada. Falta clasificar si descuenta una clase.'} Motivo: {business?.cancellationReason || 'Sin motivo'}.{actorPhrase('Cancelada por', business?.cancelledBy) ? ` ${actorPhrase('Cancelada por', business?.cancelledBy)}.` : ''}{business?.cancelledAt && ` Hora: ${formatDateTime(business.cancelledAt)}.`}
+                        {cancelled && <div data-testid="cancellation-state">{business?.cancellationKind === 'timely' ? 'Cancelación a tiempo: no se descuenta ninguna clase.' : business?.cancellationKind === 'late' ? lateCancellationOutcome(studentObj, business, today) : 'Cancelación registrada. Falta clasificar si descuenta una clase.'} Motivo: {business?.cancellationReason || 'Sin motivo'}.{actorPhrase('Cancelada por', business?.cancelledBy) ? ` ${actorPhrase('Cancelada por', business?.cancelledBy)}.` : ''}{business?.cancelledAt && ` Hora: ${formatDateTime(business.cancelledAt)}.`}
                           <AdvancedDetails>
                             {isInternalId(business?.cancelledBy) && <p>Cancelada por: {business?.cancelledBy}</p>}
                             {!business?.cancelledBy && <p>Cancelada por: el taller</p>}
@@ -1449,22 +1493,21 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
                     </label>
                   )}
 
-                  {(sessionForm.classType === 'mesa' || sessionForm.classType === 'torno') && (
+                  {requiresTeacher(sessionForm.classType) && (
                     <div>
                       <label htmlFor="session-teacher" className="ui-label mb-2 block uppercase tracking-[0.14em] text-[#7B3F22]">
-                        Profesor {requiresTeacher(sessionForm.classType)
-                          ? <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr>
-                          : <span className="font-normal normal-case tracking-normal text-[#8B6B5E]">(opcional)</span>}
+                        Profesor <abbr title="obligatorio" className="text-[#9C4235] no-underline">*</abbr>
                       </label>
                   <select
                     id="session-teacher"
                     disabled={rosterOnly}
+                    required
                     value={sessionForm.teacherId}
                     onChange={(e) => setSessionForm({ ...sessionForm, teacherId: e.target.value })}
                     className="h-11 w-full rounded-[10px] border border-[#DDBFA4] bg-white px-3.5 text-[13px] text-[#2F211B] outline-none transition focus:border-[#C68952] focus:ring-2 focus:ring-[#C68952]/20"
                   >
-                    <option value="">Sin asignar</option>
-                    {teachers.map(t => (
+                    <option value="">Seleccione un profesor</option>
+                    {[...teachers].sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname))).map(t => (
                       <option key={t.id} value={t.id}>{presentPersonName(t.name, t.surname)}</option>
                     ))}
                   </select>
@@ -1708,7 +1751,11 @@ const CalendarView: React.FC<CalendarViewProps> = ({ readOnly = false, sessions,
           </section>
         </div>
       )}
-    {detailsDialog && <SessionDetailsDialog session={detailsDialog.session} mode={detailsDialog.mode} teachers={teachers} schedule={workshopSchedule} exceptions={workshopScheduleExceptions} readOnly={readOnly} onSave={onUpdateSession} onClose={() => setDetailsDialog(null)}/>}
+    {detailsDialog && <SessionDetailsDialog session={detailsDialog.session} mode={detailsDialog.mode} teachers={[...teachers].sort((a, b) => compareEs(presentPersonName(a.name, a.surname), presentPersonName(b.name, b.surname)))} schedule={workshopSchedule} exceptions={workshopScheduleExceptions} readOnly={readOnly} onSave={onUpdateSession} onClose={() => setDetailsDialog(null)}/>}
+    <ConfirmModal isOpen={!!overlapWarning} title="El profesor ya tiene clase" message={overlapWarning} confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedOverlap.current = true; setOverlapWarning(''); void handleSessionSubmit(); }} onCancel={() => setOverlapWarning('')} />
+    <ConfirmModal isOpen={pastDateWarning} title="La fecha ya pasó" message="Va a crear una sesión en una fecha pasada. Después no podrá eliminarla; solo podrá corregir la asistencia." confirmText="Crear de todos modos" isDestructive={false} onConfirm={() => { acknowledgedPast.current = true; setPastDateWarning(false); void handleSessionSubmit(); }} onCancel={() => setPastDateWarning(false)} />
+    <ConfirmModal isOpen={!!categoryWarning} title="La actividad no coincide" message={categoryWarning} confirmText="Inscribir de todos modos" isDestructive={false} onConfirm={() => { acknowledgedCategory.current = true; setCategoryWarning(''); void handleSessionSubmit(); }} onCancel={() => setCategoryWarning('')} />
+    <ConfirmModal isOpen={!!cancelPrompt} title="¿Cancelar reserva?" message={cancelPrompt?.message || ''} confirmText="Cancelar reserva" isDestructive onConfirm={() => { const prompt = cancelPrompt; setCancelPrompt(null); if (prompt) void handleBusinessOperation(prompt.studentId, 'cancel_reservation'); }} onCancel={() => setCancelPrompt(null)} />
     </div>
   );
 };
